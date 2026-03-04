@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, Download, Eraser, ImagePlus, Loader2, Ratio } from 'lucide-react';
-import { generateResizedImages } from './services/gemini';
+import { generateAspectRatioImages } from '../../lib/api';
 import { AspectRatio, AspectRatioState, GeneratedImage } from './types';
-import { hasGeminiApiKey } from '../../lib/geminiClient';
 
 const INITIAL_STATE: AspectRatioState = {
   originalImage: null,
@@ -28,8 +27,6 @@ const getAspectClass = (ratio: AspectRatio): string => {
 export default function AspectRatioTab() {
   const [state, setState] = useState<AspectRatioState>(INITIAL_STATE);
   const [activeRatio, setActiveRatio] = useState<AspectRatio | null>(null);
-
-  const apiKeyReady = hasGeminiApiKey();
 
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -71,11 +68,6 @@ export default function AspectRatioTab() {
   };
 
   const generateCustomRatio = async (ratio: AspectRatio) => {
-    if (!apiKeyReady) {
-      setState((previous) => ({ ...previous, error: 'Missing API key. Set VITE_GEMINI_API_KEY in .env.' }));
-      return;
-    }
-
     if (!state.originalImage) {
       setState((previous) => ({ ...previous, error: 'Upload an image before generating variations.' }));
       return;
@@ -85,7 +77,7 @@ export default function AspectRatioTab() {
     setActiveRatio(ratio);
 
     try {
-      const urls = await generateResizedImages(state.originalImage, ratio);
+      const urls = await generateAspectRatioImages(state.originalImage, ratio);
       const newResults: GeneratedImage[] = urls.map((url, index) => ({
         id: `${ratio}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         url,
@@ -109,12 +101,6 @@ export default function AspectRatioTab() {
   return (
     <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
       <div className="space-y-4">
-        {!apiKeyReady && (
-          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-            Missing <code className="font-mono">VITE_GEMINI_API_KEY</code>
-          </div>
-        )}
-
         <section className="panel-surface space-y-3">
           <div>
             <h3 className="text-lg font-semibold text-white">Image</h3>
@@ -156,7 +142,7 @@ export default function AspectRatioTab() {
                 key={ratio}
                 type="button"
                 onClick={() => generateCustomRatio(ratio)}
-                disabled={state.isProcessing || !state.originalImage || !apiKeyReady}
+                disabled={state.isProcessing || !state.originalImage}
                 className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition-all ${
                   activeRatio === ratio
                     ? 'border-cyan-300/90 bg-cyan-300 text-slate-900'

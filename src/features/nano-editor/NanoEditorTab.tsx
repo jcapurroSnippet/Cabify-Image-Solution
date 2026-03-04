@@ -2,26 +2,10 @@ import React, { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
 import { AlertCircle, Download, Image as ImageIcon, Loader2, RefreshCw, Upload, Wand2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { getGeminiClient, hasGeminiApiKey } from '../../lib/geminiClient';
-
-const PROMPT_LIMITATIONS = `**Role & Mission**
-You are the **Cabify Creative Refiner**. Generate exactly one ad variation using only assets already present in the source image.
-
-**Non-negotiable constraints**
-1. Do not add new visual elements.
-2. Do not change style direction.
-3. Do not rotate, mirror, or flip existing elements.
-4. Typography must stay exactly as source.
-5. Colors must stay exactly as source.
-6. Brand fidelity must stay strict.
-7. Allowed changes are only layout-level: reorder, reposition, recombine, proportional scale.
-8. Do not redraw or replace objects.
-9. Produce one output only.
-`;
+import { generateNanoImage } from '../../lib/api';
 
 export default function NanoEditorTab() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [mimeType, setMimeType] = useState('');
   const [prompt, setPrompt] = useState('');
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -29,15 +13,12 @@ export default function NanoEditorTab() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const apiKeyReady = hasGeminiApiKey();
-
   const processFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
       setError('Please upload a valid image file.');
       return;
     }
 
-    setMimeType(file.type);
     const reader = new FileReader();
     reader.onloadend = () => {
       setSelectedImage(reader.result as string);
@@ -78,7 +59,6 @@ export default function NanoEditorTab() {
     setResultImage(null);
     setPrompt('');
     setError(null);
-    setMimeType('');
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -86,11 +66,6 @@ export default function NanoEditorTab() {
   };
 
   const handleGenerate = async () => {
-    if (!apiKeyReady) {
-      setError('Missing API key. Set VITE_GEMINI_API_KEY in .env.');
-      return;
-    }
-
     if (!selectedImage || !prompt.trim()) {
       setError('Please provide an image and editing instructions.');
       return;
@@ -100,43 +75,8 @@ export default function NanoEditorTab() {
     setError(null);
 
     try {
-      const base64Data = selectedImage.split(',')[1];
-      const finalPrompt = `${prompt.trim()}\n\n${PROMPT_LIMITATIONS}`;
-
-      const ai = getGeminiClient();
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-image-preview',
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType,
-              },
-            },
-            {
-              text: finalPrompt,
-            },
-          ],
-        },
-        config: {
-          responseModalities: ['IMAGE', 'TEXT'],
-        },
-      });
-
-      let generatedImageUrl: string | null = null;
-      for (const part of response.candidates?.[0]?.content?.parts ?? []) {
-        if (part.inlineData?.data) {
-          generatedImageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-          break;
-        }
-      }
-
-      if (generatedImageUrl) {
-        setResultImage(generatedImageUrl);
-      } else {
-        setError('The model did not return an image. Try again with a more specific prompt.');
-      }
+      const generatedImageUrl = await generateNanoImage(selectedImage, prompt.trim());
+      setResultImage(generatedImageUrl);
     } catch (generationError) {
       console.error(generationError);
       const message = (generationError as { message?: string })?.message || 'Unexpected image generation error.';
@@ -149,12 +89,6 @@ export default function NanoEditorTab() {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        {!apiKeyReady && (
-          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-            Missing <code className="font-mono">VITE_GEMINI_API_KEY</code>
-          </div>
-        )}
-
         <section className="panel-surface space-y-3">
           <div>
             <h3 className="text-lg font-semibold text-white">Image</h3>
@@ -233,7 +167,7 @@ export default function NanoEditorTab() {
           <button
             type="button"
             onClick={handleGenerate}
-            disabled={!apiKeyReady || !selectedImage || !prompt.trim() || isGenerating}
+            disabled={!selectedImage || !prompt.trim() || isGenerating}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 px-4 py-3 font-semibold text-slate-900 transition-colors hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
             {isGenerating ? (
