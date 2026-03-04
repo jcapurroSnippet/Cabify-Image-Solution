@@ -1,0 +1,213 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Sora', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  /* Cabify brand palette tokens from brand.cabify.com */
+  --cabify-n0: #ffffff;
+  --cabify-n100: #f2f2fa;
+  --cabify-n200: #e4e4f7;
+  --cabify-n500: #8383ad;
+  --cabify-n600: #62628a;
+  --cabify-m900: #2c2643;
+  --cabify-m850: #372d5e;
+  --cabify-m800: #44307a;
+  --cabify-m700: #5b39a8;
+  --cabify-m600: #7145d6;
+  --cabify-m500: #8c5cff;
+  --cabify-m400: #b696ff;
+  --cabify-m300: #d2bfff;
+  --cabify-m200: #e8deff;
+  --cabify-m100: #f3edff;
+  --cabify-r500: #fd665b;
+  --cabify-r400: #ffa49e;
+  --cabify-y500: #f3af13;
+  --cabify-y100: #fff5de;
+  --text-main: var(--cabify-n0);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  background: linear-gradient(180deg, #4f31a0, var(--cabify-m600));
+}
+
+.panel-surface {
+  border: 1px solid #d2bfff66;
+  border-radius: 1rem;
+  padding: 1rem;
+  background: #ffffff14;
+}
+
+.tab-pill {
+  border: 1px solid #d2bfff80;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cabify-n0);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.55rem 0.95rem;
+  transition: all 180ms ease;
+}
+
+.tab-pill:hover {
+  border-color: var(--cabify-n0);
+  background: #ffffff14;
+}
+
+.tab-pill[data-active='true'] {
+  border-color: var(--cabify-n0);
+  background: var(--cabify-n0);
+  color: var(--cabify-m900);
+}
+
+/* Utility remap to keep existing JSX classNames and enforce Cabify colorimetry. */
+.text-slate-100 {
+  color: var(--cabify-n0) !important;
+}
+.text-slate-200 {
+  color: var(--cabify-m100) !important;
+}
+.text-slate-300 {
+  color: var(--cabify-m300) !important;
+}
+.text-slate-400 {
+  color: var(--cabify-m400) !important;
+}
+.text-slate-500 {
+  color: var(--cabify-n500) !important;
+}
+.text-slate-900 {
+  color: var(--cabify-m900) !important;
+}
+
+.bg-slate-800\/80 {
+  background-color: #44307acc !important;
+}
+.bg-slate-900\/25 {
+  background-color: #372d5e40 !important;
+}
+.bg-slate-900\/35 {
+  background-color: #372d5e59 !important;
+}
+.bg-slate-900\/40 {
+  background-color: #372d5e66 !important;
+}
+.bg-slate-900\/45 {
+  background-color: #372d5e73 !important;
+}
+.bg-slate-900\/60 {
+  background-color: #372d5e99 !important;
+}
+.bg-slate-900\/70 {
+  background-color: #372d5eb3 !important;
+}
+.bg-slate-950\/65 {
+  background-color: #2c2643a6 !important;
+}
+
+.border-slate-600\/60 {
+  border-color: #8c5cff99 !important;
+}
+.border-slate-700\/70 {
+  border-color: #5b39a8b3 !important;
+}
+.border-slate-700\/80 {
+  border-color: #5b39a8cc !important;
+}
+.border-slate-500 {
+  border-color: var(--cabify-m500) !important;
+}
+.border-slate-500\/60 {
+  border-color: #8c5cff99 !important;
+}
+
+.bg-cyan-300 {
+  background-color: var(--cabify-m400) !important;
+}
+.bg-cyan-300\/10 {
+  background-color: #b696ff1a !important;
+}
+.bg-cyan-200\/10 {
+  background-color: #d2bfff1a !important;
+}
+.text-cyan-100 {
+  color: var(--cabify-m100) !important;
+}
+.text-cyan-200 {
+  color: var(--cabify-m200) !important;
+}
+.border-cyan-300 {
+  border-color: var(--cabify-m400) !important;
+}
+.border-cyan-300\/90 {
+  border-color: #b696ffe6 !important;
+}
+.border-cyan-200\/30 {
+  border-color: #d2bfff4d !important;
+}
+.border-cyan-200\/40 {
+  border-color: #d2bfff66 !important;
+}
+
+.border-amber-500\/40 {
+  border-color: #f3af1366 !important;
+}
+.bg-amber-500\/10 {
+  background-color: #f3af131a !important;
+}
+.text-amber-100 {
+  color: var(--cabify-y100) !important;
+}
+
+.border-red-500\/30 {
+  border-color: #fd665b4d !important;
+}
+.bg-red-500\/10 {
+  background-color: #fd665b1a !important;
+}
+.text-red-200 {
+  color: #ffdedb !important;
+}
+
+.hover\:border-slate-400\/80:hover {
+  border-color: #b696ffcc !important;
+}
+.hover\:border-slate-500:hover {
+  border-color: var(--cabify-m500) !important;
+}
+.hover\:bg-cyan-200:hover {
+  background-color: var(--cabify-m300) !important;
+}
+.hover\:border-red-400\/60:hover {
+  border-color: #ffa49e99 !important;
+}
+.hover\:text-red-200:hover {
+  color: #ffdedb !important;
+}
+
+.focus\:border-cyan-300\/70:focus {
+  border-color: #b696ffb3 !important;
+}
+
+.disabled\:bg-slate-700:disabled {
+  background-color: var(--cabify-m700) !important;
+}
+.disabled\:text-slate-400:disabled {
+  color: var(--cabify-m200) !important;
+}
