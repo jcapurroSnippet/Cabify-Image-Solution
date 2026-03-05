@@ -1,9 +1,18 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-Light.otf') format('opentype');
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+
 @theme {
   --font-sans: 'Sora', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-cabify: 'CabifyCiudad', 'Sora', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -45,6 +54,12 @@ body {
   color: var(--text-main);
   font-family: var(--font-sans);
   background: linear-gradient(180deg, #4f31a0, var(--cabify-m600));
+}
+
+.cabify-brand-title {
+  font-family: var(--font-cabify);
+  font-weight: 300;
+  line-height: 1.1;
 }
 
 .panel-surface {

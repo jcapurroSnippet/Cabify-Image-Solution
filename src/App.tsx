@@ -25,11 +25,13 @@ export default function App() {
     <div className="min-h-screen px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-4">
         <header className="panel-surface">
-          <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Cabify Image Suite</h1>
-          <p className="mt-1 inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400">
-            <img src="/snippet.ico" alt="Snippet icon" className="h-4 w-4 rounded-sm" />
-            By Snippet
-          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+              <img src="/branding/cabify-logo-white-rgb.png" alt="Cabify logo" className="h-8 w-auto sm:h-10" />
+              <h1 className="cabify-brand-title text-2xl tracking-tight text-white sm:text-3xl">Brandsafe AI Gen Studio</h1>
+            </div>
+            <img src="/branding/snippet-logo.png" alt="Snippet logo" className="h-10 w-auto self-start sm:self-auto" />
+          </div>
         </header>
 
         <section className="panel-surface">
