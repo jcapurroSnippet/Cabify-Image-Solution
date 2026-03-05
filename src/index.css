@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
 
 @font-face {
@@ -10,9 +10,9 @@
 }
 
 @theme {
-  --font-sans: 'Sora', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'CabifyCiudad', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-  --font-cabify: 'CabifyCiudad', 'Sora', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-cabify: 'CabifyCiudad', ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -53,7 +53,15 @@ body {
   margin: 0;
   color: var(--text-main);
   font-family: var(--font-sans);
+  font-weight: 300;
   background: linear-gradient(180deg, #4f31a0, var(--cabify-m600));
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
 .cabify-brand-title {
