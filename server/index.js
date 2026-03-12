@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
+import { processBatch } from './services/batchProcessor.js';
 
 class RequestValidationError extends Error {}
 
@@ -137,6 +139,17 @@ const parseDataUrl = (imageDataUrl) => {
   return { imageData, mimeType };
 };
 
+const downloadImageAsDataUrl = async (imageUrl) => {
+  try {
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const mimeType = response.headers['content-type'] || 'image/png';
+    const base64 = Buffer.from(response.data).toString('base64');
+    return `data:${mimeType};base64,${base64}`;
+  } catch (error) {
+    throw new RequestValidationError(`Failed to download image from URL: ${error.message}`);
+  }
+};
+
 app.get('/healthz', (_request, response) => {
   response.status(200).json({ ok: true });
 });
@@ -193,14 +206,20 @@ app.post('/api/nano-editor', async (request, response) => {
 
 app.post('/api/aspect-ratio', async (request, response) => {
   try {
-    const { imageDataUrl, targetRatio } = request.body ?? {};
+    const { imageDataUrl, imageUrl, targetRatio } = request.body ?? {};
     const parsedRatio = String(targetRatio ?? '').trim();
 
     if (!['1:1', '9:16'].includes(parsedRatio)) {
       throw new RequestValidationError('targetRatio must be "1:1" or "9:16".');
     }
 
-    const { imageData, mimeType } = parseDataUrl(imageDataUrl);
+    // Support both imageDataUrl and imageUrl
+    let finalImageDataUrl = imageDataUrl;
+    if (!imageDataUrl && imageUrl) {
+      finalImageDataUrl = await downloadImageAsDataUrl(imageUrl);
+    }
+
+    const { imageData, mimeType } = parseDataUrl(finalImageDataUrl);
     const ai = getGeminiClient();
     const variations = getVariationsForRatio(parsedRatio);
 
@@ -259,6 +278,60 @@ app.post('/api/aspect-ratio', async (request, response) => {
     console.error('Aspect ratio generation error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Unexpected image generation error.'),
+    });
+  }
+});
+
+app.post('/api/batch-aspect-ratio', async (request, response) => {
+  try {
+    const { sheetsUrl, driveFolderUrl } = request.body ?? {};
+
+    if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+
+    if (typeof driveFolderUrl !== 'string' || driveFolderUrl.trim().length === 0) {
+      throw new RequestValidationError('driveFolderUrl is required.');
+    }
+
+    // Set response headers for streaming progress
+    response.setHeader('Content-Type', 'application/x-ndjson');
+    response.setHeader('Transfer-Encoding', 'chunked');
+
+    // Define progress callback
+    const onProgress = (progressData) => {
+      response.write(JSON.stringify(progressData) + '\n');
+    };
+
+    // Start batch processing asynchronously
+    processBatch({
+      sheetsUrl: sheetsUrl.trim(),
+      driveFolderUrl: driveFolderUrl.trim(),
+      baseUrl: `${request.protocol}://${request.get('host')}`,
+      onProgress,
+    })
+      .then((result) => {
+        response.write(JSON.stringify({ state: 'completed', ...result }) + '\n');
+        response.end();
+      })
+      .catch((error) => {
+        console.error('Batch processing error:', error);
+        response.write(
+          JSON.stringify({
+            state: 'error',
+            error: getErrorMessage(error, 'Batch processing failed.'),
+          }) + '\n'
+        );
+        response.end();
+      });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('Batch aspect ratio error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Unexpected batch processing error.'),
     });
   }
 });
