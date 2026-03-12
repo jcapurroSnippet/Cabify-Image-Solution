@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+REFACTORING_SUMMARY.md
+SECURITY_ANALYSIS.md
+docs/*.md
