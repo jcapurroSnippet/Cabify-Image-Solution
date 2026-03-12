@@ -121,42 +121,162 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
 };
 
 /**
- * Find column indices for output columns in the sheet
- * Looks for columns containing keywords like "1:1 IMG A", "1:1 IMG B", etc.
+ * Read all rows from sheet, extracting URLs from cells and hyperlinks
+ * Returns array of row objects with cell values
  */
-export const findOutputColumnIndices = async (spreadsheetId, sheetName) => {
+export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
   try {
     const sheets = await getSheetsClient();
 
-    const response = await sheets.spreadsheets.values.get({
+    // Read with grid data to include hyperlinks
+    const response = await sheets.spreadsheets.get({
       spreadsheetId,
-      range: `${sheetName}!1:1`,
+      ranges: [`${sheetName}!A:Z`],
+      includeGridData: true,
     });
 
-    const headers = response.data.values?.[0] || [];
-    const indices = {};
+    const sheet = response.data.sheets?.[0];
+    if (!sheet) return [];
 
-    // Map of column names to search for
-    const patterns = {
-      '1:1_A': '1:1  IMG A',
-      '1:1_B': '1:1  IMG B',
-      '1:1_C': '1:1  IMG',
-      '9:16_A': '9:16  IMG A',
-      '9:16_B': '9:16 IMG B',
-      '9:16_C': '9:16 IMG C',
-    };
+    const gridData = sheet.data?.[0];
+    if (!gridData || !gridData.rowData) return [];
 
-    for (const [key, pattern] of Object.entries(patterns)) {
-      const index = headers.findIndex((h) => h.includes(pattern));
-      if (index !== -1) {
-        indices[key] = index;
+    const rows = [];
+    let headerRow = null;
+    let headerRowIndex = -1;
+
+    // First, find the header row (row with most non-empty cells)
+    let maxCellsInRow = 0;
+    for (let i = 0; i < gridData.rowData.length; i++) {
+      const row = gridData.rowData[i];
+      if (!row.values) continue;
+      
+      const nonEmptyCells = row.values.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length;
+      if (nonEmptyCells > maxCellsInRow) {
+        maxCellsInRow = nonEmptyCells;
+        headerRowIndex = i;
+        headerRow = row;
       }
     }
 
-    return indices;
+    if (headerRowIndex === -1 || !headerRow || !headerRow.values) {
+      return [];
+    }
+
+    // Parse header
+    const headers = headerRow.values.map((cell, idx) => {
+      if (!cell) return `Column${String.fromCharCode(65 + idx)}`;
+      return cell.userEnteredValue?.stringValue || `Column${String.fromCharCode(65 + idx)}`;
+    });
+
+    // Parse data rows (skip header row)
+    for (let rowIdx = headerRowIndex + 1; rowIdx < gridData.rowData.length; rowIdx++) {
+      const row = gridData.rowData[rowIdx];
+      if (!row.values) continue;
+
+      // Skip completely empty rows
+      const hasData = row.values.some(v => v && (v.userEnteredValue?.stringValue || v.hyperlink));
+      if (!hasData) continue;
+
+      const rowObj = {};
+
+      for (let colIdx = 0; colIdx < row.values.length && colIdx < headers.length; colIdx++) {
+        const cell = row.values[colIdx];
+        const header = headers[colIdx];
+
+        if (!cell) {
+          rowObj[header] = '';
+          continue;
+        }
+
+        // Priority: hyperlink URL > cell text value
+        if (cell.hyperlink) {
+          rowObj[header] = cell.hyperlink;
+        } else if (cell.userEnteredValue?.stringValue) {
+          rowObj[header] = cell.userEnteredValue.stringValue;
+        } else if (cell.userEnteredValue?.numberValue) {
+          rowObj[header] = String(cell.userEnteredValue.numberValue);
+        } else {
+          rowObj[header] = '';
+        }
+      }
+
+      rows.push(rowObj);
+    }
+
+    return rows;
   } catch (error) {
-    console.error('Error finding output column indices:', error.message);
+    console.error('Error reading sheet rows with hyperlinks:', error.message);
     throw error;
+  }
+};
+
+/**
+ * Find which column index contains image URLs by scanning the first few data rows
+ * Checks both cell values and hyperlinks
+ * Returns the column index or -1 if not found
+ */
+export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
+  try {
+    const sheets = await getSheetsClient();
+
+    // Read with grid data to include hyperlinks
+    const response = await sheets.spreadsheets.get({
+      spreadsheetId,
+      ranges: [`${sheetName}!A:Z`],
+      includeGridData: true,
+    });
+
+    const sheet = response.data.sheets?.[0];
+    if (!sheet) return -1;
+
+    const gridData = sheet.data?.[0];
+    if (!gridData || !gridData.rowData) return -1;
+
+    // Find header row first
+    let headerRowIndex = -1;
+    let maxCellsInRow = 0;
+    for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
+      const row = gridData.rowData[i];
+      if (!row.values) continue;
+      const nonEmptyCells = row.values.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length;
+      if (nonEmptyCells > maxCellsInRow) {
+        maxCellsInRow = nonEmptyCells;
+        headerRowIndex = i;
+      }
+    }
+
+    if (headerRowIndex === -1) return -1;
+
+    // Scan data rows for URLs (in hyperlinks or cell values)
+    for (let rowIdx = headerRowIndex + 1; rowIdx < Math.min(headerRowIndex + 15, gridData.rowData.length); rowIdx++) {
+      const row = gridData.rowData[rowIdx];
+      if (!row.values) continue;
+
+      for (let colIdx = 0; colIdx < row.values.length; colIdx++) {
+        const cell = row.values[colIdx];
+        if (!cell) continue;
+
+        let cellValue = '';
+        
+        // Check hyperlink first
+        if (cell.hyperlink) {
+          cellValue = cell.hyperlink;
+        } else if (cell.userEnteredValue?.stringValue) {
+          cellValue = cell.userEnteredValue.stringValue;
+        }
+
+        if (cellValue && (cellValue.startsWith('http://') || cellValue.startsWith('https://'))) {
+          console.log(`Found image URL column at index ${colIdx}`);
+          return colIdx;
+        }
+      }
+    }
+
+    return -1;
+  } catch (error) {
+    console.error('Error detecting image URL column:', error.message);
+    return -1;
   }
 };
 
@@ -165,9 +285,10 @@ export const findOutputColumnIndices = async (spreadsheetId, sheetName) => {
  * Processes all rows in a Google Sheet, generates variations, uploads to Drive,
  * and updates the sheet with links
  *
+ * Uses a FIXED Drive folder for all uploads: 1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO
+ *
  * Options: {
  *   sheetsUrl: string,
- *   driveFolderUrl: string,
  *   baseUrl: string (e.g., "http://localhost:8080"),
  *   onProgress: (progress) => void callback
  * }
@@ -186,22 +307,18 @@ export const findOutputColumnIndices = async (spreadsheetId, sheetName) => {
 export const processBatch = async (options) => {
   const {
     sheetsUrl,
-    driveFolderUrl,
     sheetName: providedSheetName,
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
 
+  // FIXED Drive folder ID for all uploads
+  const FIXED_DRIVE_FOLDER_ID = '1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO';
+
   try {
     // Step 1: Validate inputs
     const spreadsheetId = extractSpreadsheetId(sheetsUrl);
-    let folderId = null;
-
-    try {
-      folderId = extractFolderId(driveFolderUrl);
-    } catch (error) {
-      console.warn('Warning: Invalid Drive folder URL, will upload to root:', error.message);
-    }
+    const folderId = FIXED_DRIVE_FOLDER_ID;
 
     // Step 2: Detect sheet name (use provided or find automatically)
     onProgress?.({
@@ -220,23 +337,68 @@ export const processBatch = async (options) => {
       message: `Using sheet: "${sheetName}"`,
     });
 
-    // Step 3: Read all rows from sheet
+    // Step 3: Detect which column contains image URLs (prefer column F)
+    onProgress?.({
+      state: 'detecting-column',
+      message: 'Detecting image URL column...',
+    });
+
+    const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName);
+
+    if (imageUrlColumnIndex === -1) {
+      throw new Error('Could not find any column with image URLs in the sheet');
+    }
+
+    const columnLetter = String.fromCharCode(65 + imageUrlColumnIndex);
+    onProgress?.({
+      state: 'column-detected',
+      message: `Using column ${columnLetter} for image URLs`,
+      imageUrlColumnIndex,
+    });
+
+    // Step 3.5: Get column header name for the detected column
+    // We'll need to read the header row to know the exact column name
+    const sheetsClient = await getSheetsClient();
+    const headerResponse = await sheetsClient.spreadsheets.get({
+      spreadsheetId,
+      ranges: [`${sheetName}!A:Z`],
+      includeGridData: true,
+    });
+
+    let imageUrlColumnName = columnLetter;
+    const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
+    if (gridData && gridData.rowData && gridData.rowData[0] && gridData.rowData[0].values) {
+      // Find header row
+      let headerRowIndex = 0;
+      let maxCells = 0;
+      for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
+        const cells = gridData.rowData[i].values?.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length || 0;
+        if (cells > maxCells) {
+          maxCells = cells;
+          headerRowIndex = i;
+        }
+      }
+      
+      const headerCell = gridData.rowData[headerRowIndex]?.values?.[imageUrlColumnIndex];
+      if (headerCell?.userEnteredValue?.stringValue) {
+        imageUrlColumnName = headerCell.userEnteredValue.stringValue;
+      }
+    }
+
+    // Step 4: Read all rows from sheet
     onProgress?.({
       state: 'reading-sheet',
       message: 'Reading Google Sheet...',
     });
 
-    const rows = await readSheetRows(spreadsheetId, sheetName);
+    const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
     const totalRows = rows.length;
 
     if (totalRows === 0) {
       throw new Error('No data rows found in the sheet');
     }
 
-    // Step 4: Find output column indices
-    const columnIndices = await findOutputColumnIndices(spreadsheetId, sheetName);
-
-    // Step 4: Process each row
+    // Step 5: Process each row
     const updates = [];
 
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
@@ -244,34 +406,16 @@ export const processBatch = async (options) => {
       const rowNumber = rowIndex + 2; // +2 because row 1 is headers and we're 0-indexed
 
       try {
-        // Find image URL from common column names (try multiple variations for flexibility)
-        let imageUrl = null;
-        
-        // List of common column name variations to try
-        const imageColumnNames = [
-          'Preview de creatividad',
-          'Preview',
-          'Image URL',
-          'Imagen',
-          'Creative',
-          '16.9 IMG',
-        ];
+        // Get image URL from the detected column (now using column name as key)
+        const imageUrl = row[imageUrlColumnName]?.trim();
 
-        // Find the first non-empty image URL
-        for (const colName of imageColumnNames) {
-          if (row[colName] && row[colName].trim() !== '') {
-            imageUrl = row[colName];
-            break;
-          }
-        }
-
-        if (!imageUrl || imageUrl.trim() === '') {
+        if (!imageUrl || imageUrl === '') {
           onProgress?.({
             rowNumber,
             currentRow: rowIndex + 1,
             totalRows,
             status: 'skipped',
-            reason: 'No image URL found in columns: ' + imageColumnNames.join(', '),
+            reason: `No image URL in column "${imageUrlColumnName}"`,
             rowData: row,
           });
           continue;
@@ -343,46 +487,48 @@ export const processBatch = async (options) => {
           uploadedLinks['9:16'].push(link);
         }
 
-        // Prepare sheet updates
-        if (columnIndices['1:1_A'] !== undefined) {
+        // Prepare sheet updates - store outputs in columns after the image URL column
+        const outputColumnStart = imageUrlColumnIndex + 1;
+
+        if (uploadedLinks['1:1'][0]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_A'])}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][0] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart)}${rowNumber}`,
+            values: [[uploadedLinks['1:1'][0]]],
           });
         }
 
-        if (columnIndices['1:1_B'] !== undefined) {
+        if (uploadedLinks['1:1'][1]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_B'])}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][1] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 1)}${rowNumber}`,
+            values: [[uploadedLinks['1:1'][1]]],
           });
         }
 
-        if (columnIndices['1:1_C'] !== undefined) {
+        if (uploadedLinks['1:1'][2]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_C'])}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][2] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 2)}${rowNumber}`,
+            values: [[uploadedLinks['1:1'][2]]],
           });
         }
 
-        if (columnIndices['9:16_A'] !== undefined) {
+        if (uploadedLinks['9:16'][0]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_A'])}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][0] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 3)}${rowNumber}`,
+            values: [[uploadedLinks['9:16'][0]]],
           });
         }
 
-        if (columnIndices['9:16_B'] !== undefined) {
+        if (uploadedLinks['9:16'][1]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_B'])}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][1] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 4)}${rowNumber}`,
+            values: [[uploadedLinks['9:16'][1]]],
           });
         }
 
-        if (columnIndices['9:16_C'] !== undefined) {
+        if (uploadedLinks['9:16'][2]) {
           updates.push({
-            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_C'])}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][2] || '']],
+            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 5)}${rowNumber}`,
+            values: [[uploadedLinks['9:16'][2]]],
           });
         }
 

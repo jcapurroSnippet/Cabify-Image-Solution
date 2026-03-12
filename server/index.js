@@ -284,14 +284,10 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
 app.post('/api/batch-aspect-ratio', async (request, response) => {
   try {
-    const { sheetsUrl, driveFolderUrl, sheetName } = request.body ?? {};
+    const { sheetsUrl, sheetName } = request.body ?? {};
 
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
       throw new RequestValidationError('sheetsUrl is required.');
-    }
-
-    if (typeof driveFolderUrl !== 'string' || driveFolderUrl.trim().length === 0) {
-      throw new RequestValidationError('driveFolderUrl is required.');
     }
 
     // Set response headers for streaming progress
@@ -304,9 +300,9 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     };
 
     // Start batch processing asynchronously
+    // Note: driveFolderUrl is now hardcoded inside processBatch
     processBatch({
       sheetsUrl: sheetsUrl.trim(),
-      driveFolderUrl: driveFolderUrl.trim(),
       sheetName: sheetName ? sheetName.trim() : undefined,
       baseUrl: `${request.protocol}://${request.get('host')}`,
       onProgress,
