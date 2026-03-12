@@ -25,6 +25,32 @@ export const extractSheetId = (sheetsUrl) => {
 };
 
 /**
+ * Get the name of the first sheet in a spreadsheet
+ * Automatically detects the sheet name instead of hardcoding "Sheet1"
+ */
+export const getFirstSheetName = async (spreadsheetId) => {
+  try {
+    const sheets = await getSheetsClient();
+    
+    const response = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets(properties(title))',
+    });
+
+    const sheetName = response.data.sheets?.[0]?.properties?.title;
+    if (!sheetName) {
+      throw new Error('No sheets found in spreadsheet');
+    }
+
+    console.log(`Using sheet: "${sheetName}"`);
+    return sheetName;
+  } catch (error) {
+    console.error('Error getting sheet name:', error.message);
+    throw new Error(`Failed to get sheet name: ${error.message}`);
+  }
+};
+
+/**
  * Read all rows from a Google Sheet
  * Returns array of row objects with column headers as keys
  */

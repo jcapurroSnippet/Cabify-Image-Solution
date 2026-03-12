@@ -4,6 +4,7 @@ import {
   readSheetRows,
   updateSheetCells,
   columnIndexToLetter,
+  getFirstSheetName,
 } from './sheetsService.js';
 import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
 import { getSheetsClient } from './googleAuth.js';
@@ -124,21 +125,29 @@ export const processBatch = async (options) => {
       console.warn('Warning: Invalid Drive folder URL, will upload to root:', error.message);
     }
 
-    // Step 2: Read all rows from sheet
+    // Step 2: Auto-detect sheet name
+    onProgress?.({
+      state: 'detecting-sheet',
+      message: 'Detecting sheet name...',
+    });
+
+    const sheetName = await getFirstSheetName(spreadsheetId);
+
+    // Step 3: Read all rows from sheet
     onProgress?.({
       state: 'reading-sheet',
       message: 'Reading Google Sheet...',
     });
 
-    const rows = await readSheetRows(spreadsheetId, 'Sheet1');
+    const rows = await readSheetRows(spreadsheetId, sheetName);
     const totalRows = rows.length;
 
     if (totalRows === 0) {
       throw new Error('No data rows found in the sheet');
     }
 
-    // Step 3: Find output column indices
-    const columnIndices = await findOutputColumnIndices(spreadsheetId, 'Sheet1');
+    // Step 4: Find output column indices
+    const columnIndices = await findOutputColumnIndices(spreadsheetId, sheetName);
 
     // Step 4: Process each row
     const updates = [];
@@ -231,42 +240,42 @@ export const processBatch = async (options) => {
         // Prepare sheet updates
         if (columnIndices['1:1_A'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['1:1_A'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_A'])}${rowNumber}`,
             values: [[uploadedLinks['1:1'][0] || '']],
           });
         }
 
         if (columnIndices['1:1_B'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['1:1_B'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_B'])}${rowNumber}`,
             values: [[uploadedLinks['1:1'][1] || '']],
           });
         }
 
         if (columnIndices['1:1_C'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['1:1_C'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['1:1_C'])}${rowNumber}`,
             values: [[uploadedLinks['1:1'][2] || '']],
           });
         }
 
         if (columnIndices['9:16_A'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['9:16_A'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_A'])}${rowNumber}`,
             values: [[uploadedLinks['9:16'][0] || '']],
           });
         }
 
         if (columnIndices['9:16_B'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['9:16_B'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_B'])}${rowNumber}`,
             values: [[uploadedLinks['9:16'][1] || '']],
           });
         }
 
         if (columnIndices['9:16_C'] !== undefined) {
           updates.push({
-            range: `Sheet1!${columnIndexToLetter(columnIndices['9:16_C'])}${rowNumber}`,
+            range: `${sheetName}!${columnIndexToLetter(columnIndices['9:16_C'])}${rowNumber}`,
             values: [[uploadedLinks['9:16'][2] || '']],
           });
         }
