@@ -284,7 +284,7 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
 app.post('/api/batch-aspect-ratio', async (request, response) => {
   try {
-    const { sheetsUrl, driveFolderUrl } = request.body ?? {};
+    const { sheetsUrl, driveFolderUrl, sheetName } = request.body ?? {};
 
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
       throw new RequestValidationError('sheetsUrl is required.');
@@ -307,6 +307,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     processBatch({
       sheetsUrl: sheetsUrl.trim(),
       driveFolderUrl: driveFolderUrl.trim(),
+      sheetName: sheetName ? sheetName.trim() : undefined,
       baseUrl: `${request.protocol}://${request.get('host')}`,
       onProgress,
     })

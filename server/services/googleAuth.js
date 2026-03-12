@@ -68,12 +68,14 @@ export const getAuthClient = async () => {
     const jwtClient = new JWT({
       email: credentials.client_email,
       key: credentials.private_key,
-      scopes: [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive.file',
-        'https://www.googleapis.com/auth/drive',
-      ],
     });
+
+    // Apply scopes to the JWT client
+    jwtClient.scopes = [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive',
+    ];
 
     console.log('✓ JWT client created with service account');
     cachedAuthClient = jwtClient;

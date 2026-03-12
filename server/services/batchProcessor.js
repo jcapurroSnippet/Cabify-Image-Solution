@@ -44,6 +44,83 @@ export const generateAspectRatioVariations = async (imageDataUrl, targetRatio, b
 };
 
 /**
+ * Find the first sheet with data and image columns
+ * Scans all sheets and returns the first one with actual image-related columns
+ */
+export const findFirstSheetWithData = async (spreadsheetId) => {
+  try {
+    const sheets = await getSheetsClient();
+
+    // Get list of all sheets
+    const response = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets(properties(title))',
+    });
+
+    const sheetNames = response.data.sheets?.map((s) => s.properties.title) || [];
+
+    // Column keywords to search for
+    const imageKeywords = ['preview', 'imagen', 'image', 'creative', 'creativo', 'piezas'];
+
+    // Try each sheet to find one with image columns
+    for (const sheetName of sheetNames) {
+      try {
+        const dataResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${sheetName}!1:1`,
+        });
+
+        const headers = dataResponse.data.values?.[0] || [];
+        
+        // Check if sheet has meaningful headers (at least 3) with image-related keywords
+        if (headers.length >= 3) {
+          const hasImageColumn = headers.some((h) =>
+            imageKeywords.some((kw) => h?.toLowerCase().includes(kw))
+          );
+          
+          if (hasImageColumn) {
+            console.log(`Found sheet with image columns: "${sheetName}"`);
+            return sheetName;
+          }
+        }
+      } catch (error) {
+        // Skip sheets that have errors
+        continue;
+      }
+    }
+
+    // If no sheet with image columns found, look for any sheet with decent amount of data
+    for (const sheetName of sheetNames) {
+      try {
+        const dataResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${sheetName}!1:5`,
+        });
+
+        const allRows = dataResponse.data.values || [];
+        const hasHeaders = allRows.length > 0 && allRows[0].length >= 3;
+        const hasData = allRows.length > 1;
+
+        if (hasHeaders && hasData) {
+          console.log(`Found sheet with data: "${sheetName}"`);
+          return sheetName;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+
+    // Fallback to first sheet if all are empty
+    const fallbackSheet = sheetNames[0] || 'Sheet1';
+    console.log(`No suitable sheets found. Using fallback: "${fallbackSheet}"`);
+    return fallbackSheet;
+  } catch (error) {
+    console.error('Error finding sheet with data:', error.message);
+    throw error;
+  }
+};
+
+/**
  * Find column indices for output columns in the sheet
  * Looks for columns containing keywords like "1:1 IMG A", "1:1 IMG B", etc.
  */
@@ -110,6 +187,7 @@ export const processBatch = async (options) => {
   const {
     sheetsUrl,
     driveFolderUrl,
+    sheetName: providedSheetName,
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
@@ -125,13 +203,22 @@ export const processBatch = async (options) => {
       console.warn('Warning: Invalid Drive folder URL, will upload to root:', error.message);
     }
 
-    // Step 2: Auto-detect sheet name
+    // Step 2: Detect sheet name (use provided or find automatically)
     onProgress?.({
       state: 'detecting-sheet',
       message: 'Detecting sheet name...',
     });
 
-    const sheetName = await getFirstSheetName(spreadsheetId);
+    let sheetName = providedSheetName;
+    if (!sheetName) {
+      // Auto-detect: find first sheet with data
+      sheetName = await findFirstSheetWithData(spreadsheetId);
+    }
+    
+    onProgress?.({
+      state: 'sheet-detected',
+      message: `Using sheet: "${sheetName}"`,
+    });
 
     // Step 3: Read all rows from sheet
     onProgress?.({
@@ -157,9 +244,26 @@ export const processBatch = async (options) => {
       const rowNumber = rowIndex + 2; // +2 because row 1 is headers and we're 0-indexed
 
       try {
-        // Try to get image URL from column F "16.9 IMG" (contains hyperlinks)
-        // or fallback to column E "Preview de creatividad" 
-        let imageUrl = row['16.9 IMG'] || row['Preview de creatividad'];
+        // Find image URL from common column names (try multiple variations for flexibility)
+        let imageUrl = null;
+        
+        // List of common column name variations to try
+        const imageColumnNames = [
+          'Preview de creatividad',
+          'Preview',
+          'Image URL',
+          'Imagen',
+          'Creative',
+          '16.9 IMG',
+        ];
+
+        // Find the first non-empty image URL
+        for (const colName of imageColumnNames) {
+          if (row[colName] && row[colName].trim() !== '') {
+            imageUrl = row[colName];
+            break;
+          }
+        }
 
         if (!imageUrl || imageUrl.trim() === '') {
           onProgress?.({
@@ -167,7 +271,7 @@ export const processBatch = async (options) => {
             currentRow: rowIndex + 1,
             totalRows,
             status: 'skipped',
-            reason: 'No image URL found',
+            reason: 'No image URL found in columns: ' + imageColumnNames.join(', '),
             rowData: row,
           });
           continue;
