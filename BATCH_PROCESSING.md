@@ -29,7 +29,7 @@ Before using batch processing, you need to set up a Google Cloud project:
    - Click **Create Service Account**
    - Fill in the details and click **Create and Continue**
    - Skip optional steps and click **Done**
-5. Create a JSON Key:
+5. Create a JSON Key (for local development):
    - Click on the service account you just created
    - Go to **Keys** tab
    - Click **Add Key** > **Create new key**
@@ -42,6 +42,14 @@ Before using batch processing, you need to set up a Google Cloud project:
 
 ### 2. Environment Configuration
 
+The application automatically handles authentication in the following order:
+
+#### For GCP Environments (Cloud Run, App Engine, GCE, Cloud Functions)
+✅ **No configuration needed!** Application Default Credentials (ADC) are automatically available.
+
+The application will detect and use the service account associated with your GCP resource.
+
+#### For Local Development
 Add the service account credentials to your environment:
 
 **Option A: Direct JSON (simplest)**
@@ -140,6 +148,55 @@ The UI will show:
    - The 1:1 IMG and 9:16 IMG columns will be populated with links
 
 ## Troubleshooting
+
+### Authentication Issues
+
+#### "Missing or invalid GOOGLE_SERVICE_ACCOUNT_KEY environment variable"
+
+This means the application couldn't find valid credentials. Check in this order:
+
+**1. If running on GCP (Cloud Run, App Engine, etc.):**
+   - Ensure the service account associated with your resource has these roles:
+     - `roles/editor` or roles with permissions for Google Sheets and Drive APIs
+   - Check that the APIs are enabled in your GCP project:
+     - Google Sheets API
+     - Google Drive API
+   - Server logs should show: `✓ Application Default Credentials loaded successfully`
+
+**2. If running locally:**
+   - Set the environment variable before starting the app:
+     ```powershell
+     # Windows PowerShell
+     $key = Get-Content "path/to/service-account.json" -Raw
+     $env:GOOGLE_SERVICE_ACCOUNT_KEY = $key
+     npm run dev:server
+     ```
+   - Or add to `.env` file:
+     ```env
+     GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
+     ```
+   - Server logs should show: `✓ Successfully parsed GOOGLE_SERVICE_ACCOUNT_KEY`
+
+**3. Check server logs for authentication debugging:**
+   The application logs which authentication method is being used:
+   ```
+   Attempting to use Application Default Credentials...
+   ✓ Application Default Credentials loaded successfully
+   
+   OR
+   
+   ADC not available (expected in local development)
+   Attempting to parse GOOGLE_SERVICE_ACCOUNT_KEY from environment...
+   ✓ Successfully parsed GOOGLE_SERVICE_ACCOUNT_KEY
+   ```
+
+### "Permission denied" error
+
+- Make sure the service account email has been shared with:
+  - The Google Sheets document (Editor role)
+  - The Google Drive folder (Editor role)
+- Re-share if necessary and wait a moment for permissions to propagate
+- Verify the email in the error matches your service account email
 
 ### "Invalid Google Sheets URL format"
 - Make sure you're copying the full URL from your browser

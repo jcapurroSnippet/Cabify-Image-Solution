@@ -6,6 +6,7 @@ import {
   columnIndexToLetter,
 } from './sheetsService.js';
 import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
+import { getSheetsClient } from './googleAuth.js';
 
 /**
  * Download image from URL and convert to base64 data URL
@@ -47,12 +48,9 @@ export const generateAspectRatioVariations = async (imageDataUrl, targetRatio, b
  */
 export const findOutputColumnIndices = async (spreadsheetId, sheetName) => {
   try {
-    const sheets = require('googleapis').sheets;
-    const { getAuthClient } = require('./googleAuth.js');
-    const auth = getAuthClient();
-    const sheetsApi = sheets({ version: 'v4', auth });
+    const sheets = await getSheetsClient();
 
-    const response = await sheetsApi.spreadsheets.values.get({
+    const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${sheetName}!1:1`,
     });

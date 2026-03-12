@@ -30,7 +30,7 @@ export const extractSheetId = (sheetsUrl) => {
  */
 export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
   try {
-    const sheets = getSheetsClient();
+    const sheets = await getSheetsClient();
 
     // Get the sheet data including headers
     const response = await sheets.spreadsheets.values.get({
@@ -66,7 +66,7 @@ export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
  */
 export const updateSheetCells = async (spreadsheetId, updates) => {
   try {
-    const sheets = getSheetsClient();
+    const sheets = await getSheetsClient();
 
     const response = await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
@@ -92,7 +92,7 @@ export const updateSheetCells = async (spreadsheetId, updates) => {
  */
 export const findColumnIndex = async (spreadsheetId, sheetName, headerName) => {
   try {
-    const sheets = getSheetsClient();
+    const sheets = await getSheetsClient();
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,

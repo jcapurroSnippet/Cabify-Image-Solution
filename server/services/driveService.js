@@ -6,7 +6,7 @@ import { getDriveClient } from './googleAuth.js';
  */
 export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
   try {
-    const drive = getDriveClient();
+    const drive = await getDriveClient();
 
     // Remove data URL prefix if present
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
@@ -48,7 +48,7 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
  */
 export const makeFilePublic = async (fileId) => {
   try {
-    const drive = getDriveClient();
+    const drive = await getDriveClient();
 
     await drive.permissions.create({
       fileId,
