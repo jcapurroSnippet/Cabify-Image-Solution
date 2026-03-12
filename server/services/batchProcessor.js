@@ -157,7 +157,9 @@ export const processBatch = async (options) => {
       const rowNumber = rowIndex + 2; // +2 because row 1 is headers and we're 0-indexed
 
       try {
-        const imageUrl = row['Preview de creatividad'];
+        // Try to get image URL from column F "16.9 IMG" (contains hyperlinks)
+        // or fallback to column E "Preview de creatividad" 
+        let imageUrl = row['16.9 IMG'] || row['Preview de creatividad'];
 
         if (!imageUrl || imageUrl.trim() === '') {
           onProgress?.({
@@ -165,7 +167,7 @@ export const processBatch = async (options) => {
             currentRow: rowIndex + 1,
             totalRows,
             status: 'skipped',
-            reason: 'No image URL in "Preview de creatividad" column',
+            reason: 'No image URL found',
             rowData: row,
           });
           continue;

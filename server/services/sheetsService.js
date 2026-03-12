@@ -53,12 +53,13 @@ export const getFirstSheetName = async (spreadsheetId) => {
 /**
  * Read all rows from a Google Sheet
  * Returns array of row objects with column headers as keys
+ * Includes hyperlink extraction for cells with links
  */
 export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
   try {
     const sheets = await getSheetsClient();
 
-    // Get the sheet data including headers
+    // Get the sheet data as values first
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: sheetName,
@@ -72,11 +73,45 @@ export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
     // First row is headers
     const [headers, ...rows] = values;
 
-    // Convert to array of objects
-    return rows.map((row) => {
+    // Also get grid data to extract hyperlinks
+    let hyperlinks = {};
+    try {
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId,
+        includeGridData: true,
+        ranges: [sheetName],
+      });
+
+      const sheetData = spreadsheet.data.sheets[0];
+      if (sheetData && sheetData.data && sheetData.data[0]) {
+        const gridData = sheetData.data[0];
+        const gridRows = gridData.rowData || [];
+
+        // Extract hyperlinks with cell references
+        gridRows.forEach((row, rowIdx) => {
+          if (!row || !row.values) return;
+          row.values.forEach((cell, colIdx) => {
+            if (cell && cell.hyperlink) {
+              const key = `${rowIdx}_${colIdx}`;
+              hyperlinks[key] = cell.hyperlink;
+            }
+          });
+        });
+      }
+    } catch (error) {
+      console.warn('Warning: Could not extract hyperlinks:', error.message);
+    }
+
+    // Convert to array of objects, using hyperlinks when available
+    return rows.map((row, rowIdx) => {
       const obj = {};
-      headers.forEach((header, index) => {
-        obj[header] = row[index] || '';
+      headers.forEach((header, colIdx) => {
+        // Check if this cell has a hyperlink (rowIdx + 1 because headers are row 0)
+        const hyperlinkKey = `${rowIdx + 1}_${colIdx}`;
+        const value = row[colIdx] || '';
+        
+        // Use hyperlink if available, otherwise use the cell value
+        obj[header] = hyperlinks[hyperlinkKey] || value;
       });
       return obj;
     });
