@@ -35,13 +35,11 @@ const CONFIG = {
 
   // Data extraction
   IMAGE_URL_COLUMN_NAMES: [
+    'Categoria',
+    'Ciudad',
+    'Copy in de la pieza',
     'Preview de creatividad',
-    'Preview',
-    'Image URL',
-    'Imagen',
-    'Creative',
-    'Creatividad',
-    'Image',
+    '16.9 IMG'
   ],
 };
 
