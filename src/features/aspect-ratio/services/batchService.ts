@@ -3,10 +3,10 @@ import { BatchProgressEvent, BatchResult } from '../types';
 /**
  * Start batch processing from a Google Sheets URL
  * Returns a stream of progress events via callback
+ * Uses hardcoded Drive folder: 1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO
  */
 export const startBatchProcessing = async (
   sheetsUrl: string,
-  driveFolderUrl: string,
   onProgress: (event: BatchProgressEvent) => void,
   onComplete: (result: BatchResult) => void,
   onError: (error: string) => void
@@ -19,7 +19,6 @@ export const startBatchProcessing = async (
       },
       body: JSON.stringify({
         sheetsUrl,
-        driveFolderUrl,
       }),
     });
 

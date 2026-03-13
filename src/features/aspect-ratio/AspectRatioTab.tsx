@@ -34,9 +34,11 @@ const INITIAL_STATE: AspectRatioState = {
   error: null,
 };
 
+const HARDCODED_DRIVE_FOLDER = 'https://drive.google.com/drive/u/0/folders/1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO';
+
 const INITIAL_BATCH_STATE: BatchState = {
   sheetsUrl: '',
-  driveFolderUrl: '',
+  driveFolderUrl: HARDCODED_DRIVE_FOLDER,
   isProcessing: false,
   progress: {
     totalRows: 0,
@@ -160,16 +162,6 @@ export default function AspectRatioTab() {
       return false;
     }
 
-    if (!batchState.driveFolderUrl.trim()) {
-      setBatchState((p) => ({ ...p, error: 'Please enter a Google Drive folder URL.' }));
-      return false;
-    }
-
-    if (!isValidDriveFolderUrl(batchState.driveFolderUrl)) {
-      setBatchState((p) => ({ ...p, error: 'Invalid Google Drive folder URL format.' }));
-      return false;
-    }
-
     return true;
   };
 
@@ -187,7 +179,6 @@ export default function AspectRatioTab() {
 
     await startBatchProcessing(
       batchState.sheetsUrl,
-      batchState.driveFolderUrl,
       (event: BatchProgressEvent) => {
         setBatchState((previous) => {
           const updated = { ...previous };
@@ -308,19 +299,7 @@ export default function AspectRatioTab() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Google Drive Folder URL
-              </label>
-              <input
-                type="text"
-                placeholder="https://drive.google.com/drive/folders/..."
-                value={batchState.driveFolderUrl}
-                onChange={(e) => handleBatchInputChange('driveFolderUrl', e.target.value)}
-                disabled={batchState.isProcessing}
-                className="w-full rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 transition-colors hover:border-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
-              />
-            </div>
+
 
             {batchState.error && (
               <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
@@ -334,8 +313,7 @@ export default function AspectRatioTab() {
               onClick={handleStartBatch}
               disabled={
                 batchState.isProcessing ||
-                !batchState.sheetsUrl.trim() ||
-                !batchState.driveFolderUrl.trim()
+                !batchState.sheetsUrl.trim()
               }
               className={`w-full rounded-lg px-4 py-2 font-semibold text-sm transition-colors ${
                 batchState.isProcessing
