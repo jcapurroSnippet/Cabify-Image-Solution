@@ -10,10 +10,35 @@ import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveServ
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
+const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
+const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
+
 const extractUrlFromFormula = (formula) => {
   if (typeof formula !== 'string') return null;
   const match = formula.match(/HYPERLINK\(\s*["']([^"']+)["']/i);
   return match ? match[1] : null;
+};
+
+const extractUrlFromCell = (cell) => {
+  if (!cell) return null;
+
+  if (cell.hyperlink) return cell.hyperlink;
+
+  const formulaUrl = extractUrlFromFormula(cell.userEnteredValue?.formulaValue);
+  if (formulaUrl) return formulaUrl;
+
+  const runs = cell.textFormatRuns || [];
+  for (const run of runs) {
+    const uri = run?.format?.link?.uri;
+    if (uri) return uri;
+  }
+
+  const str = cell.userEnteredValue?.stringValue || cell.formattedValue;
+  if (typeof str === 'string' && (str.startsWith('http://') || str.startsWith('https://'))) {
+    return str;
+  }
+
+  return null;
 };
 
 const findHeaderRowIndex = (rowData, maxScan = 20) => {
@@ -53,7 +78,7 @@ const findHeaderRowIndex = (rowData, maxScan = 20) => {
   return headerRowIndex;
 };
 
-const buildSheetRange = async (sheets, spreadsheetId, sheetName, maxRows = 200) => {
+const buildSheetRange = async (sheets, spreadsheetId, sheetName, maxRows = DEFAULT_MAX_SCAN_ROWS) => {
   try {
     const meta = await sheets.spreadsheets.get({
       spreadsheetId,
@@ -284,7 +309,7 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
   try {
     const sheets = await getSheetsClient();
 
-    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, 200);
+    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, DEFAULT_MAX_SCAN_ROWS);
 
     // Read with grid data to include hyperlinks
     const response = await sheets.spreadsheets.get({
@@ -338,16 +363,12 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
         }
 
         // Priority: hyperlink URL > cell text value
-        const formulaUrl = extractUrlFromFormula(cell.userEnteredValue?.formulaValue);
+        const cellUrl = extractUrlFromCell(cell);
 
-        if (cell.hyperlink) {
-          rowObj[header] = cell.hyperlink;
-        } else if (formulaUrl) {
-          rowObj[header] = formulaUrl;
+        if (cellUrl) {
+          rowObj[header] = cellUrl;
         } else if (cell.userEnteredValue?.stringValue) {
           rowObj[header] = cell.userEnteredValue.stringValue;
-        } else if (cell.formattedValue) {
-          rowObj[header] = cell.formattedValue;
         } else if (cell.userEnteredValue?.numberValue) {
           rowObj[header] = String(cell.userEnteredValue.numberValue);
         } else {
@@ -375,7 +396,8 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     console.log(`[URL DETECTION] Starting URL column detection for sheet: "${sheetName}"`);
     const sheets = await getSheetsClient();
 
-    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, 200);
+    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, DEFAULT_MAX_SCAN_ROWS);
+    console.log(`[URL DETECTION] Using range: ${range}`);
 
     // Read with grid data to include hyperlinks
     const response = await sheets.spreadsheets.get({
@@ -432,7 +454,10 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
 
     // Scan data rows for URLs (in hyperlinks or cell values)
     // Increased from 15 to 50 rows to handle varied data
-    const rowsToScan = Math.min(50, gridData.rowData.length - headerRowIndex - 1);
+    const rowsToScan = Math.min(
+      DEFAULT_URL_SCAN_ROWS,
+      Math.max(0, gridData.rowData.length - headerRowIndex - 1)
+    );
     console.log(`[URL DETECTION] Scanning ${rowsToScan} data rows for URLs...`);
 
     let urlsFoundPerColumn = {};
@@ -448,25 +473,7 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
         const cell = row.values[colIdx];
         if (!cell) continue;
 
-        let cellValue = '';
-        let foundInHyperlink = false;
-        let foundInFormula = false;
-        
-        // Check hyperlink first
-        if (cell.hyperlink) {
-          cellValue = cell.hyperlink;
-          foundInHyperlink = true;
-        } else {
-          const formulaUrl = extractUrlFromFormula(cell.userEnteredValue?.formulaValue);
-          if (formulaUrl) {
-            cellValue = formulaUrl;
-            foundInFormula = true;
-          } else if (cell.userEnteredValue?.stringValue) {
-            cellValue = cell.userEnteredValue.stringValue;
-          } else if (cell.formattedValue) {
-            cellValue = cell.formattedValue;
-          }
-        }
+        const cellValue = extractUrlFromCell(cell);
 
         // Initialize counter for this column
         if (!urlsFoundPerColumn[colIdx]) {
@@ -475,8 +482,7 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
 
         if (cellValue && (cellValue.startsWith('http://') || cellValue.startsWith('https://'))) {
           urlsFoundPerColumn[colIdx]++;
-          const source = foundInHyperlink ? 'hyperlink' : foundInFormula ? 'formula' : 'text';
-          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL (${source})`);
+          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL`);
         }
       }
     }
@@ -504,6 +510,7 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     }
 
     console.log('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
+    console.log('[URL DETECTION] Debug: Header row index =', headerRowIndex);
     return -1;
   } catch (error) {
     console.error('[URL DETECTION] ERROR:', error.message);
