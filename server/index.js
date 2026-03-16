@@ -45,13 +45,14 @@ const extractFirstImageFromResponse = (response) => {
 
 const getVariationPrompt = (targetRatio, variationInstruction) => `
 **ROLE:** Cabify Brand Guardian (Strict Compliance Mode).
-**TASK:** Adapt source image to **${targetRatio}**.
+**TASK:** Adapt source image to **${targetRatio}** while matching the attached reference layout.
 **CONSTRAINT:** Any deviation from the Cabify Visual Identity System is a failure.
 
 ## PROHIBITIONS
 - Scene Integrity: Do NOT modify the main subject or key objects. You MAY outpaint only missing background areas.
 - Logo Isolation: Do NOT place any logo inside white UI card components.
 - UI Singularity: Create exactly one unified UI container per output.
+- No re-styling: do not add filters, blur, gradients, or color shifts.
 
 ## BRAND LOCKS
 - Keep the source palette exactly.
@@ -59,27 +60,39 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Do not change orientation of any element.
 - No style drift: keep Cabify look and feel.
 
-## GEOMETRY
-1. CROP: discard left side from 16:9 source when needed.
-2. CENTER: keep the subject centered.
-3. EXTEND: outpaint top/bottom only as needed for **${targetRatio}**.
+## COMPOSITION LOCKS
+- Preserve the car window frame geometry and diagonal lines.
+- Keep the subject face fully visible and natural; keep the raised hand visible.
+- Preserve the original camera angle and perspective.
 
-## UI CONTAINER BEHAVIOR
-- Keep lateral margins, never stretch full edge-to-edge.
-- One card/sheet only.
+## GEOMETRY
+- CROP only what is necessary to fit **${targetRatio}**.
+- EXTEND (outpaint) only background areas if needed.
+- Do NOT crop through the subject, hand, logo, or UI card.
+
+## UI CARD SPEC
+- White rounded rectangle card, consistent corner radius and soft shadow.
+- Text and button must match source colors and style exactly.
+- Keep original line breaks and text alignment.
+- Button: mantain colour, icon on the left, uppercase label, same padding as source.
+
+## LOGO PLACEMENT
+- Keep logo size the same as source.
+- Align to the reference layout for the target ratio (do not put logo inside the card).
 
 ### If target is 9:16
-- Use a floating white bottom sheet with rounded top corners.
-- Keep visible background below the sheet.
+- Logo top-center.
+- Card centered horizontally near the bottom with equal side margins.
+- Keep visible background below the card.
 - Text centered.
 
 ### If target is 1:1
-- Use a docked white card touching the bottom edge.
+- Logo top-left.
+- Card anchored to the bottom-left with generous left margin.
 - Text left aligned.
 
 ## CONTENT REPLICATION
-- Text content must be copied exactly.
-- Button color and text style must match source.
+- Copy text content exactly.
 - Do not add new objects, logos, icons, or decorative assets.
 
 ## VARIATION
@@ -94,16 +107,16 @@ const getVariationsForRatio = (targetRatio) => {
 
   if (ratio === '1:1') {
     return [
-      `Variation A: centered subject, standard crop, keep face fully visible above the docked card. ${lockedBrandRules}`,
-      `Variation B: centered subject, slightly higher framing for safer card space, no typography shrink. ${lockedBrandRules}`,
-      `Variation C: centered subject, slightly wider crop, outpaint only background if needed. ${lockedBrandRules}`,
+      `Variation A: match reference layout exactly (logo top-left, card bottom-left, left-aligned text). Keep subject on right half with full face + hand visible. ${lockedBrandRules}`,
+      `Variation B: keep the same layout but add slightly more headroom above the subject; do not change logo or card size. ${lockedBrandRules}`,
+      `Variation C: keep layout, allow a slightly wider crop to show more car door/frame while preserving the card margins. ${lockedBrandRules}`,
     ];
   }
 
   return [
-    `Variation A: centered subject, balanced headroom, floating bottom sheet with visible gap below. ${lockedBrandRules}`,
-    `Variation B: centered subject, extra headroom, outpaint only background. ${lockedBrandRules}`,
-    `Variation C: centered subject, width container and slightly bigger letters. ${lockedBrandRules}`,
+    `Variation A: match reference layout exactly (logo top-center, card bottom-center, centered text). Keep full face + hand visible. ${lockedBrandRules}`,
+    `Variation B: keep layout, slightly more headroom above the subject; do not change card or logo size. ${lockedBrandRules}`,
+    `Variation C: keep layout, slightly lower the subject (more sky/background at top) while preserving card position. ${lockedBrandRules}`,
   ];
 };
 
