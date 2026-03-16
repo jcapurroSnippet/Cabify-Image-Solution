@@ -10,6 +10,12 @@ import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveServ
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
+const extractUrlFromFormula = (formula) => {
+  if (typeof formula !== 'string') return null;
+  const match = formula.match(/HYPERLINK\(\s*["']([^"']+)["']/i);
+  return match ? match[1] : null;
+};
+
 const findHeaderRowIndex = (rowData, maxScan = 20) => {
   if (!rowData || rowData.length === 0) return -1;
 
@@ -45,6 +51,26 @@ const findHeaderRowIndex = (rowData, maxScan = 20) => {
   }
 
   return headerRowIndex;
+};
+
+const buildSheetRange = async (sheets, spreadsheetId, sheetName, maxRows = 200) => {
+  try {
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets(properties(title,gridProperties(columnCount,rowCount)))',
+    });
+
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === sheetName);
+    const columnCount = sheet?.properties?.gridProperties?.columnCount || 26;
+    const rowCount = sheet?.properties?.gridProperties?.rowCount || maxRows;
+    const lastCol = columnIndexToLetter(Math.max(0, columnCount - 1));
+    const lastRow = Math.min(rowCount, maxRows);
+
+    return `${sheetName}!A1:${lastCol}${lastRow}`;
+  } catch (error) {
+    console.warn('[BATCH] Could not fetch sheet grid properties, falling back to A1:Z200');
+    return `${sheetName}!A1:Z${maxRows}`;
+  }
 };
 
 const extractDriveFileId = (url) => {
@@ -258,10 +284,12 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
   try {
     const sheets = await getSheetsClient();
 
+    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, 200);
+
     // Read with grid data to include hyperlinks
     const response = await sheets.spreadsheets.get({
       spreadsheetId,
-      ranges: [`${sheetName}!A:Z`],
+      ranges: [range],
       includeGridData: true,
     });
 
@@ -310,10 +338,16 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
         }
 
         // Priority: hyperlink URL > cell text value
+        const formulaUrl = extractUrlFromFormula(cell.userEnteredValue?.formulaValue);
+
         if (cell.hyperlink) {
           rowObj[header] = cell.hyperlink;
+        } else if (formulaUrl) {
+          rowObj[header] = formulaUrl;
         } else if (cell.userEnteredValue?.stringValue) {
           rowObj[header] = cell.userEnteredValue.stringValue;
+        } else if (cell.formattedValue) {
+          rowObj[header] = cell.formattedValue;
         } else if (cell.userEnteredValue?.numberValue) {
           rowObj[header] = String(cell.userEnteredValue.numberValue);
         } else {
@@ -341,10 +375,12 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     console.log(`[URL DETECTION] Starting URL column detection for sheet: "${sheetName}"`);
     const sheets = await getSheetsClient();
 
+    const range = await buildSheetRange(sheets, spreadsheetId, sheetName, 200);
+
     // Read with grid data to include hyperlinks
     const response = await sheets.spreadsheets.get({
       spreadsheetId,
-      ranges: [`${sheetName}!A:Z`],
+      ranges: [range],
       includeGridData: true,
     });
 
@@ -414,13 +450,22 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
 
         let cellValue = '';
         let foundInHyperlink = false;
+        let foundInFormula = false;
         
         // Check hyperlink first
         if (cell.hyperlink) {
           cellValue = cell.hyperlink;
           foundInHyperlink = true;
-        } else if (cell.userEnteredValue?.stringValue) {
-          cellValue = cell.userEnteredValue.stringValue;
+        } else {
+          const formulaUrl = extractUrlFromFormula(cell.userEnteredValue?.formulaValue);
+          if (formulaUrl) {
+            cellValue = formulaUrl;
+            foundInFormula = true;
+          } else if (cell.userEnteredValue?.stringValue) {
+            cellValue = cell.userEnteredValue.stringValue;
+          } else if (cell.formattedValue) {
+            cellValue = cell.formattedValue;
+          }
         }
 
         // Initialize counter for this column
@@ -430,7 +475,8 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
 
         if (cellValue && (cellValue.startsWith('http://') || cellValue.startsWith('https://'))) {
           urlsFoundPerColumn[colIdx]++;
-          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL (${foundInHyperlink ? 'hyperlink' : 'text'})`);
+          const source = foundInHyperlink ? 'hyperlink' : foundInFormula ? 'formula' : 'text';
+          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL (${source})`);
         }
       }
     }
