@@ -8,20 +8,8 @@ import sharp from 'sharp';
  */
 export const optimizeImageBuffer = async (imageBuffer) => {
   try {
-    console.log(`[OPTIMIZE] Input size: ${imageBuffer.length} bytes`);
-    
-    const optimized = await sharp(imageBuffer)
-      .resize(1024, 1024, {
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: 75, progressive: true })
-      .toBuffer();
-    
-    console.log(`[OPTIMIZE] Output size: ${optimized.length} bytes`);
-    console.log(`[OPTIMIZE] Reduction: ${((1 - optimized.length / imageBuffer.length) * 100).toFixed(1)}%`);
-    
-    return optimized;
+    console.log('[OPTIMIZE] Optimization disabled. Returning original buffer.');
+    return imageBuffer;
   } catch (error) {
     console.warn(`[OPTIMIZE] Could not optimize with sharp, using original:`, error.message);
     return imageBuffer;
