@@ -294,6 +294,11 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     // Set response headers for streaming progress
     response.setHeader('Content-Type', 'application/x-ndjson');
     response.setHeader('Transfer-Encoding', 'chunked');
+    response.setHeader('Cache-Control', 'no-cache');
+    if (typeof response.flushHeaders === 'function') {
+      response.flushHeaders();
+    }
+    response.write(JSON.stringify({ state: 'started' }) + '\n');
 
     // Define progress callback
     const onProgress = (progressData) => {
