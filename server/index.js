@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+﻿import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -65,6 +65,11 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Keep the subject face fully visible and natural; keep the raised hand visible.
 - Preserve the original camera angle and perspective.
 
+## SAFE MARGINS & SIZE LOCKS (relative to canvas)
+- Respect consistent safe margins from the canvas edges.
+- Logo size must remain within a tight band; do not scale up/down noticeably.
+- Card size must remain within a tight band; do not stretch.
+
 ## GEOMETRY
 - CROP only what is necessary to fit **${targetRatio}**.
 - EXTEND (outpaint) only background areas if needed.
@@ -75,6 +80,7 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Text and button must match source colors and style exactly.
 - Keep original line breaks and text alignment.
 - Button: mantain colour, icon on the left, uppercase label, same padding as source.
+- Card must span nearly the full width of the canvas with only small side margins (edge-to-edge look like the references).
 
 ## LOGO PLACEMENT
 - Keep logo size the same as source.
@@ -85,11 +91,23 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Card centered horizontally near the bottom with equal side margins.
 - Keep visible background below the card.
 - Text centered.
+- Logo width: ~12-14% of canvas width.
+- Top margin: ~5-7% of canvas height.
+- Card width: ~94-96% of canvas width (near full width).
+- Card height: ~22-26% of canvas height.
+- Side margins: ~2-3% each.
+- Bottom margin: ~6-8% of canvas height.
 
 ### If target is 1:1
 - Logo top-left.
-- Card anchored to the bottom-left with generous left margin.
+- Card anchored near the bottom with small side margins (near full width).
 - Text left aligned.
+- Logo width: ~14-16% of canvas width.
+- Top margin: ~6-8% of canvas height.
+- Side margins: ~2-3% each.
+- Card width: ~94-96% of canvas width (near full width).
+- Card height: ~28-32% of canvas height.
+- Bottom margin: ~4-6% of canvas height.
 
 ## CONTENT REPLICATION
 - Copy text content exactly.
