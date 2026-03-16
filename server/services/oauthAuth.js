@@ -11,15 +11,21 @@ const __dirname = path.dirname(__filename);
 
 const OAUTH_TOKEN_FILE = path.join(__dirname, '.oauth-token.json');
 const OAUTH_CONFIG = {
-  clientId: 'YOUR_OAUTH_CLIENT_ID',
-  clientSecret: 'YOUR_OAUTH_CLIENT_SECRET',
-  redirectUrl: 'http://localhost:8888/oauth-callback',
+  clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
+  clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
+  redirectUrl: process.env.GOOGLE_OAUTH_REDIRECT_URL || 'http://localhost:8888/oauth-callback',
 };
 
 /**
  * Create an OAuth2Client instance
  */
 export function createOAuth2Client() {
+  if (!OAUTH_CONFIG.clientId || !OAUTH_CONFIG.clientSecret) {
+    throw new Error(
+      'Missing GOOGLE_OAUTH_CLIENT_ID or GOOGLE_OAUTH_CLIENT_SECRET. ' +
+      'Set them in your environment to run the OAuth flow.'
+    );
+  }
   return new OAuth2Client(
     OAUTH_CONFIG.clientId,
     OAUTH_CONFIG.clientSecret,
