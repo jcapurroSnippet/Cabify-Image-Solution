@@ -181,46 +181,64 @@ export default function AspectRatioTab() {
       batchState.sheetsUrl,
       (event: BatchProgressEvent) => {
         setBatchState((previous) => {
-          const updated = { ...previous };
+          const progress = { ...previous.progress };
+          const results = { ...previous.results };
 
           // Update overall progress
-          if (event.totalRows) {
-            updated.progress.totalRows = event.totalRows;
+          if (event.totalRows !== undefined) {
+            progress.totalRows = event.totalRows;
           }
 
-          if (event.currentRow !== undefined && event.totalRows) {
-            updated.progress.processedRows = event.currentRow;
+          if (event.currentRow !== undefined) {
+            progress.processedRows = event.currentRow;
           }
 
           if (event.rowNumber) {
-            updated.progress.currentRowNumber = event.rowNumber;
+            progress.currentRowNumber = event.rowNumber;
           }
 
           if (event.status) {
-            updated.progress.currentStatus = event.status;
+            progress.currentStatus = event.status;
+          } else if (event.state === 'updating-sheet') {
+            progress.currentStatus = 'updating-sheet';
+          } else if (event.state === 'reading-sheet') {
+            progress.currentStatus = 'reading-sheet';
           }
 
           // Update individual row results
           if (event.rowNumber) {
-            updated.results[event.rowNumber] = {
+            results[event.rowNumber] = {
               status: event.status || 'downloading',
               ...(event.links && { links: event.links }),
               ...(event.error && { error: event.error }),
             };
           }
 
-          return updated;
+          return {
+            ...previous,
+            progress,
+            results,
+          };
         });
       },
       (result: BatchResult) => {
-        setBatchState((previous) => ({
-          ...previous,
-          isProcessing: false,
-          progress: {
-            ...previous.progress,
-            processedRows: result.totalRows,
-          },
-        }));
+        setBatchState((previous) => {
+          const totalRows = result.totalRows ?? previous.progress.totalRows;
+          const processedRows =
+            result.processedRows ?? result.totalRows ?? previous.progress.processedRows;
+
+          return {
+            ...previous,
+            isProcessing: false,
+            progress: {
+              ...previous.progress,
+              totalRows,
+              processedRows,
+              currentRowNumber: Math.max(previous.progress.currentRowNumber, processedRows || 0),
+              currentStatus: 'completed',
+            },
+          };
+        });
       },
       (error: string) => {
         setBatchState((previous) => ({
@@ -334,7 +352,10 @@ export default function AspectRatioTab() {
         </div>
 
         {/* Progress Section */}
-        {(batchState.isProcessing || Object.keys(batchState.results).length > 0) && (
+        {(batchState.isProcessing ||
+          batchState.progress.totalRows > 0 ||
+          batchState.progress.processedRows > 0 ||
+          Object.keys(batchState.results).length > 0) && (
           <div className="panel-surface space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-white">Progress</h3>
@@ -575,4 +596,3 @@ export default function AspectRatioTab() {
     </div>
   );
 }
-

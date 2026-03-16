@@ -295,14 +295,21 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     response.setHeader('Content-Type', 'application/x-ndjson');
     response.setHeader('Transfer-Encoding', 'chunked');
     response.setHeader('Cache-Control', 'no-cache');
+    response.setHeader('X-Accel-Buffering', 'no');
     if (typeof response.flushHeaders === 'function') {
       response.flushHeaders();
     }
     response.write(JSON.stringify({ state: 'started' }) + '\n');
+    if (typeof response.flush === 'function') {
+      response.flush();
+    }
 
     // Define progress callback
     const onProgress = (progressData) => {
       response.write(JSON.stringify(progressData) + '\n');
+      if (typeof response.flush === 'function') {
+        response.flush();
+      }
     };
 
     // Start batch processing asynchronously
@@ -324,6 +331,9 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     })
       .then((result) => {
         response.write(JSON.stringify({ state: 'completed', ...result }) + '\n');
+        if (typeof response.flush === 'function') {
+          response.flush();
+        }
         response.end();
       })
       .catch((error) => {
@@ -334,6 +344,9 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
             error: getErrorMessage(error, 'Batch processing failed.'),
           }) + '\n'
         );
+        if (typeof response.flush === 'function') {
+          response.flush();
+        }
         response.end();
       });
   } catch (error) {

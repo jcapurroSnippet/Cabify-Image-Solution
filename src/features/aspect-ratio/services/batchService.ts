@@ -3,7 +3,7 @@ import { BatchProgressEvent, BatchResult } from '../types';
 /**
  * Start batch processing from a Google Sheets URL
  * Returns a stream of progress events via callback
- * Uses hardcoded Drive folder: 1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO
+ * Uses server-side Drive folder configuration
  */
 export const startBatchProcessing = async (
   sheetsUrl: string,
@@ -12,6 +12,11 @@ export const startBatchProcessing = async (
   onError: (error: string) => void
 ): Promise<void> => {
   try {
+    let sawCompleted = false;
+    let sawError = false;
+    let lastTotalRows = 0;
+    let lastProcessedRows = 0;
+
     const response = await fetch('/api/batch-aspect-ratio', {
       method: 'POST',
       headers: {
@@ -28,56 +33,86 @@ export const startBatchProcessing = async (
     }
 
     // Read the response as a stream of NDJSON
+    const handleEvent = (event: BatchProgressEvent) => {
+      if (event.totalRows !== undefined) {
+        lastTotalRows = event.totalRows;
+      }
+      if (event.currentRow !== undefined) {
+        lastProcessedRows = event.currentRow;
+      }
+
+      if (event.state === 'completed') {
+        if (sawCompleted) return;
+        sawCompleted = true;
+        onComplete(event as unknown as BatchResult);
+        return;
+      }
+      if (event.state === 'error') {
+        if (sawError) return;
+        sawError = true;
+        onError(event.error || 'Unknown batch processing error');
+        return;
+      }
+
+      onProgress(event);
+    };
+
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error('Failed to read response stream');
+      const text = await response.text();
+      text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+          try {
+            handleEvent(JSON.parse(line));
+          } catch (e) {
+            console.error('Failed to parse batch progress event:', e, line);
+          }
+        });
+    } else {
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          if (buffer.trim()) {
+            try {
+              handleEvent(JSON.parse(buffer));
+            } catch (e) {
+              console.error('Failed to parse final batch event:', e);
+            }
+          }
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            handleEvent(JSON.parse(line));
+          } catch (e) {
+            console.error('Failed to parse batch progress event:', e, line);
+          }
+        }
+      }
     }
 
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer);
-            if (event.state === 'completed') {
-              onComplete(event);
-            } else {
-              onProgress(event);
-            }
-          } catch (e) {
-            console.error('Failed to parse final batch event:', e);
-          }
-        }
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const event: BatchProgressEvent = JSON.parse(line);
-
-          if (event.state === 'completed') {
-            onComplete(event as unknown as BatchResult);
-          } else if (event.state === 'error') {
-            onError(event.error || 'Unknown batch processing error');
-          } else {
-            onProgress(event);
-          }
-        } catch (e) {
-          console.error('Failed to parse batch progress event:', e, line);
-        }
-      }
+    if (!sawCompleted && !sawError) {
+      onComplete({
+        success: true,
+        totalRows: lastTotalRows,
+        processedRows: lastProcessedRows,
+      });
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
