@@ -103,7 +103,7 @@ const getVariationsForRatio = (targetRatio) => {
   return [
     `Variation A: centered subject, balanced headroom, floating bottom sheet with visible gap below. ${lockedBrandRules}`,
     `Variation B: centered subject, extra headroom, outpaint only background. ${lockedBrandRules}`,
-    `Variation C: centered subject, ensure sheet never overlaps face or hands. ${lockedBrandRules}`,
+    `Variation C: centered subject, width container and slightly bigger letters. ${lockedBrandRules}`,
   ];
 };
 
