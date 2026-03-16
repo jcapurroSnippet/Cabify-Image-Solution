@@ -6,6 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+.credentials.json
+server.err
 REFACTORING_SUMMARY.md
 SECURITY_ANALYSIS.md
 docs/*.md
