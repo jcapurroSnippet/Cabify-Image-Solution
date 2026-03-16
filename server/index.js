@@ -167,7 +167,7 @@ app.post('/api/nano-editor', async (request, response) => {
     const ai = getGeminiClient();
 
     const modelResponse = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
+      model: 'gemini-3-pro-image-preview',
       contents: {
         parts: [
           {
