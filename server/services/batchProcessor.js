@@ -7,22 +7,115 @@ import {
   getFirstSheetName,
 } from './sheetsService.js';
 import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
-import { getSheetsClient } from './googleAuth.js';
+import { getSheetsClient, getDriveClient } from './googleAuth.js';
+import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
+
+const extractDriveFileId = (url) => {
+  if (typeof url !== 'string') return null;
+
+  // https://drive.google.com/file/d/{fileId}/view
+  let match = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  // https://drive.google.com/open?id={fileId}
+  match = url.match(/[\?&]id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  // https://drive.google.com/uc?id={fileId}
+  match = url.match(/\/uc\?id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  return null;
+};
 
 /**
- * Download image from URL and convert to base64 data URL
+ * Download and optimize image for API calls
  */
 export const downloadImageAsDataUrl = async (imageUrl) => {
   try {
-    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    const mimeType = response.headers['content-type'] || 'image/png';
-    const base64 = Buffer.from(response.data).toString('base64');
-    return `data:${mimeType};base64,${base64}`;
+    let buffer;
+    const normalizeBuffer = (data) => (Buffer.isBuffer(data) ? data : Buffer.from(data));
+    
+    // For Drive URLs, use Drive API alt=media with auth
+    if (imageUrl.includes('drive.google.com')) {
+      const fileId = extractDriveFileId(imageUrl);
+      if (!fileId) throw new Error('Could not extract Drive file ID');
+      console.log(`[IMAGE] Downloading via API: ${fileId.substring(0, 20)}...`);
+      
+      const drive = await getDriveClient();
+      
+      try {
+        // Use Drive API with supportsAllDrives for shared drives + shared folders
+        const response = await drive.files.get(
+          { 
+            fileId, 
+            alt: 'media',
+            supportsAllDrives: true,
+          },
+          { responseType: 'arraybuffer' }
+        );
+        
+        buffer = normalizeBuffer(response.data);
+      } catch (apiError) {
+        // If API fails, try direct HTTP with auth header
+        console.log('[IMAGE] API failed, trying direct download...');
+        
+        const auth = await getAuthClient();
+        let headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        };
+        
+        // Add auth token if available
+        if (auth.credentials && auth.credentials.access_token) {
+          headers['Authorization'] = `Bearer ${auth.credentials.access_token}`;
+        }
+        
+        const response = await axios.get(
+          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          {
+            responseType: 'arraybuffer',
+            headers: headers,
+            timeout: 30000,
+          }
+        );
+        
+        buffer = normalizeBuffer(response.data);
+      }
+    } else {
+      // Use HTTP for other URLs
+      console.log(`[IMAGE] Downloading from: ${imageUrl.substring(0, 70)}...`);
+      
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        maxRedirects: 10,
+        timeout: 30000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      
+      buffer = normalizeBuffer(response.data);
+    }
+
+    console.log(`[IMAGE] Downloaded: ${buffer.byteLength} bytes`);
+    
+    // Optimize the image
+    const optimized = await optimizeImageBuffer(buffer);
+    
+    // Convert to data URL
+    const dataUrl = bufferToDataUrl(optimized, 'image/jpeg');
+    
+    return dataUrl;
   } catch (error) {
     console.error('Error downloading image:', error.message);
     throw new Error(`Failed to download image from ${imageUrl}: ${error.message}`);
   }
 };
+
+/**
+ * Import getAuthClient for token access
+ */
+import { getAuthClient } from './googleAuth.js';
 
 /**
  * Call the /api/aspect-ratio endpoint to generate variations
@@ -218,6 +311,7 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
  */
 export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
   try {
+    console.log(`[URL DETECTION] Starting URL column detection for sheet: "${sheetName}"`);
     const sheets = await getSheetsClient();
 
     // Read with grid data to include hyperlinks
@@ -228,54 +322,122 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     });
 
     const sheet = response.data.sheets?.[0];
-    if (!sheet) return -1;
+    if (!sheet) {
+      console.log('[URL DETECTION] ERROR: Could not find sheet in response');
+      return -1;
+    }
 
     const gridData = sheet.data?.[0];
-    if (!gridData || !gridData.rowData) return -1;
+    if (!gridData || !gridData.rowData) {
+      console.log('[URL DETECTION] ERROR: No grid data or row data found');
+      return -1;
+    }
+
+    console.log(`[URL DETECTION] Total rows in gridData: ${gridData.rowData.length}`);
 
     // Find header row first
     let headerRowIndex = -1;
     let maxCellsInRow = 0;
     for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
       const row = gridData.rowData[i];
-      if (!row.values) continue;
+      if (!row.values) {
+        console.log(`[URL DETECTION] Row ${i}: No values`);
+        continue;
+      }
       const nonEmptyCells = row.values.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length;
+      console.log(`[URL DETECTION] Row ${i}: ${nonEmptyCells} non-empty cells`);
       if (nonEmptyCells > maxCellsInRow) {
         maxCellsInRow = nonEmptyCells;
         headerRowIndex = i;
       }
     }
 
-    if (headerRowIndex === -1) return -1;
+    if (headerRowIndex === -1) {
+      console.log('[URL DETECTION] ERROR: Could not find header row');
+      return -1;
+    }
+
+    console.log(`[URL DETECTION] Header row detected at index ${headerRowIndex}`);
+
+    // Log headers
+    const headerRow = gridData.rowData[headerRowIndex];
+    if (headerRow && headerRow.values) {
+      console.log('[URL DETECTION] Headers found:');
+      for (let i = 0; i < Math.min(10, headerRow.values.length); i++) {
+        const header = headerRow.values[i];
+        const headerText = header?.userEnteredValue?.stringValue || `[empty]`;
+        console.log(`  Column ${i}: "${headerText}"`);
+      }
+    }
 
     // Scan data rows for URLs (in hyperlinks or cell values)
-    for (let rowIdx = headerRowIndex + 1; rowIdx < Math.min(headerRowIndex + 15, gridData.rowData.length); rowIdx++) {
+    // Increased from 15 to 50 rows to handle varied data
+    const rowsToScan = Math.min(50, gridData.rowData.length - headerRowIndex - 1);
+    console.log(`[URL DETECTION] Scanning ${rowsToScan} data rows for URLs...`);
+
+    let urlsFoundPerColumn = {};
+
+    for (let rowIdx = headerRowIndex + 1; rowIdx < headerRowIndex + 1 + rowsToScan; rowIdx++) {
       const row = gridData.rowData[rowIdx];
-      if (!row.values) continue;
+      if (!row.values) {
+        console.log(`[URL DETECTION] Row ${rowIdx}: No values`);
+        continue;
+      }
 
       for (let colIdx = 0; colIdx < row.values.length; colIdx++) {
         const cell = row.values[colIdx];
         if (!cell) continue;
 
         let cellValue = '';
+        let foundInHyperlink = false;
         
         // Check hyperlink first
         if (cell.hyperlink) {
           cellValue = cell.hyperlink;
+          foundInHyperlink = true;
         } else if (cell.userEnteredValue?.stringValue) {
           cellValue = cell.userEnteredValue.stringValue;
         }
 
+        // Initialize counter for this column
+        if (!urlsFoundPerColumn[colIdx]) {
+          urlsFoundPerColumn[colIdx] = 0;
+        }
+
         if (cellValue && (cellValue.startsWith('http://') || cellValue.startsWith('https://'))) {
-          console.log(`Found image URL column at index ${colIdx}`);
-          return colIdx;
+          urlsFoundPerColumn[colIdx]++;
+          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL (${foundInHyperlink ? 'hyperlink' : 'text'})`);
         }
       }
     }
 
+    console.log('[URL DETECTION] URL count per column:');
+    for (const [colIdx, count] of Object.entries(urlsFoundPerColumn)) {
+      if (count > 0) {
+        console.log(`  Column ${colIdx}: ${count} URLs found`);
+      }
+    }
+
+    // Find column with most URLs
+    let bestColumnIdx = -1;
+    let maxUrls = 0;
+    for (const [colIdx, count] of Object.entries(urlsFoundPerColumn)) {
+      if (count > maxUrls) {
+        maxUrls = count;
+        bestColumnIdx = parseInt(colIdx);
+      }
+    }
+
+    if (bestColumnIdx !== -1) {
+      console.log(`[URL DETECTION] SUCCESS: Found image URL column at index ${bestColumnIdx} with ${maxUrls} URLs`);
+      return bestColumnIdx;
+    }
+
+    console.log('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
     return -1;
   } catch (error) {
-    console.error('Error detecting image URL column:', error.message);
+    console.error('[URL DETECTION] ERROR:', error.message);
+    console.error('[URL DETECTION] Stack:', error.stack);
     return -1;
   }
 };
@@ -308,6 +470,8 @@ export const processBatch = async (options) => {
   const {
     sheetsUrl,
     sheetName: providedSheetName,
+    driveFolderUrl,
+    driveFolderId,
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
@@ -316,9 +480,30 @@ export const processBatch = async (options) => {
   const FIXED_DRIVE_FOLDER_ID = '1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO';
 
   try {
+    console.log('\n========================================');
+    console.log('[BATCH PROCESSOR] Starting batch process');
+    console.log('========================================');
+    console.log(`[BATCH] Input sheetsUrl: ${sheetsUrl}`);
+    console.log(`[BATCH] Provided sheetName: ${providedSheetName || 'AUTO'}`);
+    console.log(`[BATCH] Base URL: ${baseUrl}`);
+
     // Step 1: Validate inputs
-    const spreadsheetId = extractSpreadsheetId(sheetsUrl);
-    const folderId = FIXED_DRIVE_FOLDER_ID;
+    let spreadsheetId = '';
+    try {
+      spreadsheetId = extractSpreadsheetId(sheetsUrl);
+      console.log(`[BATCH] Extracted spreadsheetId: ${spreadsheetId}`);
+    } catch (error) {
+      console.log(`[BATCH] ERROR extracting spreadsheetId: ${error.message}`);
+      throw error;
+    }
+
+    let folderId = FIXED_DRIVE_FOLDER_ID;
+    if (driveFolderId) {
+      folderId = driveFolderId;
+    } else if (driveFolderUrl) {
+      folderId = extractFolderId(driveFolderUrl);
+    }
+    console.log(`[BATCH] Using Drive folder: ${folderId}`);
 
     // Step 2: Detect sheet name (use provided or find automatically)
     onProgress?.({
@@ -328,8 +513,12 @@ export const processBatch = async (options) => {
 
     let sheetName = providedSheetName;
     if (!sheetName) {
+      console.log('[BATCH] No sheet name provided, auto-detecting...');
       // Auto-detect: find first sheet with data
       sheetName = await findFirstSheetWithData(spreadsheetId);
+      console.log(`[BATCH] Auto-detected sheet: "${sheetName}"`);
+    } else {
+      console.log(`[BATCH] Using provided sheet: "${sheetName}"`);
     }
     
     onProgress?.({
@@ -343,11 +532,15 @@ export const processBatch = async (options) => {
       message: 'Detecting image URL column...',
     });
 
+    console.log('[BATCH] Running URL column detection...');
     const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName);
 
+    console.log(`[BATCH] URL column detection result: ${imageUrlColumnIndex}`);
     if (imageUrlColumnIndex === -1) {
+      console.log('[BATCH] ERROR: Could not find any column with image URLs');
       throw new Error('Could not find any column with image URLs in the sheet');
     }
+    console.log(`[BATCH] SUCCESS: Found image URL column at index ${imageUrlColumnIndex}`);
 
     const columnLetter = String.fromCharCode(65 + imageUrlColumnIndex);
     onProgress?.({
@@ -366,24 +559,47 @@ export const processBatch = async (options) => {
     });
 
     let imageUrlColumnName = columnLetter;
+    let headerRowIndex = 0;
+    let headerNames = [];
     const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
-    if (gridData && gridData.rowData && gridData.rowData[0] && gridData.rowData[0].values) {
-      // Find header row
-      let headerRowIndex = 0;
+    if (gridData && gridData.rowData) {
+      // Find header row (row with most non-empty cells)
       let maxCells = 0;
       for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
-        const cells = gridData.rowData[i].values?.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length || 0;
+        const cells =
+          gridData.rowData[i].values?.filter(
+            (v) => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)
+          ).length || 0;
         if (cells > maxCells) {
           maxCells = cells;
           headerRowIndex = i;
         }
       }
-      
-      const headerCell = gridData.rowData[headerRowIndex]?.values?.[imageUrlColumnIndex];
+
+      const headerRow = gridData.rowData[headerRowIndex]?.values || [];
+      headerNames = headerRow.map((cell, idx) => {
+        const text = cell?.userEnteredValue?.stringValue;
+        return text || `Column${String.fromCharCode(65 + idx)}`;
+      });
+
+      const headerCell = headerRow[imageUrlColumnIndex];
       if (headerCell?.userEnteredValue?.stringValue) {
         imageUrlColumnName = headerCell.userEnteredValue.stringValue;
       }
     }
+
+    const findRatioColumns = (headers, ratio) => {
+      const token = String(ratio).toLowerCase();
+      return headers
+        .map((h, idx) => ({ h: String(h || '').toLowerCase(), idx }))
+        .filter((item) => item.h.includes(token))
+        .map((item) => item.idx);
+    };
+
+    const ratioColumns = {
+      '1:1': findRatioColumns(headerNames, '1:1'),
+      '9:16': findRatioColumns(headerNames, '9:16'),
+    };
 
     // Step 4: Read all rows from sheet
     onProgress?.({
@@ -403,7 +619,7 @@ export const processBatch = async (options) => {
 
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
       const row = rows[rowIndex];
-      const rowNumber = rowIndex + 2; // +2 because row 1 is headers and we're 0-indexed
+      const rowNumber = headerRowIndex + 2 + rowIndex; // header row is 0-based; sheet rows are 1-based
 
       try {
         // Get image URL from the detected column (now using column name as key)
@@ -487,49 +703,39 @@ export const processBatch = async (options) => {
           uploadedLinks['9:16'].push(link);
         }
 
-        // Prepare sheet updates - store outputs in columns after the image URL column
-        const outputColumnStart = imageUrlColumnIndex + 1;
+        // Prepare sheet updates - place outputs into columns whose headers include the aspect ratio
+        const applyLinksToColumns = (ratio, links) => {
+          const cols = ratioColumns[ratio] || [];
+          if (cols.length === 0) {
+            console.warn(`[BATCH] No columns found for ratio ${ratio}. Falling back to adjacent columns.`);
+            return false;
+          }
 
-        if (uploadedLinks['1:1'][0]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart)}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][0]]],
-          });
-        }
+          for (let i = 0; i < links.length; i++) {
+            const colIdx = cols[i];
+            if (colIdx === undefined) continue;
+            updates.push({
+              range: `${sheetName}!${columnIndexToLetter(colIdx)}${rowNumber}`,
+              values: [[links[i]]],
+            });
+          }
 
-        if (uploadedLinks['1:1'][1]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 1)}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][1]]],
-          });
-        }
+          return true;
+        };
 
-        if (uploadedLinks['1:1'][2]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 2)}${rowNumber}`,
-            values: [[uploadedLinks['1:1'][2]]],
-          });
-        }
+        const used11 = applyLinksToColumns('1:1', uploadedLinks['1:1']);
+        const used916 = applyLinksToColumns('9:16', uploadedLinks['9:16']);
 
-        if (uploadedLinks['9:16'][0]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 3)}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][0]]],
-          });
-        }
-
-        if (uploadedLinks['9:16'][1]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 4)}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][1]]],
-          });
-        }
-
-        if (uploadedLinks['9:16'][2]) {
-          updates.push({
-            range: `${sheetName}!${columnIndexToLetter(outputColumnStart + 5)}${rowNumber}`,
-            values: [[uploadedLinks['9:16'][2]]],
-          });
+        // Fallback: if no ratio columns detected, write after image URL column as before
+        if (!used11 && !used916) {
+          const outputColumnStart = imageUrlColumnIndex + 1;
+          const fallbackLinks = [...uploadedLinks['1:1'], ...uploadedLinks['9:16']];
+          for (let i = 0; i < fallbackLinks.length; i++) {
+            updates.push({
+              range: `${sheetName}!${columnIndexToLetter(outputColumnStart + i)}${rowNumber}`,
+              values: [[fallbackLinks[i]]],
+            });
+          }
         }
 
         onProgress?.({

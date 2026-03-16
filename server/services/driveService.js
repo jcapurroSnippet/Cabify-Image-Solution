@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { getDriveClient } from './googleAuth.js';
 
 /**
@@ -20,7 +21,7 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
 
     const media = {
       mimeType: 'image/png',
-      body: buffer,
+      body: Readable.from(buffer),
     };
 
     const response = await drive.files.create({
@@ -28,6 +29,7 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
       media,
       fields: 'id, name, webViewLink, webContentLink, mimeType',
       requestBody: fileMetadata,
+      supportsAllDrives: true,
     });
 
     return {
@@ -56,6 +58,7 @@ export const makeFilePublic = async (fileId) => {
         role: 'reader',
         type: 'anyone',
       },
+      supportsAllDrives: true,
     });
 
     // Construct the standard shared link
