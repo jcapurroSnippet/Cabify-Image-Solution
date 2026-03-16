@@ -1,6 +1,7 @@
 import axios from 'axios';
 import {
   extractSpreadsheetId,
+  extractSheetId,
   readSheetRows,
   updateSheetCells,
   columnIndexToLetter,
@@ -677,7 +678,7 @@ export const processBatch = async (options) => {
     }
     console.log(`[BATCH] Using Drive folder: ${folderId}`);
 
-    // Step 2: Detect sheet name (use provided or find automatically)
+    // Step 2: Detect sheet name (use provided, URL gid, or find automatically)
     onProgress?.({
       state: 'detecting-sheet',
       message: 'Detecting sheet name...',
@@ -685,10 +686,28 @@ export const processBatch = async (options) => {
 
     let sheetName = providedSheetName;
     if (!sheetName) {
-      console.log('[BATCH] No sheet name provided, auto-detecting...');
-      // Auto-detect: find first sheet with data
-      sheetName = await findFirstSheetWithData(spreadsheetId);
-      console.log(`[BATCH] Auto-detected sheet: "${sheetName}"`);
+      // If URL has gid, use it to find the sheet name
+      const gid = extractSheetId(sheetsUrl);
+      if (gid !== null) {
+        console.log(`[BATCH] GID detected in URL: ${gid}. Resolving sheet name...`);
+        const sheetsClient = await getSheetsClient();
+        const meta = await sheetsClient.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets(properties(sheetId,title))',
+        });
+        const match = meta.data.sheets?.find((s) => s.properties?.sheetId === gid);
+        if (match?.properties?.title) {
+          sheetName = match.properties.title;
+          console.log(`[BATCH] Resolved sheet name from gid: "${sheetName}"`);
+        }
+      }
+
+      if (!sheetName) {
+        console.log('[BATCH] No sheet name provided, auto-detecting...');
+        // Auto-detect: find first sheet with data
+        sheetName = await findFirstSheetWithData(spreadsheetId);
+        console.log(`[BATCH] Auto-detected sheet: "${sheetName}"`);
+      }
     } else {
       console.log(`[BATCH] Using provided sheet: "${sheetName}"`);
     }
