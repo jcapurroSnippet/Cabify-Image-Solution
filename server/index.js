@@ -11,6 +11,7 @@ class RequestValidationError extends Error {}
 const app = express();
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
 
+app.set('trust proxy', true);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '30mb' }));
 
@@ -301,12 +302,19 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
 
     // Start batch processing asynchronously
     // Note: driveFolderUrl is now hardcoded inside processBatch
+    const forwardedProto = request.get('x-forwarded-proto')?.split(',')[0]?.trim();
+    let protocol = forwardedProto || request.protocol;
+    const host = request.get('host');
+    if (protocol === 'http' && host?.endsWith('run.app')) {
+      protocol = 'https';
+    }
+
     processBatch({
       sheetsUrl: sheetsUrl.trim(),
       sheetName: sheetName ? sheetName.trim() : undefined,
       driveFolderUrl: driveFolderUrl ? String(driveFolderUrl).trim() : undefined,
       driveFolderId: driveFolderId ? String(driveFolderId).trim() : undefined,
-      baseUrl: `${request.protocol}://${request.get('host')}`,
+      baseUrl: `${protocol}://${host}`,
       onProgress,
     })
       .then((result) => {
