@@ -19,6 +19,14 @@ const extractUrlFromFormula = (formula) => {
   return match ? match[1] : null;
 };
 
+const logLine = (message) => {
+  try {
+    process.stdout.write(`${message}\n`);
+  } catch {
+    console.log(message);
+  }
+};
+
 const extractUrlFromCell = (cell) => {
   if (!cell) return null;
 
@@ -391,13 +399,20 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
  * Checks both cell values and hyperlinks
  * Returns the column index or -1 if not found
  */
-export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
+export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) => {
   try {
-    console.log(`[URL DETECTION] Starting URL column detection for sheet: "${sheetName}"`);
+    const debug = (message, data) => {
+      if (typeof onDebug === 'function') {
+        onDebug(message, data);
+      }
+    };
+
+    logLine(`[URL DETECTION] Starting URL column detection for sheet: "${sheetName}"`);
     const sheets = await getSheetsClient();
 
     const range = await buildSheetRange(sheets, spreadsheetId, sheetName, DEFAULT_MAX_SCAN_ROWS);
-    console.log(`[URL DETECTION] Using range: ${range}`);
+    logLine(`[URL DETECTION] Using range: ${range}`);
+    debug('Using range', { range });
 
     // Read with grid data to include hyperlinks
     const response = await sheets.spreadsheets.get({
@@ -418,38 +433,44 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
       return -1;
     }
 
-    console.log(`[URL DETECTION] Total rows in gridData: ${gridData.rowData.length}`);
+    logLine(`[URL DETECTION] Total rows in gridData: ${gridData.rowData.length}`);
+    debug('Grid rows', { count: gridData.rowData.length });
 
     // Find header row first
     let headerRowIndex = findHeaderRowIndex(gridData.rowData);
     for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
       const row = gridData.rowData[i];
       if (!row?.values) {
-        console.log(`[URL DETECTION] Row ${i}: No values`);
-        continue;
-      }
+      logLine(`[URL DETECTION] Row ${i}: No values`);
+      continue;
+    }
       const nonEmptyCells = row.values.filter(
         (v) => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)
       ).length;
-      console.log(`[URL DETECTION] Row ${i}: ${nonEmptyCells} non-empty cells`);
+      logLine(`[URL DETECTION] Row ${i}: ${nonEmptyCells} non-empty cells`);
     }
 
     if (headerRowIndex === -1) {
-      console.log('[URL DETECTION] ERROR: Could not find header row');
+      logLine('[URL DETECTION] ERROR: Could not find header row');
+      debug('Header row not found');
       return -1;
     }
 
-    console.log(`[URL DETECTION] Header row detected at index ${headerRowIndex}`);
+    logLine(`[URL DETECTION] Header row detected at index ${headerRowIndex}`);
+    debug('Header row index', { headerRowIndex });
 
     // Log headers
     const headerRow = gridData.rowData[headerRowIndex];
     if (headerRow && headerRow.values) {
-      console.log('[URL DETECTION] Headers found:');
-      for (let i = 0; i < Math.min(10, headerRow.values.length); i++) {
+      logLine('[URL DETECTION] Headers found:');
+      const headerSample = [];
+      for (let i = 0; i < Math.min(20, headerRow.values.length); i++) {
         const header = headerRow.values[i];
         const headerText = header?.userEnteredValue?.stringValue || `[empty]`;
-        console.log(`  Column ${i}: "${headerText}"`);
+        headerSample.push(headerText);
+        logLine(`  Column ${i}: "${headerText}"`);
       }
+      debug('Header sample', { headers: headerSample });
     }
 
     // Scan data rows for URLs (in hyperlinks or cell values)
@@ -458,7 +479,7 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
       DEFAULT_URL_SCAN_ROWS,
       Math.max(0, gridData.rowData.length - headerRowIndex - 1)
     );
-    console.log(`[URL DETECTION] Scanning ${rowsToScan} data rows for URLs...`);
+    logLine(`[URL DETECTION] Scanning ${rowsToScan} data rows for URLs...`);
 
     let urlsFoundPerColumn = {};
 
@@ -482,17 +503,18 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
 
         if (cellValue && (cellValue.startsWith('http://') || cellValue.startsWith('https://'))) {
           urlsFoundPerColumn[colIdx]++;
-          console.log(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL`);
+          logLine(`[URL DETECTION] Row ${rowIdx}, Col ${colIdx}: Found URL`);
         }
       }
     }
 
-    console.log('[URL DETECTION] URL count per column:');
+    logLine('[URL DETECTION] URL count per column:');
     for (const [colIdx, count] of Object.entries(urlsFoundPerColumn)) {
       if (count > 0) {
-        console.log(`  Column ${colIdx}: ${count} URLs found`);
+        logLine(`  Column ${colIdx}: ${count} URLs found`);
       }
     }
+    debug('URL counts', { urlsFoundPerColumn });
 
     // Find column with most URLs
     let bestColumnIdx = -1;
@@ -505,12 +527,14 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     }
 
     if (bestColumnIdx !== -1) {
-      console.log(`[URL DETECTION] SUCCESS: Found image URL column at index ${bestColumnIdx} with ${maxUrls} URLs`);
+      logLine(`[URL DETECTION] SUCCESS: Found image URL column at index ${bestColumnIdx} with ${maxUrls} URLs`);
+      debug('Best column', { bestColumnIdx, maxUrls });
       return bestColumnIdx;
     }
 
-    console.log('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
-    console.log('[URL DETECTION] Debug: Header row index =', headerRowIndex);
+    logLine('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
+    logLine(`[URL DETECTION] Debug: Header row index = ${headerRowIndex}`);
+    debug('No URL column found', { headerRowIndex });
     return -1;
   } catch (error) {
     console.error('[URL DETECTION] ERROR:', error.message);
@@ -610,7 +634,17 @@ export const processBatch = async (options) => {
     });
 
     console.log('[BATCH] Running URL column detection...');
-    const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName);
+    const debugEnabled = process.env.BATCH_DEBUG === '1';
+    const emitDebug = (message, data) => {
+      if (!debugEnabled) return;
+      onProgress?.({
+        state: 'debug',
+        message,
+        ...data,
+      });
+    };
+
+    const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName, emitDebug);
 
     console.log(`[BATCH] URL column detection result: ${imageUrlColumnIndex}`);
     if (imageUrlColumnIndex === -1) {
