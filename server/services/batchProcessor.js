@@ -620,7 +620,7 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
  * Processes all rows in a Google Sheet, generates variations, uploads to Drive,
  * and updates the sheet with links
  *
- * Uses a FIXED Drive folder for all uploads: 1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO
+ * Uses a FIXED Drive folder for all uploads: 0APcMUrimfyziUk9PVA
  *
  * Options: {
  *   sheetsUrl: string,
@@ -650,7 +650,7 @@ export const processBatch = async (options) => {
   } = options;
 
   // FIXED Drive folder ID for all uploads
-  const FIXED_DRIVE_FOLDER_ID = '1gWY-ZEMbWBcM_lwSKzc5HD89Pa_SiBWO';
+  const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
 
   try {
     console.log('\n========================================');
