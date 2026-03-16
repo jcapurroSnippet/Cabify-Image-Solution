@@ -10,6 +10,43 @@ import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveServ
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
+const findHeaderRowIndex = (rowData, maxScan = 20) => {
+  if (!rowData || rowData.length === 0) return -1;
+
+  const headerKeywords = ['categoria', 'ciudad', 'copy', 'preview'];
+
+  // First pass: look for a row that contains at least 2 header keywords
+  for (let i = 0; i < Math.min(maxScan, rowData.length); i++) {
+    const row = rowData[i];
+    if (!row?.values) continue;
+    const texts = row.values
+      .map((cell) => cell?.userEnteredValue?.stringValue || '')
+      .map((t) => t.toLowerCase());
+
+    const matches = headerKeywords.filter((kw) => texts.some((t) => t.includes(kw)));
+    if (matches.length >= 2) {
+      return i;
+    }
+  }
+
+  // Fallback: row with most non-empty cells
+  let headerRowIndex = -1;
+  let maxCells = 0;
+  for (let i = 0; i < Math.min(maxScan, rowData.length); i++) {
+    const row = rowData[i];
+    if (!row?.values) continue;
+    const nonEmptyCells = row.values.filter(
+      (v) => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)
+    ).length;
+    if (nonEmptyCells > maxCells) {
+      maxCells = nonEmptyCells;
+      headerRowIndex = i;
+    }
+  }
+
+  return headerRowIndex;
+};
+
 const extractDriveFileId = (url) => {
   if (typeof url !== 'string') return null;
 
@@ -238,19 +275,9 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
     let headerRow = null;
     let headerRowIndex = -1;
 
-    // First, find the header row (row with most non-empty cells)
-    let maxCellsInRow = 0;
-    for (let i = 0; i < gridData.rowData.length; i++) {
-      const row = gridData.rowData[i];
-      if (!row.values) continue;
-      
-      const nonEmptyCells = row.values.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length;
-      if (nonEmptyCells > maxCellsInRow) {
-        maxCellsInRow = nonEmptyCells;
-        headerRowIndex = i;
-        headerRow = row;
-      }
-    }
+    // First, find the header row
+    headerRowIndex = findHeaderRowIndex(gridData.rowData);
+    headerRow = headerRowIndex >= 0 ? gridData.rowData[headerRowIndex] : null;
 
     if (headerRowIndex === -1 || !headerRow || !headerRow.values) {
       return [];
@@ -271,7 +298,7 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
       const hasData = row.values.some(v => v && (v.userEnteredValue?.stringValue || v.hyperlink));
       if (!hasData) continue;
 
-      const rowObj = {};
+      const rowObj = { __rowNumber: rowIdx + 1 };
 
       for (let colIdx = 0; colIdx < row.values.length && colIdx < headers.length; colIdx++) {
         const cell = row.values[colIdx];
@@ -336,20 +363,17 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName) => {
     console.log(`[URL DETECTION] Total rows in gridData: ${gridData.rowData.length}`);
 
     // Find header row first
-    let headerRowIndex = -1;
-    let maxCellsInRow = 0;
+    let headerRowIndex = findHeaderRowIndex(gridData.rowData);
     for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
       const row = gridData.rowData[i];
-      if (!row.values) {
+      if (!row?.values) {
         console.log(`[URL DETECTION] Row ${i}: No values`);
         continue;
       }
-      const nonEmptyCells = row.values.filter(v => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)).length;
+      const nonEmptyCells = row.values.filter(
+        (v) => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)
+      ).length;
       console.log(`[URL DETECTION] Row ${i}: ${nonEmptyCells} non-empty cells`);
-      if (nonEmptyCells > maxCellsInRow) {
-        maxCellsInRow = nonEmptyCells;
-        headerRowIndex = i;
-      }
     }
 
     if (headerRowIndex === -1) {
@@ -563,18 +587,8 @@ export const processBatch = async (options) => {
     let headerNames = [];
     const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
     if (gridData && gridData.rowData) {
-      // Find header row (row with most non-empty cells)
-      let maxCells = 0;
-      for (let i = 0; i < Math.min(10, gridData.rowData.length); i++) {
-        const cells =
-          gridData.rowData[i].values?.filter(
-            (v) => v && (v.userEnteredValue?.stringValue || v.userEnteredValue?.numberValue)
-          ).length || 0;
-        if (cells > maxCells) {
-          maxCells = cells;
-          headerRowIndex = i;
-        }
-      }
+      // Find header row (keyword-aware)
+      headerRowIndex = findHeaderRowIndex(gridData.rowData);
 
       const headerRow = gridData.rowData[headerRowIndex]?.values || [];
       headerNames = headerRow.map((cell, idx) => {
@@ -619,7 +633,7 @@ export const processBatch = async (options) => {
 
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
       const row = rows[rowIndex];
-      const rowNumber = headerRowIndex + 2 + rowIndex; // header row is 0-based; sheet rows are 1-based
+      const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex); // Prefer real sheet row
 
       try {
         // Get image URL from the detected column (now using column name as key)
