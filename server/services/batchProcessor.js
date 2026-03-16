@@ -19,6 +19,32 @@ const extractUrlFromFormula = (formula) => {
   return match ? match[1] : null;
 };
 
+const normalizeUrl = (value) => {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+
+  if (text.startsWith('http://') || text.startsWith('https://')) {
+    return text;
+  }
+
+  if (text.startsWith('drive.google.com') || text.startsWith('docs.google.com') || text.startsWith('www.')) {
+    return `https://${text}`;
+  }
+
+  const match = text.match(/https?:\/\/\S+/i);
+  if (match) {
+    return match[0].replace(/[),.]+$/g, '');
+  }
+
+  const googleMatch = text.match(/(?:drive|docs)\.google\.com\/\S+/i);
+  if (googleMatch) {
+    return `https://${googleMatch[0].replace(/[),.]+$/g, '')}`;
+  }
+
+  return null;
+};
+
 const logLine = (message) => {
   try {
     process.stdout.write(`${message}\n`);
@@ -42,9 +68,8 @@ const extractUrlFromCell = (cell) => {
   }
 
   const str = cell.userEnteredValue?.stringValue || cell.formattedValue;
-  if (typeof str === 'string' && (str.startsWith('http://') || str.startsWith('https://'))) {
-    return str;
-  }
+  const normalized = normalizeUrl(str);
+  if (normalized) return normalized;
 
   return null;
 };
@@ -534,6 +559,52 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
 
     logLine('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
     logLine(`[URL DETECTION] Debug: Header row index = ${headerRowIndex}`);
+
+    try {
+      const headerTexts = (headerRow?.values || []).map((cell) =>
+        (cell?.userEnteredValue?.stringValue || '').toLowerCase()
+      );
+      const candidateCols = [];
+      headerTexts.forEach((text, idx) => {
+        if (
+          text.includes('url') ||
+          text.includes('link') ||
+          text.includes('imagen') ||
+          text.includes('image') ||
+          text.includes('preview') ||
+          text.includes('pieza')
+        ) {
+          candidateCols.push(idx);
+        }
+      });
+
+      if (candidateCols.length > 0) {
+        logLine(`[URL DETECTION] Debug: Sampling candidate columns ${candidateCols.join(', ')}`);
+        const sampleRows = Math.min(5, rowsToScan);
+        for (let i = 0; i < sampleRows; i++) {
+          const rowIdx = headerRowIndex + 1 + i;
+          const row = gridData.rowData[rowIdx];
+          if (!row?.values) continue;
+          for (const colIdx of candidateCols) {
+            const cell = row.values[colIdx];
+            const raw =
+              cell?.userEnteredValue?.stringValue ||
+              cell?.formattedValue ||
+              '';
+            const formula = cell?.userEnteredValue?.formulaValue || '';
+            const hyperlink = cell?.hyperlink || '';
+            const runLink =
+              cell?.textFormatRuns?.find((r) => r?.format?.link?.uri)?.format?.link?.uri || '';
+            logLine(
+              `[URL DETECTION] Sample r${rowIdx} c${colIdx}: raw="${raw}" formula="${formula}" hyperlink="${hyperlink}" runLink="${runLink}"`
+            );
+          }
+        }
+      }
+    } catch (error) {
+      logLine(`[URL DETECTION] Debug sampling failed: ${error.message}`);
+    }
+
     debug('No URL column found', { headerRowIndex });
     return -1;
   } catch (error) {
