@@ -53,6 +53,9 @@ const INITIAL_BATCH_STATE: BatchState = {
 
 const SUPPORTED_RATIOS: AspectRatio[] = [AspectRatio.RATIO_1_1, AspectRatio.RATIO_9_16];
 const BATCH_STATUS_POLL_MS = 15000;
+const countCompletedRows = (results: BatchState['results']): number =>
+  Object.values(results).filter((row) => row.status === 'completed' || row.status === 'skipped')
+    .length;
 
 const getAspectClass = (ratio: AspectRatio): string => {
   if (ratio === AspectRatio.RATIO_9_16) {
@@ -75,7 +78,13 @@ export default function AspectRatioTab() {
   const [activeRatio, setActiveRatio] = useState<AspectRatio | null>(null);
 
   useEffect(() => {
-    if (!batchState.isProcessing || !batchState.sheetsUrl.trim()) {
+    const hasSheetsUrl = !!batchState.sheetsUrl.trim();
+    const hasPending =
+      batchState.progress.totalRows > 0 &&
+      batchState.progress.processedRows < batchState.progress.totalRows;
+    const shouldPoll = hasSheetsUrl && (batchState.isProcessing || hasPending);
+
+    if (!shouldPoll) {
       return;
     }
 
@@ -102,9 +111,8 @@ export default function AspectRatioTab() {
           });
 
           const totalRows = snapshot.totalRows || previous.progress.totalRows;
-          const completedRows = snapshot.completedRows ?? previous.progress.processedRows;
-          const processedRows = Math.max(previous.progress.processedRows, completedRows);
-          const isDone = totalRows > 0 && completedRows >= totalRows;
+          const processedRows = countCompletedRows(results);
+          const isDone = totalRows > 0 && processedRows >= totalRows;
 
           return {
             ...previous,
@@ -131,7 +139,12 @@ export default function AspectRatioTab() {
       isActive = false;
       clearInterval(intervalId);
     };
-  }, [batchState.isProcessing, batchState.sheetsUrl]);
+  }, [
+    batchState.isProcessing,
+    batchState.sheetsUrl,
+    batchState.progress.totalRows,
+    batchState.progress.processedRows,
+  ]);
 
   // ==================== Single Mode Handlers ====================
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -256,10 +269,6 @@ export default function AspectRatioTab() {
             progress.totalRows = event.totalRows;
           }
 
-          if (event.currentRow !== undefined) {
-            progress.processedRows = event.currentRow;
-          }
-
           if (event.rowNumber) {
             progress.currentRowNumber = event.rowNumber;
           }
@@ -274,16 +283,26 @@ export default function AspectRatioTab() {
 
           // Update individual row results
           if (event.rowNumber) {
+            const previousRow = results[event.rowNumber];
+            const nextStatus = event.status || 'downloading';
+            const isTerminal = previousRow?.status === 'completed' || previousRow?.status === 'skipped';
+
             results[event.rowNumber] = {
-              status: event.status || 'downloading',
+              ...(previousRow || {}),
+              status: isTerminal ? previousRow.status : nextStatus,
               ...(event.links && { links: event.links }),
               ...(event.error && { error: event.error }),
             };
           }
 
+          const processedRows = countCompletedRows(results);
+
           return {
             ...previous,
-            progress,
+            progress: {
+              ...progress,
+              processedRows,
+            },
             results,
           };
         });
@@ -291,8 +310,7 @@ export default function AspectRatioTab() {
       (result: BatchResult) => {
         setBatchState((previous) => {
           const totalRows = result.totalRows ?? previous.progress.totalRows;
-          const processedRows =
-            result.processedRows ?? result.totalRows ?? previous.progress.processedRows;
+          const processedRows = countCompletedRows(previous.results);
 
           return {
             ...previous,
