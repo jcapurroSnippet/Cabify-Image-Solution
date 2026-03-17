@@ -175,6 +175,12 @@ export default function AspectRatioTab() {
       isProcessing: true,
       error: null,
       results: {},
+      progress: {
+        totalRows: 0,
+        processedRows: 0,
+        currentRowNumber: 0,
+        currentStatus: 'reading-sheet',
+      },
     }));
 
     await startBatchProcessing(

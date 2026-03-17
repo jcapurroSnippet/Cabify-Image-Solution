@@ -335,6 +335,21 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       response.flush();
     }
 
+    const keepAlive = setInterval(() => {
+      if (response.writableEnded || response.destroyed) {
+        clearInterval(keepAlive);
+        return;
+      }
+      response.write(JSON.stringify({ state: 'keepalive' }) + '\n');
+      if (typeof response.flush === 'function') {
+        response.flush();
+      }
+    }, 15000);
+
+    const stopKeepAlive = () => clearInterval(keepAlive);
+    response.on('close', stopKeepAlive);
+    response.on('finish', stopKeepAlive);
+
     // Define progress callback
     const onProgress = (progressData) => {
       response.write(JSON.stringify(progressData) + '\n');
@@ -361,6 +376,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       onProgress,
     })
       .then((result) => {
+        stopKeepAlive();
         response.write(JSON.stringify({ state: 'completed', ...result }) + '\n');
         if (typeof response.flush === 'function') {
           response.flush();
@@ -369,6 +385,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       })
       .catch((error) => {
         console.error('Batch processing error:', error);
+        stopKeepAlive();
         response.write(
           JSON.stringify({
             state: 'error',
