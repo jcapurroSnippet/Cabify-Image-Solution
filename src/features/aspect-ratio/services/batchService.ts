@@ -1,4 +1,18 @@
-import { BatchProgressEvent, BatchResult } from '../types';
+import { BatchProgressEvent, BatchResult, BatchProgressStatus } from '../types';
+
+export interface BatchStatusRow {
+  status: BatchProgressStatus;
+  links?: {
+    '1:1': string[];
+    '9:16': string[];
+  };
+}
+
+export interface BatchStatusSnapshot {
+  totalRows: number;
+  completedRows: number;
+  rows: Record<number, BatchStatusRow>;
+}
 
 /**
  * Start batch processing from a Google Sheets URL
@@ -119,6 +133,26 @@ export const startBatchProcessing = async (
     console.error('Batch processing error:', error);
     onError(errorMessage);
   }
+};
+
+/**
+ * Poll batch status from the server by inspecting the sheet output links.
+ */
+export const fetchBatchStatus = async (sheetsUrl: string): Promise<BatchStatusSnapshot> => {
+  const response = await fetch('/api/batch-status', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sheetsUrl }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return response.json();
 };
 
 /**

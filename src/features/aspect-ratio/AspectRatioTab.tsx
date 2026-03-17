@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   AlertCircle,
   Download,
@@ -22,6 +22,7 @@ import {
 } from './types';
 import {
   startBatchProcessing,
+  fetchBatchStatus,
   isValidSheetsUrl,
   isValidDriveFolderUrl,
   getProgressPercentage,
@@ -51,6 +52,7 @@ const INITIAL_BATCH_STATE: BatchState = {
 };
 
 const SUPPORTED_RATIOS: AspectRatio[] = [AspectRatio.RATIO_1_1, AspectRatio.RATIO_9_16];
+const BATCH_STATUS_POLL_MS = 15000;
 
 const getAspectClass = (ratio: AspectRatio): string => {
   if (ratio === AspectRatio.RATIO_9_16) {
@@ -71,6 +73,65 @@ export default function AspectRatioTab() {
   const [state, setState] = useState<AspectRatioState>(INITIAL_STATE);
   const [batchState, setBatchState] = useState<BatchState>(INITIAL_BATCH_STATE);
   const [activeRatio, setActiveRatio] = useState<AspectRatio | null>(null);
+
+  useEffect(() => {
+    if (!batchState.isProcessing || !batchState.sheetsUrl.trim()) {
+      return;
+    }
+
+    let isActive = true;
+
+    const pollStatus = async () => {
+      try {
+        const snapshot = await fetchBatchStatus(batchState.sheetsUrl);
+        if (!isActive) return;
+
+        setBatchState((previous) => {
+          const results = { ...previous.results };
+          const snapshotRows = snapshot.rows || {};
+
+          Object.entries(snapshotRows).forEach(([rowNumber, rowStatus]) => {
+            const numericRow = Number(rowNumber);
+            if (!Number.isFinite(numericRow)) return;
+
+            results[numericRow] = {
+              ...results[numericRow],
+              status: rowStatus.status,
+              ...(rowStatus.links && { links: rowStatus.links }),
+            };
+          });
+
+          const totalRows = snapshot.totalRows || previous.progress.totalRows;
+          const completedRows = snapshot.completedRows ?? previous.progress.processedRows;
+          const processedRows = Math.max(previous.progress.processedRows, completedRows);
+          const isDone = totalRows > 0 && completedRows >= totalRows;
+
+          return {
+            ...previous,
+            isProcessing: isDone ? false : previous.isProcessing,
+            progress: {
+              ...previous.progress,
+              totalRows,
+              processedRows,
+              currentRowNumber: Math.max(previous.progress.currentRowNumber, processedRows),
+              currentStatus: isDone ? 'completed' : previous.progress.currentStatus,
+            },
+            results,
+          };
+        });
+      } catch (error) {
+        console.warn('Batch status polling error:', error);
+      }
+    };
+
+    pollStatus();
+    const intervalId = setInterval(pollStatus, BATCH_STATUS_POLL_MS);
+
+    return () => {
+      isActive = false;
+      clearInterval(intervalId);
+    };
+  }, [batchState.isProcessing, batchState.sheetsUrl]);
 
   // ==================== Single Mode Handlers ====================
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {

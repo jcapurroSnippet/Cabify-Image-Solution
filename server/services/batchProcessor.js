@@ -13,6 +13,7 @@ import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
 const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
+const EXPECTED_VARIATIONS_PER_RATIO = 3;
 
 const extractUrlFromFormula = (formula) => {
   if (typeof formula !== 'string') return null;
@@ -44,6 +45,47 @@ const normalizeUrl = (value) => {
   }
 
   return null;
+};
+
+const collectLinksFromColumns = (row, headerNames, columnIndexes) => {
+  const links = [];
+  for (const colIdx of columnIndexes) {
+    const header = headerNames[colIdx];
+    if (!header) continue;
+    const raw = row[header];
+    const normalized = normalizeUrl(raw);
+    if (normalized) {
+      links.push(normalized);
+    }
+  }
+  return links;
+};
+
+const resolveSheetName = async (sheetsUrl, providedSheetName) => {
+  let sheetName = providedSheetName;
+  if (sheetName) {
+    return sheetName;
+  }
+
+  const spreadsheetId = extractSpreadsheetId(sheetsUrl);
+  const gid = extractSheetId(sheetsUrl);
+  if (gid !== null) {
+    const sheetsClient = await getSheetsClient();
+    const meta = await sheetsClient.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets(properties(sheetId,title))',
+    });
+    const match = meta.data.sheets?.find((s) => s.properties?.sheetId === gid);
+    if (match?.properties?.title) {
+      sheetName = match.properties.title;
+    }
+  }
+
+  if (!sheetName) {
+    sheetName = await findFirstSheetWithData(spreadsheetId);
+  }
+
+  return sheetName;
 };
 
 const logLine = (message) => {
@@ -613,6 +655,121 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
     console.error('[URL DETECTION] Stack:', error.stack);
     return -1;
   }
+};
+
+/**
+ * Read sheet and infer completion based on output URLs.
+ * Returns only rows that are completed or skipped, plus totals.
+ */
+export const getBatchStatus = async (options) => {
+  const { sheetsUrl, sheetName: providedSheetName } = options;
+
+  if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
+    throw new Error('sheetsUrl is required.');
+  }
+
+  const spreadsheetId = extractSpreadsheetId(sheetsUrl);
+  const sheetName = await resolveSheetName(sheetsUrl, providedSheetName);
+
+  const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName);
+  if (imageUrlColumnIndex === -1) {
+    throw new Error('Could not find any column with image URLs in the sheet');
+  }
+
+  const sheetsClient = await getSheetsClient();
+  const headerResponse = await sheetsClient.spreadsheets.get({
+    spreadsheetId,
+    ranges: [`${sheetName}!A:Z`],
+    includeGridData: true,
+  });
+
+  let headerRowIndex = 0;
+  let headerNames = [];
+  const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
+  if (gridData && gridData.rowData) {
+    headerRowIndex = findHeaderRowIndex(gridData.rowData);
+    const headerRow = gridData.rowData[headerRowIndex]?.values || [];
+    headerNames = headerRow.map((cell, idx) => {
+      const text = cell?.userEnteredValue?.stringValue;
+      return text || `Column${String.fromCharCode(65 + idx)}`;
+    });
+  }
+
+  const imageUrlColumnName =
+    headerNames[imageUrlColumnIndex] || `Column${String.fromCharCode(65 + imageUrlColumnIndex)}`;
+
+  const findRatioColumns = (headers, ratio) => {
+    const token = String(ratio).toLowerCase();
+    return headers
+      .map((h, idx) => ({ h: String(h || '').toLowerCase(), idx }))
+      .filter((item) => item.h.includes(token))
+      .map((item) => item.idx);
+  };
+
+  const ratioColumns = {
+    '1:1': findRatioColumns(headerNames, '1:1'),
+    '9:16': findRatioColumns(headerNames, '9:16'),
+  };
+
+  const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
+  const totalRows = rows.length;
+
+  let completedRows = 0;
+  const completedMap = {};
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
+    const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex);
+    const imageUrlRaw = row[imageUrlColumnName];
+    const imageUrl = normalizeUrl(imageUrlRaw);
+
+    if (!imageUrl) {
+      completedRows += 1;
+      completedMap[rowNumber] = {
+        status: 'skipped',
+      };
+      continue;
+    }
+
+    let links11 = [];
+    let links916 = [];
+    let expectedCount = 0;
+
+    if (ratioColumns['1:1'].length > 0 || ratioColumns['9:16'].length > 0) {
+      links11 = collectLinksFromColumns(row, headerNames, ratioColumns['1:1']);
+      links916 = collectLinksFromColumns(row, headerNames, ratioColumns['9:16']);
+      expectedCount = ratioColumns['1:1'].length + ratioColumns['9:16'].length;
+    } else {
+      const start = imageUrlColumnIndex + 1;
+      const cols11 = [start, start + 1, start + 2];
+      const cols916 = [start + 3, start + 4, start + 5];
+      links11 = collectLinksFromColumns(row, headerNames, cols11);
+      links916 = collectLinksFromColumns(row, headerNames, cols916);
+      expectedCount = EXPECTED_VARIATIONS_PER_RATIO * 2;
+    }
+
+    const foundCount = links11.length + links916.length;
+    if (expectedCount === 0) {
+      expectedCount = foundCount > 0 ? foundCount : 0;
+    }
+
+    if (expectedCount > 0 && foundCount >= expectedCount) {
+      completedRows += 1;
+      completedMap[rowNumber] = {
+        status: 'completed',
+        links: {
+          '1:1': links11,
+          '9:16': links916,
+        },
+      };
+    }
+  }
+
+  return {
+    totalRows,
+    completedRows,
+    rows: completedMap,
+  };
 };
 
 /**

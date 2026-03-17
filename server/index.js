@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
-import { processBatch } from './services/batchProcessor.js';
+import { processBatch, getBatchStatus } from './services/batchProcessor.js';
 
 class RequestValidationError extends Error {}
 
@@ -405,6 +405,32 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     console.error('Batch aspect ratio error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Unexpected batch processing error.'),
+    });
+  }
+});
+
+app.post('/api/batch-status', async (request, response) => {
+  try {
+    const { sheetsUrl, sheetName } = request.body ?? {};
+
+    if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+
+    const status = await getBatchStatus({
+      sheetsUrl: sheetsUrl.trim(),
+      sheetName: sheetName ? String(sheetName).trim() : undefined,
+    });
+
+    return response.status(200).json(status);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('Batch status error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Unexpected batch status error.'),
     });
   }
 });
