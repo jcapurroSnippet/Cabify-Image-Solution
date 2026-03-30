@@ -15,7 +15,7 @@ import { generateVariant } from './services/adOptimizerApi';
 const MIN_IMAGES = 3;
 const MAX_IMAGES = 20;
 
-const ACTIVE_PROMPT = 'Use generative outpainting to place the subject in a new but logical Cabify context (e.g., from inside the car to the city street, or from a sidewalk to a minimalist buenos aires backdrop, or from travelling in the car to getting into the car, or from being alone to adding a partner, or from having a partner to being alone).';
+const ACTIVE_PROMPT = "Photorealistic outpainting. Extend the scene naturally and seamlessly from the existing image. Maintain the same photographic style: natural daylight, soft urban bokeh background, candid mood, warm-neutral color palette. The subject must remain unchanged. New context must be logically consistent with a Cabify ride-hailing scenario in a Latin American city (Buenos Aires or Córdoba street environment): modern urban street, clean sidewalks, residential or commercial buildings, parked or passing cars. Do not add text, logos, or graphic overlays. Do not alter the subject's face, clothing, or expression. Photo quality, 85mm lens feel, shallow depth of field.";
 
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
