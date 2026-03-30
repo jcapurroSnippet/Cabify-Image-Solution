@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find '/c/Users/JuanCapurro/Desktop/Cabify Image Solution/src' -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.json \\\\\\))",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(pkill -f \"node server/index.js\")",
+      "Bash(pkill -f \"vite --port=3000\")",
+      "Bash(curl -s \"http://localhost:8080/api/ads/accounts?platform=google\")",
+      "Bash(curl -s \"http://localhost:8080/api/ads/accounts?platform=meta\")",
+      "Bash(node -e \"console.log\\(''GOOGLE_ADS_CUSTOMER_IDS:'', process.env.GOOGLE_ADS_CUSTOMER_IDS\\); console.log\\(''META_AD_ACCOUNT_IDS:'', process.env.META_AD_ACCOUNT_IDS\\); console.log\\(''GOOGLE_ADS_DEVELOPER_TOKEN:'', process.env.GOOGLE_ADS_DEVELOPER_TOKEN ? ''SET'' : ''NOT SET''\\); console.log\\(''META_ACCESS_TOKEN:'', process.env.META_ACCESS_TOKEN ? ''SET'' : ''NOT SET''\\);\")",
+      "Bash(node --env-file=.env -e \"console.log\\(''CUSTOMER_IDS:'', process.env.GOOGLE_ADS_CUSTOMER_IDS\\); console.log\\(''META_IDS:'', process.env.META_AD_ACCOUNT_IDS\\);\")",
+      "Bash(curl -s \"http://localhost:8080/api/ads/worst-performers?platform=google&accountId=7053421764\")",
+      "Bash(curl -s \"http://localhost:8080/api/ads/worst-performers?platform=meta&accountId=act_12978665768312\")",
+      "Bash(curl -s \"https://graph.facebook.com/v21.0/act_12978665768312/ads?fields=id,name&effective_status=%5B%22ACTIVE%22%5D&limit=1&access_token=EAAUGM2pSkqEBQxAOAhNqJGDZCZBeyZBORS6S0C7ZBNuzDKZCxOmFPW6zA9kjfQFkN33G3wE9GCzZAMv8WENVKjC95ZChRYPJaTktiIOFyOdBnYXev3vWocZAqR5LWeYDPOCI8dPJZCivAIl35KR3725eEIIrZAw9DJgd8zbmUnLWma8CwtKfJP0BNqanqfowZDZD\")"
+    ]
+  }
+}

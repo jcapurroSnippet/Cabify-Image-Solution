@@ -5,6 +5,9 @@ import express from 'express';
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
 import { processBatch, getBatchStatus } from './services/batchProcessor.js';
+import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
+import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
+import { downloadAdImage } from './services/adImageDownloader.js';
 
 class RequestValidationError extends Error {}
 
@@ -434,6 +437,159 @@ app.post('/api/batch-status', async (request, response) => {
     });
   }
 });
+
+// ── Ad Optimizer endpoints ──────────────────────────────────────────────────
+
+app.get('/api/ads/accounts', (request, response) => {
+  try {
+    const platform = String(request.query.platform ?? '').trim();
+
+    if (!['google', 'meta'].includes(platform)) {
+      throw new RequestValidationError('platform query param must be "google" or "meta".');
+    }
+
+    const accounts =
+      platform === 'google' ? getGoogleAccounts() : getMetaAccounts();
+
+    return response.status(200).json({ accounts });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to fetch accounts.'),
+    });
+  }
+});
+
+app.get('/api/ads/campaigns', async (request, response) => {
+  try {
+    const platform = String(request.query.platform ?? '').trim();
+    const accountId = String(request.query.accountId ?? '').trim();
+
+    if (!['google', 'meta'].includes(platform)) {
+      throw new RequestValidationError('platform query param must be "google" or "meta".');
+    }
+    if (!accountId) {
+      throw new RequestValidationError('accountId query param is required.');
+    }
+
+    const campaigns =
+      platform === 'google'
+        ? await getGoogleCampaigns(accountId)
+        : await getMetaCampaigns(accountId);
+
+    return response.status(200).json({ campaigns });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+    console.error('Campaigns error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to fetch campaigns.'),
+    });
+  }
+});
+
+app.get('/api/ads/worst-performers', async (request, response) => {
+  try {
+    const platform = String(request.query.platform ?? '').trim();
+    const accountId = String(request.query.accountId ?? '').trim();
+    const campaignId = String(request.query.campaignId ?? '').trim();
+    const days = Number(request.query.days) || 30;
+
+    if (!['google', 'meta'].includes(platform)) {
+      throw new RequestValidationError('platform query param must be "google" or "meta".');
+    }
+    if (!accountId) {
+      throw new RequestValidationError('accountId query param is required.');
+    }
+    if (!campaignId) {
+      throw new RequestValidationError('campaignId query param is required.');
+    }
+
+    const ads =
+      platform === 'google'
+        ? await getGoogleWorstPerformers(accountId, campaignId, days)
+        : await getMetaWorstPerformers(accountId, campaignId, days);
+
+    return response.status(200).json({ ads });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('Worst performers error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to fetch worst performers.'),
+    });
+  }
+});
+
+app.post('/api/ads/download-image', async (request, response) => {
+  try {
+    const { imageUrl } = request.body ?? {};
+
+    if (typeof imageUrl !== 'string' || imageUrl.trim().length === 0) {
+      throw new RequestValidationError('imageUrl is required.');
+    }
+
+    const imageDataUrl = await downloadAdImage(imageUrl.trim());
+    return response.status(200).json({ imageDataUrl });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('Download ad image error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to download ad image.'),
+    });
+  }
+});
+
+app.post('/api/ads/replace-creative', async (request, response) => {
+  try {
+    const { platform, accountId, adId, adGroupId, imageDataUrl } = request.body ?? {};
+
+    if (!['google', 'meta'].includes(platform)) {
+      throw new RequestValidationError('platform must be "google" or "meta".');
+    }
+    if (!accountId) {
+      throw new RequestValidationError('accountId is required.');
+    }
+    if (!adId) {
+      throw new RequestValidationError('adId is required.');
+    }
+    if (!imageDataUrl) {
+      throw new RequestValidationError('imageDataUrl is required.');
+    }
+
+    let result;
+    if (platform === 'google') {
+      if (!adGroupId) {
+        throw new RequestValidationError('adGroupId is required for Google Ads.');
+      }
+      result = await replaceGoogleAdCreative(accountId, adGroupId, adId, imageDataUrl);
+    } else {
+      result = await replaceMetaAdCreative(accountId, adId, imageDataUrl);
+    }
+
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('Replace creative error:', error);
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to replace ad creative.'),
+    });
+  }
+});
+
+// ── Static files & SPA fallback ─────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
