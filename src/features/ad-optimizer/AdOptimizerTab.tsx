@@ -275,14 +275,6 @@ export default function AdOptimizerTab() {
               >
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <p className="mb-1 text-xs text-slate-500">Original</p>
-                    <img
-                      src={img.previewUrl}
-                      alt="original"
-                      className="aspect-square w-full rounded-lg object-cover"
-                    />
-                  </div>
-                  <div>
                     <p className="mb-1 text-xs text-slate-500">Procesada</p>
                     <img
                       src={img.processedUrl!}
