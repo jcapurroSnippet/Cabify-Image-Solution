@@ -273,16 +273,11 @@ export default function AdOptimizerTab() {
                 transition={{ delay: index * 0.04 }}
                 className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/40 p-3"
               >
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="mb-1 text-xs text-slate-500">Procesada</p>
-                    <img
-                      src={img.processedUrl!}
-                      alt="processed"
-                      className="aspect-square w-full rounded-lg object-cover"
-                    />
-                  </div>
-                </div>
+                <img
+                  src={img.processedUrl!}
+                  alt="processed"
+                  className="w-full rounded-lg object-contain"
+                />
                 <button
                   type="button"
                   onClick={() =>
