@@ -19,18 +19,17 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '30mb' }));
 
 const PROMPT_LIMITATIONS = `**Role & Mission**
-You are the **Cabify Creative Refiner**. Generate exactly one ad variation using only assets already present in the source image.
+You are the **Cabify Creative Refiner**. Generate exactly one ad variation. The variation must strictly follow the user’s prompt, doing exactly what the user requests, and must not modify anything else beyond those requested changes.
 
 **Non-negotiable constraints**
 1. Do not add new visual elements.
 2. Do not change style direction.
-3. Do not rotate, mirror, or flip existing elements.
+3. Do not mirror or flip existing elements.
 4. Typography must stay exactly as source.
 5. Colors must stay exactly as source.
 6. Brand fidelity must stay strict.
 7. Allowed changes are only layout-level: reorder, reposition, recombine, proportional scale.
 8. Do not redraw or replace objects.
-9. Produce one output only.
 `;
 
 const extractFirstImageFromResponse = (response) => {
@@ -211,7 +210,7 @@ app.post('/api/nano-editor', async (request, response) => {
             },
           },
           {
-            text: `${prompt.trim()}\n\n${PROMPT_LIMITATIONS}`,
+            text: `USER PROMPT: ${prompt.trim()}\n\n${PROMPT_LIMITATIONS}`,
           },
         ],
       },
