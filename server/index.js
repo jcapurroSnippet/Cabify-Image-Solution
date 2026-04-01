@@ -30,6 +30,7 @@ You are the **Cabify Creative Refiner**. Generate exactly one ad variation. The 
 6. Brand fidelity must stay strict.
 7. Allowed changes are only layout-level: reorder, reposition, recombine, proportional scale.
 8. Do not redraw or replace objects.
+9. DO NOT output the same image as input, even if the prompt is vague. If the prompt is vague, make a reasonable interpretation that results in a different layout while respecting all constraints and brand fidelity.
 `;
 
 const extractFirstImageFromResponse = (response) => {
