@@ -15,7 +15,60 @@ import { generateVariant } from './services/adOptimizerApi';
 const MIN_IMAGES = 3;
 const MAX_IMAGES = 20;
 
-const ACTIVE_PROMPT = "Analyze the scene carefully and apply ONLY ONE transformation — the single most impactful creative variation for a Cabify advertisement. Choose based on what makes most sense for this specific image.";IF the person is ALONE, choose one:Transition - Inside to Street: Start with a close-up of the passenger looking out the rear window. Outpaint to show them stepping onto a lively, sunlit Buenos Aires city street.Social Addition: Expand a solo shot to include an active, smiling partner joining the scene, both about to enter the car's back door.Scale Shift - Urban Context: Expand outpainting dramatically to show the subject in a large, vital city environment — wide avenue, trees, buildings.Re-contextualization - Arrival: Transform the scene into an arrival at a vibrant urban event, expanding the background to show an exciting, active city context.Action - Boarding: Capture a spontaneous moment of the subject putting their bag into the back seat, half-stepped into the vehicle, natural daylight.Destination Reveal: Outpaint to show the subject stepping out in front of a recognizable Buenos Aires landmark or neighborhood — Palermo, San Telmo, Puerto Madero — conveying the joy of arriving somewhere specific.Time of Day Shift - Night Arrival: Transition the scene to nighttime. The subject exits the car onto a warmly lit city street, neon and streetlights reflecting on wet pavement, energy of a night out.IF there are MULTIPLE people, choose one:Social Subtraction: Reframe to focus tightly on one person's happy, spontaneous reaction just before entering, removing the other person naturally.Pivoting Focus: Shift focus to a single vital person standing by the car's rear door, letting the other fade into soft background bokeh.Action - Mid-Entry: A candid shot of friends mid-action, entering the back seat in a chaotic, joyful huddle.Perspective Shift - Minimalist BA: Shift background to a minimalist Buenos Aires architectural backdrop, keeping their active energy and natural light.Group Expansion: Outpaint to add a third person joining the group outside the car, all laughing and interacting, reinforcing the social, shared-ride energy.Parallel Moment: Split the scene energy — one person already inside the car looking out, the other still on the sidewalk saying goodbye, caught in a warm, spontaneous farewell moment.IF the person is STATIC (sitting, looking at phone), choose one:Atmospheric Shift: Transition to golden hour — warm, directional natural light casting long shadows on the subject near the car.Action - Boarding: Transform the static pose into a spontaneous boarding moment — half-stepped in, bag in hand.Window World: Keep the subject static inside the car but dramatically change the exterior view through the window — a vivid Buenos Aires street scene, market, or park replacing the blurred background, as if the city is unfolding around them.Micro-Moment: Zoom into a small but expressive detail — hands on the phone, a smile forming, fingers on the door handle — transforming a passive scene into an intimate, human moment.IF the person is ACTIVE (waving, laughing), choose one:Atmospheric Shift: Transition to golden hour with warm directional light, preserving their active expression.Perspective Shift - Minimalist BA: Shift to a minimalist Buenos Aires architectural backdrop, keeping their energy intact.Motion Blur Context: Extend the scene to suggest movement — light trails, soft motion in the background — while keeping the subject sharp, conveying the energy of the city in motion.Reaction Shot Reframe: Outpaint to reveal what the subject is reacting to — a friend arriving, a view of the city, a moment of surprise — giving narrative context to their active expression.IF the image is an ILLUSTRATION or GRAPHIC, choose one:Photo Transition: Transform the illustration into a photorealistic scene maintaining the same composition, characters, and mood — as if the illustrated moment were captured by a real camera in Buenos Aires.Style Shift - Editorial: Reinterpret the illustration in a bold editorial graphic style — high contrast, flat color fields, strong typography-ready composition, Cabify purple as the dominant accent.Environment Expansion: Keep the illustrated characters exactly as they are but outpaint the background into a rich, detailed Buenos Aires urban scene — architecture, street life, natural light — blending illustration and realism.Isometric City Scene: Reimagine the illustration as an isometric Buenos Aires cityscape with the characters integrated naturally — cars, buildings, streets, and people coexisting in a clean, modern birds-eye view.Rules — always apply regardless of transformation:Choose ONE transformation only. Do not combine.Preserve the subject's face, skin tone, hair, and clothing exactly.Maintain natural daylight (or golden hour if chosen), shallow depth of field, candid photography style.Background must feel like Buenos Aires or Córdoba urban environment";
+const ACTIVE_PROMPT = `Analyze the scene carefully and apply ONLY ONE transformation — the single most impactful creative variation for a Cabify advertisement. Choose based on what makes most sense for this specific image.
+
+IF the person is ALONE, choose one:
+- Transition - Inside to Street: Start with a close-up of the passenger looking out the rear window. Outpaint to show them stepping onto a lively, sunlit Buenos Aires city street.
+- Social Addition: Expand a solo shot to include an active, smiling partner joining the scene, both about to enter the car's back door.
+- Scale Shift - Urban Context: Expand outpainting dramatically to show the subject in a large, vital city environment — wide avenue, trees, buildings.
+- Re-contextualization - Arrival: Transform the scene into an arrival at a vibrant urban event, expanding the background to show an exciting, active city context.
+- Action - Boarding: Capture a spontaneous moment of the subject putting their bag into the back seat, half-stepped into the vehicle, natural daylight.
+- Destination Reveal: Outpaint to show the subject stepping out in front of a recognizable Buenos Aires landmark or neighborhood — Palermo, San Telmo, Puerto Madero — conveying the joy of arriving somewhere specific.
+- Time of Day Shift - Night Arrival: Transition the scene to nighttime. The subject exits the car onto a warmly lit city street, neon and streetlights reflecting on wet pavement, energy of a night out.
+
+IF there are MULTIPLE people, choose one:
+- Social Subtraction: Reframe to focus tightly on one person's happy, spontaneous reaction just before entering, removing the other person naturally.
+- Pivoting Focus: Shift focus to a single vital person standing by the car's rear door, letting the other fade into soft background bokeh.
+- Action - Mid-Entry: A candid shot of friends mid-action, entering the back seat in a chaotic, joyful huddle.
+- Perspective Shift - Minimalist BA: Shift background to a minimalist Buenos Aires architectural backdrop, keeping their active energy and natural light.
+- Group Expansion: Outpaint to add a third person joining the group outside the car, all laughing and interacting, reinforcing the social, shared-ride energy.
+- Parallel Moment: Split the scene energy — one person already inside the car looking out, the other still on the sidewalk saying goodbye, caught in a warm, spontaneous farewell moment.
+
+IF the person is STATIC (sitting, looking at phone), choose one:
+- Atmospheric Shift: Transition to golden hour — warm, directional natural light casting long shadows on the subject near the car.
+- Action - Boarding: Transform the static pose into a spontaneous boarding moment — half-stepped in, bag in hand.
+- Window World: Keep the subject static inside the car but dramatically change the exterior view through the window — a vivid Buenos Aires street scene, market, or park replacing the blurred background, as if the city is unfolding around them.
+- Micro-Moment: Zoom into a small but expressive detail — hands on the phone, a smile forming, fingers on the door handle — transforming a passive scene into an intimate, human moment.
+
+IF the person is ACTIVE (waving, laughing), choose one:
+- Atmospheric Shift: Transition to golden hour with warm directional light, preserving their active expression.
+- Perspective Shift - Minimalist BA: Shift to a minimalist Buenos Aires architectural backdrop, keeping their energy intact.
+- Motion Blur Context: Extend the scene to suggest movement — light trails, soft motion in the background — while keeping the subject sharp, conveying the energy of the city in motion.
+- Reaction Shot Reframe: Outpaint to reveal what the subject is reacting to — a friend arriving, a view of the city, a moment of surprise — giving narrative context to their active expression.
+
+IF the image is an ILLUSTRATION or GRAPHIC, choose one:
+- Photo Transition: Transform the illustration into a photorealistic scene maintaining the same composition, characters, and mood — as if the illustrated moment were captured by a real camera in Buenos Aires.
+- Style Shift - Editorial: Reinterpret the illustration in a bold editorial graphic style — high contrast, flat color fields, strong typography-ready composition, Cabify purple as the dominant accent.
+- Environment Expansion: Keep the illustrated characters exactly as they are but outpaint the background into a rich, detailed Buenos Aires urban scene — architecture, street life, natural light — blending illustration and realism.
+- Isometric City Scene: Reimagine the illustration as an isometric Buenos Aires cityscape with the characters integrated naturally — cars, buildings, streets, and people coexisting in a clean, modern birds-eye view.
+
+Rules — always apply regardless of transformation:
+- Choose ONE transformation only. Do not combine.
+- Preserve the subject's face, skin tone, hair, and clothing exactly.
+- Maintain natural daylight (or golden hour if chosen), shallow depth of field, candid photography style.
+- Background must feel like Buenos Aires or Córdoba urban environment.
+
+Non-negotiable visual constraints — never violate:
+- Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
+- No same gender couples.
+- No taxis. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
+- People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
+- When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
+- The urban background must occupy no more than 30% of the frame. People and the car are the protagonists — the street is context, not the subject.
+- Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
+- Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
+- People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
+- No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.`;
 
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {

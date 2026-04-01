@@ -74,8 +74,11 @@ export default function NanoEditorTab() {
     setIsGenerating(true);
     setError(null);
 
+    // If there's already a result, edit on top of it (iterative editing)
+    const sourceImage = resultImage ?? selectedImage;
+
     try {
-      const generatedImageUrl = await generateNanoImage(selectedImage, prompt.trim());
+      const generatedImageUrl = await generateNanoImage(sourceImage, prompt.trim());
       setResultImage(generatedImageUrl);
     } catch (generationError) {
       console.error(generationError);
@@ -187,19 +190,34 @@ export default function NanoEditorTab() {
 
       <section className="panel-surface space-y-3">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="space-y-0.5">
             <h3 className="text-lg font-semibold text-white">Result</h3>
+            {resultImage && !isGenerating && (
+              <p className="text-xs text-cyan-300">Next generation will edit this output</p>
+            )}
           </div>
-          {resultImage && !isGenerating && (
-            <a
-              href={resultImage}
-              download="nano-editor-result.png"
-              className="inline-flex items-center gap-2 rounded-full border border-cyan-200/40 bg-cyan-200/10 px-3 py-1 text-xs font-medium text-cyan-100"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Download
-            </a>
-          )}
+          <div className="flex items-center gap-2">
+            {resultImage && !isGenerating && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setResultImage(null)}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-600/60 bg-slate-800/60 px-3 py-1 text-xs font-medium text-slate-300 hover:text-white"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Reset to original
+                </button>
+                <a
+                  href={resultImage}
+                  download="nano-editor-result.png"
+                  className="inline-flex items-center gap-2 rounded-full border border-cyan-200/40 bg-cyan-200/10 px-3 py-1 text-xs font-medium text-cyan-100"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </a>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/45">
