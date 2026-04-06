@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle,
+  ChevronDown,
   Download,
   ImagePlus,
   Loader2,
@@ -10,58 +11,16 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { UploadedImage } from './types';
+import { scenes } from './scenes';
 import { generateVariant } from './services/adOptimizerApi';
 
 const MIN_IMAGES = 3;
 const MAX_IMAGES = 20;
 
-const ACTIVE_PROMPT = `Analyze the scene carefully and apply ONLY ONE transformation — the single most impactful creative variation for a Cabify advertisement. Choose based on what makes most sense for this specific image.
-
-IF the person is ALONE, choose one:
-- Transition - Inside to Street: Start with a close-up of the passenger looking out the rear window. Outpaint to show them stepping onto a lively, sunlit Buenos Aires city street.
-- Social Addition: Expand a solo shot to include an active, smiling partner joining the scene, both about to enter the car's back door.
-- Scale Shift - Urban Context: Expand outpainting dramatically to show the subject in a large, vital city environment — wide avenue, trees, buildings.
-- Re-contextualization - Arrival: Transform the scene into an arrival at a vibrant urban event, expanding the background to show an exciting, active city context.
-- Action - Boarding: Capture a spontaneous moment of the subject putting their bag into the back seat, half-stepped into the vehicle, natural daylight.
-- Destination Reveal: Outpaint to show the subject stepping out in front of a recognizable Buenos Aires landmark or neighborhood — Palermo, San Telmo, Puerto Madero — conveying the joy of arriving somewhere specific.
-- Time of Day Shift - Night Arrival: Transition the scene to nighttime. The subject exits the car onto a warmly lit city street, neon and streetlights reflecting on wet pavement, energy of a night out.
-
-IF there are MULTIPLE people, choose one:
-- Social Subtraction: Reframe to focus tightly on one person's happy, spontaneous reaction just before entering, removing the other person naturally.
-- Pivoting Focus: Shift focus to a single vital person standing by the car's rear door, letting the other fade into soft background bokeh.
-- Action - Mid-Entry: A candid shot of friends mid-action, entering the back seat in a chaotic, joyful huddle.
-- Perspective Shift - Minimalist BA: Shift background to a minimalist Buenos Aires architectural backdrop, keeping their active energy and natural light.
-- Group Expansion: Outpaint to add a third person joining the group outside the car, all laughing and interacting, reinforcing the social, shared-ride energy.
-- Parallel Moment: Split the scene energy — one person already inside the car looking out, the other still on the sidewalk saying goodbye, caught in a warm, spontaneous farewell moment.
-
-IF the person is STATIC (sitting, looking at phone), choose one:
-- Atmospheric Shift: Transition to golden hour — warm, directional natural light casting long shadows on the subject near the car.
-- Action - Boarding: Transform the static pose into a spontaneous boarding moment — half-stepped in, bag in hand.
-- Window World: Keep the subject static inside the car but dramatically change the exterior view through the window — a vivid Buenos Aires street scene, market, or park replacing the blurred background, as if the city is unfolding around them.
-- Micro-Moment: Zoom into a small but expressive detail — hands on the phone, a smile forming, fingers on the door handle — transforming a passive scene into an intimate, human moment.
-
-IF the person is ACTIVE (waving, laughing), choose one:
-- Atmospheric Shift: Transition to golden hour with warm directional light, preserving their active expression.
-- Perspective Shift - Minimalist BA: Shift to a minimalist Buenos Aires architectural backdrop, keeping their energy intact.
-- Motion Blur Context: Extend the scene to suggest movement — light trails, soft motion in the background — while keeping the subject sharp, conveying the energy of the city in motion.
-- Reaction Shot Reframe: Outpaint to reveal what the subject is reacting to — a friend arriving, a view of the city, a moment of surprise — giving narrative context to their active expression.
-
-IF the image is an ILLUSTRATION or GRAPHIC, choose one:
-- Photo Transition: Transform the illustration into a photorealistic scene maintaining the same composition, characters, and mood — as if the illustrated moment were captured by a real camera in Buenos Aires.
-- Style Shift - Editorial: Reinterpret the illustration in a bold editorial graphic style — high contrast, flat color fields, strong typography-ready composition, Cabify purple as the dominant accent.
-- Environment Expansion: Keep the illustrated characters exactly as they are but outpaint the background into a rich, detailed Buenos Aires urban scene — architecture, street life, natural light — blending illustration and realism.
-- Isometric City Scene: Reimagine the illustration as an isometric Buenos Aires cityscape with the characters integrated naturally — cars, buildings, streets, and people coexisting in a clean, modern birds-eye view.
-
-Rules — always apply regardless of transformation:
-- Choose ONE transformation only. Do not combine.
-- Preserve the subject's face, skin tone, hair, and clothing exactly.
-- Maintain natural daylight (or golden hour if chosen), shallow depth of field, candid photography style.
-- Background must feel like Buenos Aires or Córdoba urban environment.
-
-Non-negotiable visual constraints — never violate:
+const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
 - Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
 - No same gender couples.
-- No taxis. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
+- Never include taxis in the image. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
 - People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
 - When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
 - The urban background must occupy no more than 30% of the frame. People and the car are the protagonists — the street is context, not the subject.
@@ -69,6 +28,20 @@ Non-negotiable visual constraints — never violate:
 - Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
 - People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
 - No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.`;
+
+const buildPrompt = (sceneId: number): string => {
+  const scene = scenes.find((s) => s.id === sceneId);
+  if (!scene) return CONSTRAINTS;
+
+  return `Transform this image to match the following Cabify ad scene.
+
+Scene: "${scene.title}" — Stage: ${scene.stage}
+Subject & action: ${scene.scene}
+Background: ${scene.background}
+Composition guidance: ${scene.designSpace}
+
+${CONSTRAINTS}`;
+};
 
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -85,8 +58,15 @@ const downloadImage = (dataUrl: string, filename: string) => {
   a.click();
 };
 
+const STAGE_COLORS: Record<string, string> = {
+  Entrada: 'bg-cyan-500/15 text-cyan-300',
+  Trayecto: 'bg-violet-500/15 text-violet-300',
+  Salida: 'bg-amber-500/15 text-amber-300',
+};
+
 export default function AdOptimizerTab() {
   const [images, setImages] = useState<UploadedImage[]>([]);
+  const [selectedSceneId, setSelectedSceneId] = useState<number>(scenes[0].id);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -97,7 +77,6 @@ export default function AdOptimizerTab() {
     const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
     const remaining = MAX_IMAGES - images.length;
     const toAdd = arr.slice(0, remaining);
-
     if (toAdd.length === 0) return;
 
     const newImages: UploadedImage[] = await Promise.all(
@@ -110,7 +89,6 @@ export default function AdOptimizerTab() {
         error: null,
       })),
     );
-
     setImages((prev) => [...prev, ...newImages]);
     setGlobalError(null);
   }, [images.length]);
@@ -130,13 +108,11 @@ export default function AdOptimizerTab() {
 
   const handleProcess = async () => {
     if (images.length < MIN_IMAGES) return;
-    const prompt = ACTIVE_PROMPT;
+    const prompt = buildPrompt(selectedSceneId);
 
     setIsProcessing(true);
     setGlobalError(null);
     setDoneCount(0);
-
-    // Reset all states
     setImages((prev) =>
       prev.map((img) => ({ ...img, processedUrl: null, isProcessing: true, error: null })),
     );
@@ -146,16 +122,12 @@ export default function AdOptimizerTab() {
       try {
         const result = await generateVariant(img.previewUrl, prompt);
         setImages((prev) =>
-          prev.map((i) =>
-            i.id === img.id ? { ...i, processedUrl: result, isProcessing: false } : i,
-          ),
+          prev.map((i) => i.id === img.id ? { ...i, processedUrl: result, isProcessing: false } : i),
         );
       } catch (err) {
         const message = (err as { message?: string })?.message ?? 'Error procesando imagen.';
         setImages((prev) =>
-          prev.map((i) =>
-            i.id === img.id ? { ...i, isProcessing: false, error: message } : i,
-          ),
+          prev.map((i) => i.id === img.id ? { ...i, isProcessing: false, error: message } : i),
         );
       }
       processed++;
@@ -168,6 +140,7 @@ export default function AdOptimizerTab() {
   const processedImages = images.filter((img) => img.processedUrl);
   const hasResults = processedImages.length > 0;
   const canProcess = images.length >= MIN_IMAGES && !isProcessing;
+  const selectedScene = scenes.find((s) => s.id === selectedSceneId)!;
 
   const handleDownloadAll = () => {
     processedImages.forEach((img) => {
@@ -177,12 +150,11 @@ export default function AdOptimizerTab() {
 
   return (
     <div className="space-y-4">
-      {/* Upload + config panel */}
       <section className="panel-surface space-y-5">
         <div>
           <h3 className="text-lg font-semibold text-white">Editor Batch</h3>
           <p className="mt-1 text-sm text-slate-400">
-            Subí entre {MIN_IMAGES} y {MAX_IMAGES} imágenes, elegí un prompt y procesalas con IA.
+            Subí entre {MIN_IMAGES} y {MAX_IMAGES} imágenes, elegí una escena y procesalas con IA.
           </p>
         </div>
 
@@ -217,16 +189,12 @@ export default function AdOptimizerTab() {
           onChange={(e) => e.target.files && void addFiles(e.target.files)}
         />
 
-        {/* Thumbnails preview */}
+        {/* Thumbnails */}
         {images.length > 0 && (
           <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 md:grid-cols-10">
             {images.map((img) => (
               <div key={img.id} className="group relative aspect-square">
-                <img
-                  src={img.previewUrl}
-                  alt="preview"
-                  className="h-full w-full rounded-lg object-cover"
-                />
+                <img src={img.previewUrl} alt="preview" className="h-full w-full rounded-lg object-cover" />
                 {!isProcessing && (
                   <button
                     type="button"
@@ -256,7 +224,42 @@ export default function AdOptimizerTab() {
           </div>
         )}
 
-        {/* Process button + progress */}
+        {/* Scene selector */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-slate-300">Escena</p>
+
+          {/* Dropdown */}
+          <div className="relative">
+            <select
+              value={selectedSceneId}
+              onChange={(e) => setSelectedSceneId(Number(e.target.value))}
+              disabled={isProcessing}
+              className="w-full appearance-none rounded-xl border border-slate-700/80 bg-slate-900/70 py-2.5 pl-4 pr-9 text-sm text-slate-100 outline-none transition-colors focus:border-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
+            >
+              {scenes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.id}. {s.title} — {s.stage}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
+
+          {/* Scene preview card */}
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${STAGE_COLORS[selectedScene.stage] ?? 'bg-slate-700 text-slate-300'}`}>
+                {selectedScene.stage}
+              </span>
+              <span className="text-sm font-semibold text-white">{selectedScene.title}</span>
+            </div>
+            <p className="text-xs leading-relaxed text-slate-400">{selectedScene.scene}</p>
+            <p className="text-xs text-slate-500"><span className="text-slate-400">Fondo:</span> {selectedScene.background}</p>
+            <p className="text-xs text-slate-500"><span className="text-slate-400">Composición:</span> {selectedScene.designSpace}</p>
+          </div>
+        </div>
+
+        {/* Process button */}
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -272,15 +275,10 @@ export default function AdOptimizerTab() {
           </button>
 
           {isProcessing && (
-            <span className="text-sm text-slate-400">
-              {doneCount} / {images.length} completadas
-            </span>
+            <span className="text-sm text-slate-400">{doneCount} / {images.length} completadas</span>
           )}
-
           {!isProcessing && images.length > 0 && images.length < MIN_IMAGES && (
-            <span className="text-sm text-yellow-400">
-              Necesitás al menos {MIN_IMAGES} imágenes.
-            </span>
+            <span className="text-sm text-yellow-400">Necesitás al menos {MIN_IMAGES} imágenes.</span>
           )}
         </div>
 
@@ -299,14 +297,12 @@ export default function AdOptimizerTab() {
         </AnimatePresence>
       </section>
 
-      {/* Results grid */}
+      {/* Results */}
       {hasResults && (
         <section className="panel-surface space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium uppercase tracking-wider text-slate-400">
-              Resultados — {processedImages.length} imagen
-              {processedImages.length !== 1 ? 'es' : ''} procesada
-              {processedImages.length !== 1 ? 's' : ''}
+              Resultados — {processedImages.length} imagen{processedImages.length !== 1 ? 'es' : ''} procesada{processedImages.length !== 1 ? 's' : ''}
             </h3>
             <button
               type="button"
@@ -326,19 +322,10 @@ export default function AdOptimizerTab() {
                 transition={{ delay: index * 0.04 }}
                 className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/40 p-3"
               >
-                <img
-                  src={img.processedUrl!}
-                  alt="processed"
-                  className="w-full rounded-lg object-contain"
-                />
+                <img src={img.processedUrl!} alt="processed" className="w-full rounded-lg object-contain" />
                 <button
                   type="button"
-                  onClick={() =>
-                    downloadImage(
-                      img.processedUrl!,
-                      `optimized_${img.file.name}`,
-                    )
-                  }
+                  onClick={() => downloadImage(img.processedUrl!, `optimized_${img.file.name}`)}
                   className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-700/70 py-1.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
                 >
                   <Download className="h-3.5 w-3.5" />
