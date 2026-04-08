@@ -31,7 +31,7 @@ const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
 - Always use the current Cabify logo — never the old logo.
 - Always include the text box overlay. It must never disappear or be omitted.
 - All text must remain fully contained within the text box. No text may overflow, spill outside, or be cropped by the frame edges.
-- The background must always be slightly blurred (shallow depth of field). Not heavily blurred, not sharp — subtly out of focus at all times.
+- The background must always be slightly blurred.
 - Preserve the exact typography, text color, and font size from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`
 
 const buildPrompt = (sceneId: number): string => {
