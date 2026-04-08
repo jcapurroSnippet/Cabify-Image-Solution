@@ -27,7 +27,12 @@ const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
 - Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
 - Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
 - People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
-- No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.`;
+- No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.
+- Always use the current Cabify logo — never the old logo.
+- Always include the text box overlay. It must never disappear or be omitted.
+- All text must remain fully contained within the text box. No text may overflow, spill outside, or be cropped by the frame edges.
+- The background must always be slightly blurred (shallow depth of field). Not heavily blurred, not sharp — subtly out of focus at all times.
+- Preserve the exact typography, text color, and font size from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`
 
 const buildPrompt = (sceneId: number): string => {
   const scene = scenes.find((s) => s.id === sceneId);
