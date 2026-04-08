@@ -20,6 +20,7 @@ const MAX_IMAGES = 20;
 const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
 - Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
 - No same gender couples.
+- All people must have security belts on if the body is visible. No exceptions, no creative workarounds.
 - Never include taxis in the image. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
 - People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
 - When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
