@@ -28,6 +28,7 @@ const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
 - Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
 - Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
 - People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
+- NOTHING must be orange. No orange clothing, no orange cars, no orange backgrounds.
 - No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.
 - Always use the current Cabify logo — never the old logo.
 - Always include the text box overlay. It must never disappear or be omitted.
