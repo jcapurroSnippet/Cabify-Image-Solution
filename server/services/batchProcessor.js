@@ -919,6 +919,7 @@ export const processBatch = async (options) => {
     let imageUrlColumnName = columnLetter;
     let headerRowIndex = 0;
     let headerNames = [];
+    const sheetMerges = headerResponse.data.sheets?.[0]?.merges || [];
     const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
     if (gridData && gridData.rowData) {
       // Find header row (keyword-aware)
@@ -929,6 +930,23 @@ export const processBatch = async (options) => {
         const text = cell?.userEnteredValue?.stringValue;
         return text || `Column${String.fromCharCode(65 + idx)}`;
       });
+
+      // Expand merged header cells: if a merge spans the header row, propagate
+      // the value from its first column across the full span. Google Sheets
+      // returns the value only in the top-left cell of the merge.
+      for (const merge of sheetMerges) {
+        if (
+          merge.startRowIndex <= headerRowIndex &&
+          merge.endRowIndex > headerRowIndex
+        ) {
+          const sourceCell = headerRow[merge.startColumnIndex];
+          const sourceText = sourceCell?.userEnteredValue?.stringValue;
+          if (!sourceText) continue;
+          for (let c = merge.startColumnIndex + 1; c < merge.endColumnIndex; c++) {
+            headerNames[c] = sourceText;
+          }
+        }
+      }
 
       const headerCell = headerRow[imageUrlColumnIndex];
       if (headerCell?.userEnteredValue?.stringValue) {
