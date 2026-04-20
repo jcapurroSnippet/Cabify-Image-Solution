@@ -261,10 +261,13 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
     for (const prompt of variationPrompts) {
       try {
+        const refNote = refPart
+          ? '\n\n## REFERENCE LAYOUT (second image)\nThe second image shows ONLY the target card size and position — do NOT copy its background, subject, colors, or any visual content. Use it exclusively to understand where the card should be placed and how wide it should be relative to the canvas. All visual content must come from the first (source) image.'
+          : '';
         const parts = [
           { inlineData: { data: imageData, mimeType } },
           ...(refPart ? [refPart] : []),
-          { text: `${prompt}${refPart ? '\n\nThe second image is the reference layout. Match it exactly for card size, position, and proportions.' : ''}` },
+          { text: `${prompt}${refNote}` },
         ];
         const modelResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
