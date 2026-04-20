@@ -130,7 +130,7 @@ ${SHARED_CARD_SPEC}
   return [
     `${base}\n\n## THIS VARIATION\nMinimal intervention — preserve the source background as-is. Only extend background where strictly necessary to fill the canvas. Do NOT replace, repaint, or alter any existing background area. Full face and raised hand visible.`,
     `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
-    `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo from the specified positions.`,
+    `${base}\n\n## THIS VARIATION\nShow more of the surrounding environment — extend background on the sides or top to reveal more street/scene context. Keep the card and logo in the exact same position and size as described in the layout. Do NOT extend background below the card.`,
   ];
 };
 
