@@ -69,8 +69,6 @@ const SHARED_CARD_SPEC = `
 ## UI CARD
 - White rounded rectangle, consistent corner radius (~2-3% of canvas width), soft drop shadow.
 - Reproduce text, colors, and button exactly as in the source.
-- Card spans ~94-96% of canvas width (near full-width, almost edge to edge).
-- Width-to-height ratio must be at least 4:1 — the card is a wide horizontal band, NOT a square.
 `.trim();
 
 const getVariationPrompts = (targetRatio) => {
@@ -117,7 +115,7 @@ ${SHARED_PROHIBITIONS}
 - Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
 - Subject: centered or slightly right of center, full face visible.
 - UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
-  - Width: ~94-96% of canvas width.
+  - Width: ~94-96% of canvas width — the card must stretch almost edge to edge, leaving only ~2-3% margin on each side. DO NOT make the card narrow.
   - Height: ~16-20% of canvas height.
   - Bottom margin: ~12-16% of canvas height (leave visible background below the card).
   - Side margins: ~2-3% each side.
