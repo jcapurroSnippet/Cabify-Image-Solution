@@ -52,99 +52,88 @@ const extractFirstImageFromResponse = (response) => {
   return null;
 };
 
-const getVariationPrompt = (targetRatio, variationInstruction) => `
-**ROLE:** Cabify Brand Guardian (Strict Compliance Mode).
-**TASK:** Adapt source image to **${targetRatio}**
-**CONSTRAINT:** Any deviation from the Cabify Visual Identity System is a failure.
+const BRAND_LOCK =
+  'BRAND LOCK — do NOT modify, replace, recolor, restyle, resize, or reinterpret typography or brand colors under any circumstance. Keep exact original font, weight, proportions, letter-spacing, and all colors unchanged.';
 
+const SHARED_PROHIBITIONS = `
 ## PROHIBITIONS
-- Scene Integrity: Do NOT modify the main subject or key objects. You MAY outpaint only missing background areas.
-- Logo Isolation: Do NOT place any logo inside white UI card components.
-- UI Singularity: Create exactly one unified UI container per output.
-- No re-styling: do not add filters, blur, gradients, or color shifts.
+- Do NOT modify the main subject or any foreground object.
+- Do NOT place any logo inside white UI card components.
+- Do NOT add filters, blur, gradients, or color shifts.
+- Do NOT add new objects, logos, icons, or decorative assets.
+- Do NOT remove existing visual elements.
+- ${BRAND_LOCK}
+`.trim();
 
-## BRAND LOCKS
-- Keep the source palette exactly.
-- Keep source typography exactly (family, weight, scale, spacing).
-- Do not change orientation of any element.
-- No style drift: keep Cabify look and feel.
+const SHARED_CARD_SPEC = `
+## UI CARD
+- White rounded rectangle, consistent corner radius (~2-3% of canvas width), soft drop shadow.
+- Reproduce text, colors, and button exactly as in the source.
+- Card spans ~94-96% of canvas width (near full-width, almost edge to edge).
+- Width-to-height ratio must be at least 4:1 — the card is a wide horizontal band, NOT a square.
+`.trim();
 
-## COMPOSITION LOCKS
-- Preserve the car window frame geometry and diagonal lines.
-- Keep the subject face fully visible and natural; keep the raised hand visible.
-- Preserve the original camera angle and perspective.
-
-## SAFE MARGINS & SIZE LOCKS (relative to canvas)
-- Respect consistent safe margins from the canvas edges.
-- Logo size must remain within a tight band; do not scale up/down noticeably.
-- Card size must remain within a tight band; do not stretch.
-
-## GEOMETRY
-- CROP only what is necessary to fit **${targetRatio}**.
-- EXTEND (outpaint) only background areas if needed.
-- Do NOT crop through the subject, hand, logo, or UI card.
-
-## UI CARD SPEC
-- White rounded rectangle card, consistent corner radius and soft shadow.
-- Text and button must match source colors and style exactly.
-- Keep original line breaks and text alignment.
-- Button: mantain colour, icon on the left, uppercase label, same padding as source.
-- Card must span nearly the full width of the canvas with only small side margins (edge-to-edge look like the references).
-
-## LOGO PLACEMENT
-- Keep logo size the same as source.
-- Align to the reference layout for the target ratio (do not put logo inside the card).
-
-### If target is 9:16
-- Logo top-center.
-- Card centered horizontally near the bottom with equal side margins.
-- Keep visible background below the card.
-- Text centered.
-- Logo width: ~12-14% of canvas width.
-- Top margin: ~5-7% of canvas height.
-- Card width: ~94-96% of canvas width (near full width — ALMOST edge to edge).
-- Card height: ~16-20% of canvas height (card must be a wide horizontal rectangle, NOT a square; width-to-height ratio must be at least 4:1).
-- Corner radius: ~2-3% of canvas width (moderate rounded corners, NOT large radius).
-- Side margins: ~2-3% each.
-- Bottom margin: ~12-16% of canvas height (card must NOT sit at the very bottom edge — leave clear visible background below it).
-
-### If target is 1:1
-- Logo top-left.
-- Card anchored near the bottom with small side margins (near full width).
-- Text left aligned.
-- Logo width: ~14-16% of canvas width.
-- Top margin: ~6-8% of canvas height.
-- Side margins: ~2-3% each.
-- Card width: ~94-96% of canvas width (near full width).
-- Card height: ~28-32% of canvas height.
-- Bottom margin: ~4-6% of canvas height.
-
-## CONTENT REPLICATION
-- Copy text content exactly.
-- Do not add new objects, logos, icons, or decorative assets.
-
-## VARIATION
-${variationInstruction}
-`;
-
-const getVariationsForRatio = (targetRatio) => {
+const getVariationPrompts = (targetRatio) => {
   const ratio = String(targetRatio).trim();
 
-  const lockedBrandRules =
-    'Brand lock: do NOT modify, replace, recolor, restyle, resize, or reinterpret the typography or brand colors under any circumstance. Keep the exact original font, font weight, font proportions, letter spacing, and all original colors unchanged.';
-
   if (ratio === '1:1') {
+    const base = `
+**TASK:** Convert the source image to **1:1** square format for a Cabify ad.
+
+${SHARED_PROHIBITIONS}
+
+## LAYOUT (1:1)
+- Canvas: square (1:1).
+- Logo: top-left corner. Width ~14-16% of canvas width. Top margin ~6-8% of canvas height.
+- Subject: right half of the canvas, full face visible.
+- UI Card: anchored near bottom, left-aligned text.
+  - Width: ~94-96% of canvas width.
+  - Height: ~28-32% of canvas height.
+  - Bottom margin: ~4-6% of canvas height.
+  - Side margins: ~2-3% each side.
+
+${SHARED_CARD_SPEC}
+
+## GEOMETRY
+- CROP or EXTEND only what is strictly necessary to reach 1:1.
+- Do NOT crop through the subject face, logo, or UI card.
+`.trim();
+
     return [
-      `Variation A: match reference layout exactly (logo top-left, card bottom-left, left-aligned text). Keep subject on right half with full face + hand visible. ${lockedBrandRules}`,
-      `Variation B: keep the same layout but add slightly more headroom above the subject; do not change logo or card size. ${lockedBrandRules}`,
-      `Variation C: keep layout, allow a slightly wider crop to show more car door/frame while preserving the card margins. ${lockedBrandRules}`,
+      `${base}\n\n## THIS VARIATION\nCrop tightly — show as much of the original composition as possible within the square. Keep subject on the right half, full face and raised hand visible.`,
+      `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject compared to Variation A. Do not move the logo or card.`,
+      `${base}\n\n## THIS VARIATION\nWiden the crop slightly to reveal more of the car door/frame on the left while keeping the subject on the right half. Do not move the logo or card.`,
     ];
   }
 
+  // 9:16
+  const base = `
+**TASK:** Convert the source image to **9:16** vertical format for a Cabify ad.
+
+${SHARED_PROHIBITIONS}
+
+## LAYOUT (9:16)
+- Canvas: vertical (9:16).
+- Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
+- Subject: centered or slightly right of center, full face visible.
+- UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
+  - Width: ~94-96% of canvas width.
+  - Height: ~16-20% of canvas height.
+  - Bottom margin: ~12-16% of canvas height (leave visible background below the card).
+  - Side margins: ~2-3% each side.
+  - Text: centered.
+
+${SHARED_CARD_SPEC}
+
+## GEOMETRY
+- EXTEND (outpaint) background above/below if needed to fill the taller canvas.
+- Do NOT crop through the subject face, logo, or UI card.
+`.trim();
+
   return [
-    `Variation A: match reference layout exactly (logo top-center, card bottom-center, centered text). Keep full face + hand visible. ${lockedBrandRules}`,
-    `Variation B: keep layout, slightly more headroom above the subject; do not change card or logo size. ${lockedBrandRules}`,
-    `Variation C: keep layout, slightly lower the subject (more sky/background at top) while preserving card position. ${lockedBrandRules}`,
+    `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo and card in exact positions described above.`,
+    `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo or card from the specified positions.`,
+    `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo or card from the specified positions.`,
   ];
 };
 
@@ -263,19 +252,19 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
     const { imageData, mimeType } = parseDataUrl(finalImageDataUrl);
     const ai = getGeminiClient();
-    const variations = getVariationsForRatio(parsedRatio);
+    const variationPrompts = getVariationPrompts(parsedRatio);
 
     const outputs = [];
     const errors = [];
 
-    for (const variationText of variations) {
+    for (const prompt of variationPrompts) {
       try {
         const modelResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
           contents: {
             parts: [
               { inlineData: { data: imageData, mimeType } },
-              { text: getVariationPrompt(parsedRatio, variationText) },
+              { text: prompt },
             ],
           },
           config: {
@@ -291,14 +280,14 @@ app.post('/api/aspect-ratio', async (request, response) => {
           outputs.push(imageUrl);
         } else {
           errors.push({
-            variation: variationText,
+            variation: prompt.slice(0, 80),
             message: 'Model returned no image data in response parts.',
           });
         }
       } catch (error) {
         console.error('Aspect ratio variation generation failed', variationText, error);
         errors.push({
-          variation: variationText,
+          variation: prompt.slice(0, 80),
           message: getErrorMessage(error, 'Unknown model error.'),
         });
       }
