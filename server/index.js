@@ -52,86 +52,160 @@ const extractFirstImageFromResponse = (response) => {
   return null;
 };
 
-const BRAND_LOCK =
-  'BRAND LOCK — do NOT modify, replace, recolor, restyle, resize, or reinterpret typography or brand colors under any circumstance. Keep exact original font, weight, proportions, letter-spacing, and all colors unchanged.';
+// ─── PASS 1: Crop/outpaint only ──────────────────────────────────────────────
+// Goal: adapt the image to the target ratio. Do NOT touch card layout at all.
 
-const SHARED_PROHIBITIONS = `
+const CROP_PROHIBITIONS = `
 ## PROHIBITIONS
 - Do NOT modify the main subject or any foreground object.
-- Do NOT place any logo inside white UI card components.
 - Do NOT add filters, blur, gradients, or color shifts.
-- Do NOT add new objects, logos, icons, or decorative assets.
+- Do NOT add new objects or decorative assets.
 - Do NOT remove existing visual elements.
-- ${BRAND_LOCK}
+- Do NOT reposition, resize, or restyle the UI card, logo, text, or button.
+- BRAND LOCK: keep all colors, fonts, and brand elements exactly as in the source.
 `.trim();
 
-const SHARED_CARD_SPEC = `
-## UI CARD
-- White rounded rectangle, consistent corner radius (~2-3% of canvas width), soft drop shadow.
-- Reproduce text, colors, and button exactly as in the source.
-`.trim();
-
-const getVariationPrompts = (targetRatio) => {
+const getCropPrompts = (targetRatio) => {
   const ratio = String(targetRatio).trim();
 
   if (ratio === '1:1') {
     const base = `
-**TASK:** Convert the source image to **1:1** square format for a Cabify ad.
+**TASK:** Reframe the source image into a **1:1 square** canvas. Your only job is geometry — crop or extend the background to fit the square. Do not touch any other element.
 
-${SHARED_PROHIBITIONS}
+${CROP_PROHIBITIONS}
 
-## LAYOUT (1:1)
-- Canvas: square (1:1).
-- Logo: top-left corner. Width ~14-16% of canvas width. Top margin ~6-8% of canvas height.
-- Subject: right half of the canvas, full face visible.
-- UI Card: anchored near bottom, left-aligned text.
-  - Width: ~94-96% of canvas width.
-  - Height: ~28-32% of canvas height.
-  - Bottom margin: ~4-6% of canvas height.
-  - Side margins: ~2-3% each side.
-
-${SHARED_CARD_SPEC}
-
-## GEOMETRY
-- CROP or EXTEND only what is strictly necessary to reach 1:1.
-- Do NOT crop through the subject face, logo, or UI card.
+## GEOMETRY RULES
+- Target canvas: 1:1 square.
+- CROP or EXTEND only the background/scene areas as needed.
+- Keep the subject face, raised hand, logo, and UI card fully visible and unmodified.
+- Prefer cropping over extending when possible.
 `.trim();
 
     return [
-      `${base}\n\n## THIS VARIATION\nCrop tightly — show as much of the original composition as possible within the square. Keep subject on the right half, full face and raised hand visible.`,
-      `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject compared to Variation A. Do not move the logo.`,
-      `${base}\n\n## THIS VARIATION\nWiden the crop slightly to reveal more of the frame on the left while keeping the subject on the right half. Do not move the logo or card.`,
+      `${base}\n\n## FRAMING\nTight crop — show as much of the original composition as possible. Keep subject on the right half with full face and raised hand visible.`,
+      `${base}\n\n## FRAMING\nSlightly more headroom above the subject than Variation A. Extend or shift the top background area only.`,
+      `${base}\n\n## FRAMING\nReveal slightly more of the car door/frame on the left side. Do not change vertical framing.`,
     ];
   }
 
   // 9:16
   const base = `
-**TASK:** Convert the source image to **9:16** vertical format for a Cabify ad.
+**TASK:** Reframe the source image into a **9:16 vertical** canvas. Your only job is geometry — crop or extend the background to fit the tall canvas. Do not touch any other element.
 
-${SHARED_PROHIBITIONS}
+${CROP_PROHIBITIONS}
 
-## LAYOUT (9:16)
-- Canvas: vertical (9:16).
-- Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
-- Subject: centered or slightly right of center, full face visible.
-- UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
-  - CRITICAL: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means the card is ~1020px wide with only ~30px margin on each side. This is nearly edge to edge. If the source card looks narrower relative to the canvas, you MUST widen it — do NOT preserve the source card's proportions relative to canvas.
-  - Height: ~16-20% of canvas height.
-  - Bottom margin: ~12-16% of canvas height (leave visible background below the card).
-  - Text: centered.
-
-${SHARED_CARD_SPEC}
-
-## GEOMETRY
-- EXTEND (outpaint) background above/below if needed to fill the taller canvas.
-- Do NOT crop through the subject face, logo, or UI card.
+## GEOMETRY RULES
+- Target canvas: 9:16 vertical.
+- EXTEND background above and/or below the subject as needed to fill the canvas.
+- Keep the subject face, logo, and UI card fully visible and unmodified.
+- Subject should be centered or slightly right of center.
 `.trim();
 
   return [
-    `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo in exact positions described above.`,
-    `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
-    `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo or card from the specified positions.`,
+    `${base}\n\n## FRAMING\nKeep subject framing close to the source. Extend background evenly above and below.`,
+    `${base}\n\n## FRAMING\nMore headroom above the subject — extend sky/background more at the top than the bottom.`,
+    `${base}\n\n## FRAMING\nMore space below the subject — extend background more at the bottom than the top.`,
   ];
+};
+
+// ─── PASS 2: Card fix only ───────────────────────────────────────────────────
+// Goal: correct the card dimensions and position. Do NOT touch anything else.
+
+const getCardFixPrompt = (targetRatio) => {
+  const ratio = String(targetRatio).trim();
+
+  const shared = `
+**PROHIBITIONS**
+- Do NOT move the card vertically.
+- Do NOT change text content, font, colors, or button style.
+- Do NOT alter the background, subject, or logo in any way.
+- Do NOT add or remove any element.
+`.trim();
+
+  if (ratio === '1:1') {
+    return `
+**TASK:** Fix the white UI card in this 1:1 image. Apply only the changes listed below — nothing else.
+
+**CHANGES TO APPLY:**
+1. Widen the card so it spans ~94-96% of the canvas width (only ~2-3% margin on each side).
+2. Card height: ~28-32% of canvas height.
+3. Card position: anchored near the bottom with ~4-6% bottom margin.
+4. Text inside the card: left-aligned.
+5. Corner radius: ~2-3% of canvas width (moderate rounded corners).
+
+${shared}
+`.trim();
+  }
+
+  return `
+**TASK:** Fix the white UI card in this 9:16 image. Apply only the changes listed below — nothing else.
+
+**CHANGES TO APPLY:**
+1. Widen the card so it spans ~94-96% of the canvas width (only ~2-3% margin on each side).
+2. Card height: ~16-20% of canvas height.
+3. Card position: horizontally centered, ~12-16% bottom margin (not touching the bottom edge).
+4. Text inside the card: centered.
+5. Corner radius: ~2-3% of canvas width (moderate rounded corners).
+
+${shared}
+`.trim();
+};
+
+// ─── Two-pass pipeline ───────────────────────────────────────────────────────
+
+const runTwoPassGeneration = async (ai, imageData, mimeType, targetRatio) => {
+  const cropPrompts = getCropPrompts(targetRatio);
+  const cardFixPrompt = getCardFixPrompt(targetRatio);
+  const outputs = [];
+  const errors = [];
+
+  for (const cropPrompt of cropPrompts) {
+    // Pass 1: geometry only
+    let pass1ImageUrl;
+    try {
+      const pass1Response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: {
+          parts: [
+            { inlineData: { data: imageData, mimeType } },
+            { text: cropPrompt },
+          ],
+        },
+        config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
+      });
+      pass1ImageUrl = extractFirstImageFromResponse(pass1Response);
+    } catch (error) {
+      errors.push({ pass: 1, message: getErrorMessage(error, 'Pass 1 failed.') });
+      continue;
+    }
+
+    if (!pass1ImageUrl) {
+      errors.push({ pass: 1, message: 'Pass 1 returned no image.' });
+      continue;
+    }
+
+    // Pass 2: card fix only
+    try {
+      const { imageData: p1Data, mimeType: p1Mime } = parseDataUrl(pass1ImageUrl);
+      const pass2Response = await ai.models.generateContent({
+        model: 'gemini-3-pro-image-preview',
+        contents: {
+          parts: [
+            { inlineData: { data: p1Data, mimeType: p1Mime } },
+            { text: cardFixPrompt },
+          ],
+        },
+        config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
+      });
+      const pass2ImageUrl = extractFirstImageFromResponse(pass2Response);
+      outputs.push(pass2ImageUrl ?? pass1ImageUrl);
+    } catch (error) {
+      console.warn('Pass 2 (card fix) failed, using pass-1 result:', error.message);
+      outputs.push(pass1ImageUrl);
+    }
+  }
+
+  return { outputs, errors };
 };
 
 const getGeminiClient = () => {
@@ -249,46 +323,8 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
     const { imageData, mimeType } = parseDataUrl(finalImageDataUrl);
     const ai = getGeminiClient();
-    const variationPrompts = getVariationPrompts(parsedRatio);
 
-    const outputs = [];
-    const errors = [];
-
-    for (const prompt of variationPrompts) {
-      try {
-        const modelResponse = await ai.models.generateContent({
-          model: 'gemini-3-pro-image-preview',
-          contents: {
-            parts: [
-              { inlineData: { data: imageData, mimeType } },
-              { text: prompt },
-            ],
-          },
-          config: {
-            imageConfig: {
-              aspectRatio: parsedRatio,
-              imageSize: '1K',
-            },
-          },
-        });
-
-        const imageUrl = extractFirstImageFromResponse(modelResponse);
-        if (imageUrl) {
-          outputs.push(imageUrl);
-        } else {
-          errors.push({
-            variation: prompt.slice(0, 80),
-            message: 'Model returned no image data in response parts.',
-          });
-        }
-      } catch (error) {
-        console.error('Aspect ratio variation generation failed', variationText, error);
-        errors.push({
-          variation: prompt.slice(0, 80),
-          message: getErrorMessage(error, 'Unknown model error.'),
-        });
-      }
-    }
+    const { outputs, errors } = await runTwoPassGeneration(ai, imageData, mimeType, parsedRatio);
 
     if (outputs.length === 0) {
       return response.status(502).json({
