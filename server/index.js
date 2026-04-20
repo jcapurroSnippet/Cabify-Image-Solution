@@ -106,7 +106,7 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Card height: ~16-20% of canvas height (card must be a wide horizontal rectangle, NOT a square; width-to-height ratio must be at least 4:1).
 - Corner radius: ~2-3% of canvas width (moderate rounded corners, NOT large radius).
 - Side margins: ~2-3% each.
-- Bottom margin: ~6-8% of canvas height.
+- Bottom margin: ~12-16% of canvas height (card must NOT sit at the very bottom edge — leave clear visible background below it).
 
 ### If target is 1:1
 - Logo top-left.
