@@ -1,12 +1,9 @@
 import sharp from 'sharp';
 
-// How much of the source image bottom to extract as the card
-const SOURCE_CARD_HEIGHT_RATIO = 0.30;
-
 const CARD_CONFIG = {
   '9:16': {
     widthRatio: 0.94,
-    heightRatio: 0.13,
+    heightRatio: 0.14,
     bottomMarginRatio: 0.17,
     sideMarginRatio: 0.03,
   },
@@ -30,23 +27,12 @@ const roundedCornerMask = (width, height, radius) =>
     `</svg>`
   );
 
-export const extractCardFromSource = async (sourceDataUrl) => {
-  const buffer = dataUrlToBuffer(sourceDataUrl);
-  const { width, height } = await sharp(buffer).metadata();
-
-  const cardHeight = Math.floor(height * SOURCE_CARD_HEIGHT_RATIO);
-  const cardTop = height - cardHeight;
-
-  return sharp(buffer)
-    .extract({ left: 0, top: cardTop, width, height: cardHeight })
-    .toBuffer();
-};
-
-export const compositeCard = async (sceneDataUrl, cardBuffer, targetRatio) => {
+export const compositeCard = async (sceneDataUrl, cardDataUrl, targetRatio) => {
   const config = CARD_CONFIG[targetRatio];
   if (!config) throw new Error(`No card config for ratio: ${targetRatio}`);
 
   const sceneBuffer = dataUrlToBuffer(sceneDataUrl);
+  const cardBuffer = dataUrlToBuffer(cardDataUrl);
   const { width: canvasW, height: canvasH } = await sharp(sceneBuffer).metadata();
 
   const cardW = Math.round(canvasW * config.widthRatio);
@@ -56,7 +42,7 @@ export const compositeCard = async (sceneDataUrl, cardBuffer, targetRatio) => {
   const radius = Math.round(canvasW * 0.025);
 
   const resized = await sharp(cardBuffer)
-    .resize(cardW, cardH, { fit: 'fill' })
+    .resize(cardW, cardH, { fit: 'cover' })
     .toBuffer();
 
   const mask = roundedCornerMask(cardW, cardH, radius);

@@ -8,7 +8,7 @@ import { processBatch, getBatchStatus } from './services/batchProcessor.js';
 import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
-import { extractCardFromSource, compositeCard } from './services/cardCompositor.js';
+import { compositeCard } from './services/cardCompositor.js';
 
 class RequestValidationError extends Error {}
 
@@ -56,20 +56,14 @@ const extractFirstImageFromResponse = (response) => {
 const BRAND_LOCK =
   'BRAND LOCK — do NOT modify, replace, recolor, restyle, resize, or reinterpret typography or brand colors under any circumstance. Keep exact original font, weight, proportions, letter-spacing, and all colors unchanged.';
 
-const SHARED_PROHIBITIONS = `
-## PROHIBITIONS
-- Do NOT modify the main subject or any foreground object.
-- Do NOT place any logo inside white UI card components.
-- Do NOT add filters, blur, gradients, or color shifts.
-- Do NOT add new objects, logos, icons, or decorative assets.
-- Do NOT remove existing visual elements.
+const SCENE_PROHIBITIONS = `
+## SCENE-ONLY GENERATION — CRITICAL
+- Do NOT include any UI card, white rounded rectangle, text overlay, CTA button, or promotional panel in the output.
+- The bottom portion of the canvas must be clean scene/background — no card elements at all.
+- Remove any card/text overlay that exists in the source; replace it with natural scene/background continuation.
+- Keep: subject, logo (brand logo at top), scene background.
 - ${BRAND_LOCK}
-`.trim();
-
-const SHARED_CARD_SPEC = `
-## UI CARD
-- White rounded rectangle, consistent corner radius (~2-3% of canvas width), soft drop shadow.
-- Reproduce text, colors, and button exactly as in the source.
+- Do NOT modify the main subject. Do NOT add filters, blur, gradients, or color shifts.
 `.trim();
 
 const getVariationPrompts = (targetRatio) => {
@@ -77,63 +71,78 @@ const getVariationPrompts = (targetRatio) => {
 
   if (ratio === '1:1') {
     const base = `
-**TASK:** Convert the source image to **1:1** square format for a Cabify ad.
+**TASK:** Reframe the source image to a **1:1 square** canvas — scene only, no UI card.
 
-${SHARED_PROHIBITIONS}
+${SCENE_PROHIBITIONS}
 
-## LAYOUT (1:1)
-- Canvas: square (1:1).
-- Logo: top-left corner. Width ~14-16% of canvas width. Top margin ~6-8% of canvas height.
-- Subject: right half of the canvas, full face visible.
-- UI Card: anchored near bottom, left-aligned text.
-  - Width: ~94-96% of canvas width.
-  - Height: ~28-32% of canvas height.
-  - Bottom margin: ~4-6% of canvas height.
-  - Side margins: ~2-3% each side.
-
-${SHARED_CARD_SPEC}
+## LAYOUT
+- Canvas: 1:1 square.
+- Logo: top-left. Width ~14-16% of canvas width. Top margin ~6-8%.
+- Subject: prominent, full face visible.
+- Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
 ## GEOMETRY
-- CROP or EXTEND only what is strictly necessary to reach 1:1.
-- Do NOT crop through the subject face, logo, or UI card.
+- CROP or EXTEND the background only as needed to reach 1:1.
+- Do NOT crop the subject face or logo.
 `.trim();
 
     return [
-      `${base}\n\n## THIS VARIATION\nCrop tightly — show as much of the original composition as possible within the square. Keep subject on the right half, full face and raised hand visible.`,
-      `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject compared to Variation A. Do not move the logo.`,
-      `${base}\n\n## THIS VARIATION\nWiden the crop slightly to reveal more of the frame on the left while keeping the subject on the right half. Do not move the logo or card.`,
+      `${base}\n\n## THIS VARIATION\nTight crop — preserve as much of the original composition as possible.`,
+      `${base}\n\n## THIS VARIATION\nSlightly more headroom above the subject.`,
+      `${base}\n\n## THIS VARIATION\nWider crop to reveal more of the scene around the subject.`,
     ];
   }
 
   // 9:16
   const base = `
-**TASK:** Convert the source image to **9:16** vertical format for a Cabify ad.
+**TASK:** Reframe the source image to a **9:16 vertical** canvas — scene only, no UI card.
 
-${SHARED_PROHIBITIONS}
+${SCENE_PROHIBITIONS}
 
-## LAYOUT (9:16)
-- Canvas: vertical (9:16).
-- Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
-- Subject: fills most of the canvas height, large and prominent. Face must be clearly visible and occupy a significant portion of the frame — do NOT show excessive street/background around the subject.
-- UI Card: horizontally centered, placed in the lower portion of the canvas.
-  - CRITICAL WIDTH: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means ~1020px wide with only ~30px margin on each side — nearly edge to edge. You MUST widen it beyond the source card proportions.
-  - Height: ~11-13% of canvas height (keep the card flat and wide, NOT tall).
-  - Bottom margin: ~16-20% of canvas height — the card must float above the bottom edge with clearly visible background below it.
-  - Text: centered.
-
-${SHARED_CARD_SPEC}
+## LAYOUT
+- Canvas: 9:16 vertical.
+- Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7%.
+- Subject: large and prominent, fills most of the canvas height.
+- Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
 ## GEOMETRY
-- EXTEND (outpaint) background above/below if needed to fill the taller canvas.
-- Keep the subject large — do not zoom out or show excessive background around them.
-- Do NOT crop through the subject face, logo, or UI card.
+- EXTEND (outpaint) background above and/or below as needed.
+- Keep the subject large — do not zoom out.
+- Do NOT crop the subject face or logo.
 `.trim();
 
   return [
-    `${base}\n\n## THIS VARIATION\nMinimal intervention — preserve the source background as-is. Only extend background where strictly necessary to fill the canvas. Do NOT replace, repaint, or alter any existing background area. Full face and raised hand visible.`,
-    `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
-    `${base}\n\n## THIS VARIATION\nShow more of the surrounding environment — extend background on the sides or top to reveal more street/scene context. Keep the card and logo in the exact same position and size as described in the layout. Do NOT extend background below the card.`,
+    `${base}\n\n## THIS VARIATION\nMinimal intervention — preserve source background. Only extend background where strictly necessary to fill the canvas.`,
+    `${base}\n\n## THIS VARIATION\nMore headroom above the subject — extend sky/background at the top.`,
+    `${base}\n\n## THIS VARIATION\nShow more surrounding environment — extend on the sides or top for more scene context.`,
   ];
+};
+
+const CARD_GENERATION_PROMPT = `**TASK:** Generate ONLY the white rounded UI card from the source image, as a standalone image.
+
+**OUTPUT:**
+- The card must fill the entire output canvas edge to edge (no padding, no border).
+- Reproduce the card exactly as it appears in the source: white rounded background, same text content, same typography, same colors, same button with icon and label.
+- Do NOT include any scene, photograph, subject, or brand logo — only the card content.
+- The entire output is the card graphic.
+
+**STRICT:**
+- Match source text word-for-word.
+- Match source colors exactly (purple/violet text, yellow button if present).
+- Match source font weight and layout.`;
+
+const generateCardImage = async (ai, sourceImageData, sourceMimeType) => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-image-preview',
+    contents: {
+      parts: [
+        { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
+        { text: CARD_GENERATION_PROMPT },
+      ],
+    },
+    config: { imageConfig: { aspectRatio: '16:9', imageSize: '1K' } },
+  });
+  return extractFirstImageFromResponse(response);
 };
 
 const getGeminiClient = () => {
@@ -253,8 +262,11 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const ai = getGeminiClient();
     const variationPrompts = getVariationPrompts(parsedRatio);
 
-    // Extract card from source once — reused across all variations
-    const cardBuffer = await extractCardFromSource(finalImageDataUrl);
+    // Generate the card as a standalone image once — reused across all variations
+    const cardDataUrl = await generateCardImage(ai, imageData, mimeType);
+    if (!cardDataUrl) {
+      return response.status(502).json({ error: 'Failed to generate card image.' });
+    }
 
     const outputs = [];
     const errors = [];
@@ -269,11 +281,11 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
         const sceneUrl = extractFirstImageFromResponse(modelResponse);
         if (!sceneUrl) {
-          errors.push({ variation: prompt.slice(0, 80), message: 'Model returned no image.' });
+          errors.push({ variation: prompt.slice(0, 80), message: 'Model returned no scene.' });
           continue;
         }
 
-        const composited = await compositeCard(sceneUrl, cardBuffer, parsedRatio);
+        const composited = await compositeCard(sceneUrl, cardDataUrl, parsedRatio);
         outputs.push(composited);
       } catch (error) {
         console.error('Aspect ratio variation generation failed', error);
