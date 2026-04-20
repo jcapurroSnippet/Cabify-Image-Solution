@@ -113,17 +113,18 @@ ${SHARED_PROHIBITIONS}
 ## LAYOUT (9:16)
 - Canvas: vertical (9:16).
 - Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
-- Subject: centered or slightly right of center, full face visible.
-- UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
-  - CRITICAL: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means the card is ~1020px wide with only ~30px margin on each side. This is nearly edge to edge. If the source card looks narrower relative to the canvas, you MUST widen it — do NOT preserve the source card's proportions relative to canvas.
+- Subject: fills most of the canvas height, large and prominent. Face must be clearly visible and occupy a significant portion of the frame — do NOT show excessive street/background around the subject.
+- UI Card: horizontally centered, placed in the lower portion of the canvas.
+  - CRITICAL WIDTH: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means ~1020px wide with only ~30px margin on each side — nearly edge to edge. You MUST widen it beyond the source card proportions.
   - Height: ~16-20% of canvas height.
-  - Bottom margin: ~16-20% of canvas height (leave clear visible background below the card — the card must NOT be near the bottom edge).
+  - Bottom margin: ~16-20% of canvas height — the card must float above the bottom edge with clearly visible background below it.
   - Text: centered.
 
 ${SHARED_CARD_SPEC}
 
 ## GEOMETRY
 - EXTEND (outpaint) background above/below if needed to fill the taller canvas.
+- Keep the subject large — do not zoom out or show excessive background around them.
 - Do NOT crop through the subject face, logo, or UI card.
 `.trim();
 
