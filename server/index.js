@@ -102,8 +102,9 @@ const getVariationPrompt = (targetRatio, variationInstruction) => `
 - Text centered.
 - Logo width: ~12-14% of canvas width.
 - Top margin: ~5-7% of canvas height.
-- Card width: ~94-96% of canvas width (near full width).
-- Card height: ~22-26% of canvas height.
+- Card width: ~94-96% of canvas width (near full width — ALMOST edge to edge).
+- Card height: ~16-20% of canvas height (card must be a wide horizontal rectangle, NOT a square; width-to-height ratio must be at least 4:1).
+- Corner radius: ~2-3% of canvas width (moderate rounded corners, NOT large radius).
 - Side margins: ~2-3% each.
 - Bottom margin: ~6-8% of canvas height.
 
