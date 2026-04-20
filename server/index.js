@@ -1,4 +1,4 @@
-﻿import { existsSync, readFileSync } from 'node:fs';
+﻿import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -251,23 +251,14 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const ai = getGeminiClient();
     const variationPrompts = getVariationPrompts(parsedRatio);
 
-    const refPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'references', `ref-${parsedRatio.replace(':', '-')}.png`);
-    const refPart = existsSync(refPath)
-      ? { inlineData: { data: readFileSync(refPath).toString('base64'), mimeType: 'image/png' } }
-      : null;
-
     const outputs = [];
     const errors = [];
 
     for (const prompt of variationPrompts) {
       try {
-        const refNote = refPart
-          ? '\n\n## REFERENCE LAYOUT (second image)\nThe second image shows ONLY the target card size and position — do NOT copy its background, subject, colors, or any visual content. Use it exclusively to understand where the card should be placed and how wide it should be relative to the canvas. All visual content must come from the first (source) image.'
-          : '';
         const parts = [
           { inlineData: { data: imageData, mimeType } },
-          ...(refPart ? [refPart] : []),
-          { text: `${prompt}${refNote}` },
+          { text: prompt },
         ];
         const modelResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
