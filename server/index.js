@@ -1,4 +1,4 @@
-﻿import { existsSync } from 'node:fs';
+﻿import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -130,7 +130,7 @@ ${SHARED_CARD_SPEC}
   return [
     `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo in exact positions described above.`,
     `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
-    `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo or card from the specified positions.`,
+    `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo from the specified positions.`,
   ];
 };
 
@@ -251,19 +251,24 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const ai = getGeminiClient();
     const variationPrompts = getVariationPrompts(parsedRatio);
 
+    const refPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'references', `ref-${parsedRatio.replace(':', '-')}.png`);
+    const refPart = existsSync(refPath)
+      ? { inlineData: { data: readFileSync(refPath).toString('base64'), mimeType: 'image/png' } }
+      : null;
+
     const outputs = [];
     const errors = [];
 
     for (const prompt of variationPrompts) {
       try {
+        const parts = [
+          { inlineData: { data: imageData, mimeType } },
+          ...(refPart ? [refPart] : []),
+          { text: `${prompt}${refPart ? '\n\nThe second image is the reference layout. Match it exactly for card size, position, and proportions.' : ''}` },
+        ];
         const modelResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
-          contents: {
-            parts: [
-              { inlineData: { data: imageData, mimeType } },
-              { text: prompt },
-            ],
-          },
+          contents: { parts },
           config: {
             imageConfig: {
               aspectRatio: parsedRatio,
