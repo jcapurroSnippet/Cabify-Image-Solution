@@ -113,7 +113,7 @@ ${SCENE_PROHIBITIONS}
   return [
     `${base}\n\n## THIS VARIATION\nMinimal intervention — preserve source background. Only extend background where strictly necessary to fill the canvas.`,
     `${base}\n\n## THIS VARIATION\nMore headroom above the subject — extend sky/background at the top.`,
-    `${base}\n\n## THIS VARIATION\nShow more surrounding environment — extend on the sides or top for more scene context.`,
+    `${base}\n\n## THIS VARIATION\nKeep the car and its context in frame alongside the subject — the car must remain clearly visible. Extend background on the top or sides if needed but never at the cost of removing or hiding the car.`,
   ];
 };
 
@@ -155,7 +155,9 @@ const getCardPlacementPrompt = (targetRatio) => {
 - Height: ~13-15% of canvas height (flat and wide, not tall/square).
 - Position: horizontally centered, ~17% bottom margin (card floats above the bottom edge).
 - Text alignment inside card: centered.
-- Corner radius: ~2-3% of canvas width.`;
+- Corner radius: ~2-3% of canvas width.
+- **Text size:** REDUCE the text size compared to the source. The card is wider than in the source, so the text should look smaller/more compact inside the card, fitting comfortably on 1-2 short lines with clear padding around it. Do NOT scale the text proportionally with the card width — keep text small so the card stays flat and wide.
+- Button: small, compact, centered below the text.`;
 };
 
 const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeType, targetRatio) => {
