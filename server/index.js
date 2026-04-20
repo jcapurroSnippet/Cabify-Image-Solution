@@ -8,7 +8,6 @@ import { processBatch, getBatchStatus } from './services/batchProcessor.js';
 import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
-import { compositeCard } from './services/cardCompositor.js';
 
 class RequestValidationError extends Error {}
 
@@ -118,29 +117,62 @@ ${SCENE_PROHIBITIONS}
   ];
 };
 
-const CARD_GENERATION_PROMPT = `**TASK:** Generate ONLY the white rounded UI card from the source image, as a standalone image.
+const getCardPlacementPrompt = (targetRatio) => {
+  const ratio = String(targetRatio).trim();
 
-**OUTPUT:**
-- The card must fill the entire output canvas edge to edge (no padding, no border).
-- Reproduce the card exactly as it appears in the source: white rounded background, same text content, same typography, same colors, same button with icon and label.
-- Do NOT include any scene, photograph, subject, or brand logo — only the card content.
-- The entire output is the card graphic.
+  const shared = `**TASK:** Composite a UI card onto a clean scene.
+
+**INPUTS (in order):**
+1. First image — the clean scene (target aspect ratio, no card yet). Use this as the base.
+2. Second image — the source reference containing the white rounded UI card. Extract the card design from here (text, colors, button, typography, corner radius).
+
+**WHAT TO DO:**
+- Output must be the first image with the card from the second image added on top of it.
+- Keep the first image's subject, background, logo, and composition EXACTLY as-is.
+- Reproduce the card's text, colors, typography, and button EXACTLY as in the second image.
 
 **STRICT:**
-- Match source text word-for-word.
-- Match source colors exactly (purple/violet text, yellow button if present).
-- Match source font weight and layout.`;
+- Do NOT copy the background/subject/scene from the second image — only the card.
+- Do NOT modify anything else in the first image.
+- The card must appear as a foreground UI overlay (white rounded rectangle with soft shadow).
+- ${BRAND_LOCK}`;
 
-const generateCardImage = async (ai, sourceImageData, sourceMimeType) => {
+  if (ratio === '1:1') {
+    return `${shared}
+
+**CARD POSITION AND SIZE (1:1 output):**
+- Width: ~94% of canvas width (nearly edge to edge, only ~3% margin each side).
+- Height: ~28-32% of canvas height.
+- Position: anchored near the bottom, ~5% bottom margin.
+- Text alignment inside card: left-aligned.
+- Corner radius: ~2-3% of canvas width.`;
+  }
+
+  return `${shared}
+
+**CARD POSITION AND SIZE (9:16 output):**
+- Width: ~94% of canvas width (nearly edge to edge, only ~3% margin each side). This is the most important dimension — the card MUST span nearly the full width.
+- Height: ~13-15% of canvas height (flat and wide, not tall/square).
+- Position: horizontally centered, ~17% bottom margin (card floats above the bottom edge).
+- Text alignment inside card: centered.
+- Corner radius: ~2-3% of canvas width.`;
+};
+
+const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeType, targetRatio) => {
+  const sceneMatch = sceneDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!sceneMatch) throw new Error('Invalid scene data URL');
+  const [, sceneMime, sceneData] = sceneMatch;
+
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
+        { inlineData: { data: sceneData, mimeType: sceneMime } },
         { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
-        { text: CARD_GENERATION_PROMPT },
+        { text: getCardPlacementPrompt(targetRatio) },
       ],
     },
-    config: { imageConfig: { aspectRatio: '16:9', imageSize: '1K' } },
+    config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
   });
   return extractFirstImageFromResponse(response);
 };
@@ -262,31 +294,27 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const ai = getGeminiClient();
     const variationPrompts = getVariationPrompts(parsedRatio);
 
-    // Generate the card as a standalone image once — reused across all variations
-    const cardDataUrl = await generateCardImage(ai, imageData, mimeType);
-    if (!cardDataUrl) {
-      return response.status(502).json({ error: 'Failed to generate card image.' });
-    }
-
     const outputs = [];
     const errors = [];
 
     for (const prompt of variationPrompts) {
       try {
-        const modelResponse = await ai.models.generateContent({
+        // Pass 1: generate clean scene (no card)
+        const sceneResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
           contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
           config: { imageConfig: { aspectRatio: parsedRatio, imageSize: '1K' } },
         });
 
-        const sceneUrl = extractFirstImageFromResponse(modelResponse);
+        const sceneUrl = extractFirstImageFromResponse(sceneResponse);
         if (!sceneUrl) {
-          errors.push({ variation: prompt.slice(0, 80), message: 'Model returned no scene.' });
+          errors.push({ variation: prompt.slice(0, 80), message: 'Pass 1 returned no scene.' });
           continue;
         }
 
-        const composited = await compositeCard(sceneUrl, cardDataUrl, parsedRatio);
-        outputs.push(composited);
+        // Pass 2: place source card onto the clean scene
+        const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, parsedRatio);
+        outputs.push(finalUrl ?? sceneUrl);
       } catch (error) {
         console.error('Aspect ratio variation generation failed', error);
         errors.push({
