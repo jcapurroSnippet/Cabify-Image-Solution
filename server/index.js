@@ -99,8 +99,8 @@ ${SHARED_CARD_SPEC}
 
     return [
       `${base}\n\n## THIS VARIATION\nCrop tightly — show as much of the original composition as possible within the square. Keep subject on the right half, full face and raised hand visible.`,
-      `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject compared to Variation A. Do not move the logo or card.`,
-      `${base}\n\n## THIS VARIATION\nWiden the crop slightly to reveal more of the car door/frame on the left while keeping the subject on the right half. Do not move the logo or card.`,
+      `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject compared to Variation A. Do not move the logo.`,
+      `${base}\n\n## THIS VARIATION\nWiden the crop slightly to reveal more of the frame on the left while keeping the subject on the right half. Do not move the logo or card.`,
     ];
   }
 
@@ -128,8 +128,8 @@ ${SHARED_CARD_SPEC}
 `.trim();
 
   return [
-    `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo and card in exact positions described above.`,
-    `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo or card from the specified positions.`,
+    `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo in exact positions described above.`,
+    `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
     `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo or card from the specified positions.`,
   ];
 };
