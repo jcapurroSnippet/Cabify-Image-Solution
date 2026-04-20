@@ -152,7 +152,7 @@ const getCardPlacementPrompt = (targetRatio) => {
 
 **CARD POSITION AND SIZE (9:16 output):**
 - Width: ~94% of canvas width (nearly edge to edge, only ~3% margin each side). This is the most important dimension — the card MUST span nearly the full width.
-- Height: ~13-15% of canvas height (flat and wide, not tall/square).
+- Height: ~15-20% of canvas height (flat and wide, not tall/square).
 - Position: horizontally centered, ~17% bottom margin (card floats above the bottom edge).
 - Text alignment inside card: centered.
 - Corner radius: ~2-3% of canvas width.
