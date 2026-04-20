@@ -115,10 +115,9 @@ ${SHARED_PROHIBITIONS}
 - Logo: top-center. Width ~12-14% of canvas width. Top margin ~5-7% of canvas height.
 - Subject: centered or slightly right of center, full face visible.
 - UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
-  - Width: ~94-96% of canvas width — the card must stretch almost edge to edge, leaving only ~2-3% margin on each side. DO NOT make the card narrow.
+  - CRITICAL: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means the card is ~1020px wide with only ~30px margin on each side. This is nearly edge to edge. If the source card looks narrower relative to the canvas, you MUST widen it — do NOT preserve the source card's proportions relative to canvas.
   - Height: ~16-20% of canvas height.
   - Bottom margin: ~12-16% of canvas height (leave visible background below the card).
-  - Side margins: ~2-3% each side.
   - Text: centered.
 
 ${SHARED_CARD_SPEC}
