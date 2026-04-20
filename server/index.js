@@ -54,7 +54,7 @@ const extractFirstImageFromResponse = (response) => {
 
 const getVariationPrompt = (targetRatio, variationInstruction) => `
 **ROLE:** Cabify Brand Guardian (Strict Compliance Mode).
-**TASK:** Adapt source image to **${targetRatio}** while matching the attached reference layout.
+**TASK:** Adapt source image to **${targetRatio}**
 **CONSTRAINT:** Any deviation from the Cabify Visual Identity System is a failure.
 
 ## PROHIBITIONS
