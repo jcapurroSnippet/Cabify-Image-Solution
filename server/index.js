@@ -117,7 +117,7 @@ ${SHARED_PROHIBITIONS}
 - UI Card: horizontally centered, near bottom — NOT touching the bottom edge.
   - CRITICAL: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means the card is ~1020px wide with only ~30px margin on each side. This is nearly edge to edge. If the source card looks narrower relative to the canvas, you MUST widen it — do NOT preserve the source card's proportions relative to canvas.
   - Height: ~16-20% of canvas height.
-  - Bottom margin: ~12-16% of canvas height (leave visible background below the card).
+  - Bottom margin: ~16-20% of canvas height (leave clear visible background below the card — the card must NOT be near the bottom edge).
   - Text: centered.
 
 ${SHARED_CARD_SPEC}
@@ -128,7 +128,7 @@ ${SHARED_CARD_SPEC}
 `.trim();
 
   return [
-    `${base}\n\n## THIS VARIATION\nKeep subject framing close to the source. Full face and raised hand visible. Logo in exact positions described above.`,
+    `${base}\n\n## THIS VARIATION\nMinimal intervention — preserve the source background as-is. Only extend background where strictly necessary to fill the canvas. Do NOT replace, repaint, or alter any existing background area. Full face and raised hand visible.`,
     `${base}\n\n## THIS VARIATION\nAdd slightly more headroom above the subject (extend sky/background at top). Do not move the logo from the specified positions.`,
     `${base}\n\n## THIS VARIATION\nExtend more background at the bottom below the subject, giving the card more breathing room. Do not move the logo from the specified positions.`,
   ];
