@@ -8,6 +8,7 @@ import { processBatch, getBatchStatus } from './services/batchProcessor.js';
 import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
+import { extractCardFromSource, compositeCard } from './services/cardCompositor.js';
 
 class RequestValidationError extends Error {}
 
@@ -116,7 +117,7 @@ ${SHARED_PROHIBITIONS}
 - Subject: fills most of the canvas height, large and prominent. Face must be clearly visible and occupy a significant portion of the frame — do NOT show excessive street/background around the subject.
 - UI Card: horizontally centered, placed in the lower portion of the canvas.
   - CRITICAL WIDTH: The card must occupy ~94-96% of the canvas width. On a 1080px-wide canvas that means ~1020px wide with only ~30px margin on each side — nearly edge to edge. You MUST widen it beyond the source card proportions.
-  - Height: ~16-20% of canvas height.
+  - Height: ~11-13% of canvas height (keep the card flat and wide, NOT tall).
   - Bottom margin: ~16-20% of canvas height — the card must float above the bottom edge with clearly visible background below it.
   - Text: centered.
 
@@ -252,37 +253,30 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const ai = getGeminiClient();
     const variationPrompts = getVariationPrompts(parsedRatio);
 
+    // Extract card from source once — reused across all variations
+    const cardBuffer = await extractCardFromSource(finalImageDataUrl);
+
     const outputs = [];
     const errors = [];
 
     for (const prompt of variationPrompts) {
       try {
-        const parts = [
-          { inlineData: { data: imageData, mimeType } },
-          { text: prompt },
-        ];
         const modelResponse = await ai.models.generateContent({
           model: 'gemini-3-pro-image-preview',
-          contents: { parts },
-          config: {
-            imageConfig: {
-              aspectRatio: parsedRatio,
-              imageSize: '1K',
-            },
-          },
+          contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
+          config: { imageConfig: { aspectRatio: parsedRatio, imageSize: '1K' } },
         });
 
-        const imageUrl = extractFirstImageFromResponse(modelResponse);
-        if (imageUrl) {
-          outputs.push(imageUrl);
-        } else {
-          errors.push({
-            variation: prompt.slice(0, 80),
-            message: 'Model returned no image data in response parts.',
-          });
+        const sceneUrl = extractFirstImageFromResponse(modelResponse);
+        if (!sceneUrl) {
+          errors.push({ variation: prompt.slice(0, 80), message: 'Model returned no image.' });
+          continue;
         }
+
+        const composited = await compositeCard(sceneUrl, cardBuffer, parsedRatio);
+        outputs.push(composited);
       } catch (error) {
-        console.error('Aspect ratio variation generation failed', variationText, error);
+        console.error('Aspect ratio variation generation failed', error);
         errors.push({
           variation: prompt.slice(0, 80),
           message: getErrorMessage(error, 'Unknown model error.'),
