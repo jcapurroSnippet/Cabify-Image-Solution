@@ -115,37 +115,38 @@ const getCardFixPrompt = (targetRatio) => {
   const ratio = String(targetRatio).trim();
 
   const shared = `
-**PROHIBITIONS**
-- Do NOT move the card vertically.
-- Do NOT change text content, font, colors, or button style.
-- Do NOT alter the background, subject, or logo in any way.
+**WHAT THIS IS:**
+The white rounded rectangle at the bottom is a UI card — a graphic overlay rendered on top of the photo. It is NOT part of the background. It must always appear in the foreground, visually floating above the photo.
+
+**STRICT PROHIBITIONS:**
+- Do NOT change the card's text content, font, size, color, or button design in any way.
+- Do NOT redesign or reinterpret the card — reproduce it exactly, only wider.
+- Do NOT alter the background, subject, or logo.
+- Do NOT move the card vertically from where it currently is.
 - Do NOT add or remove any element.
+- This is a resize operation only — zero creative decisions allowed.
 `.trim();
 
   if (ratio === '1:1') {
     return `
-**TASK:** Fix the white UI card in this 1:1 image. Apply only the changes listed below — nothing else.
+**TASK:** Resize the white UI card in this 1:1 image to the correct width. One change only.
 
-**CHANGES TO APPLY:**
-1. Widen the card so it spans ~94-96% of the canvas width (only ~2-3% margin on each side).
-2. Card height: ~28-32% of canvas height.
-3. Card position: anchored near the bottom with ~4-6% bottom margin.
-4. Text inside the card: left-aligned.
-5. Corner radius: ~2-3% of canvas width (moderate rounded corners).
+**THE CHANGE:**
+- Widen the card to span ~94-96% of the canvas width (~2-3% margin each side).
+- Keep card height as-is.
+- The card sits on top of the photo as a foreground overlay — render it above the background, not embedded in it.
 
 ${shared}
 `.trim();
   }
 
   return `
-**TASK:** Fix the white UI card in this 9:16 image. Apply only the changes listed below — nothing else.
+**TASK:** Resize the white UI card in this 9:16 image to the correct width. One change only.
 
-**CHANGES TO APPLY:**
-1. Widen the card so it spans ~94-96% of the canvas width (only ~2-3% margin on each side).
-2. Card height: ~16-20% of canvas height.
-3. Card position: horizontally centered, ~12-16% bottom margin (not touching the bottom edge).
-4. Text inside the card: centered.
-5. Corner radius: ~2-3% of canvas width (moderate rounded corners).
+**THE CHANGE:**
+- Widen the card to span ~94-96% of the canvas width (~2-3% margin each side).
+- Keep card height as-is.
+- The card sits on top of the photo as a foreground overlay — render it above the background, not embedded in it.
 
 ${shared}
 `.trim();
