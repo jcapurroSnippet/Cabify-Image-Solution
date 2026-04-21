@@ -153,8 +153,8 @@ const getCardPlacementPrompt = (targetRatio) => {
 **CARD POSITION AND SIZE (9:16 output):**
 - Width: MUST be between 93% and 97% of canvas width — NEVER less than 93%. The card spans nearly edge to edge (only ~3-5% margin each side). This is the most important dimension.
 - Height: ~20-30% of canvas height (flat and wide, not tall/square).
-- Position: horizontally centered. The BOTTOM edge of the card must sit between 20% and 25% from the bottom of the canvas (measured from card's bottom edge to canvas bottom edge). The card belongs in the LOWER THIRD of the canvas.
-- **The card must NOT be vertically centered in the canvas.** It must NOT float in the middle. It sits in the lower portion, above the bottom edge with a clear gap.
+- Position: horizontally centered. The BOTTOM edge of the card must sit between 32% and 38% from the bottom of the canvas (measured from card's bottom edge to canvas bottom edge). The card sits in the MIDDLE-LOWER region — clearly above the bottom third but not in the vertical center.
+- **The card must NOT be vertically centered in the canvas.** It must NOT touch or sit near the bottom edge. Think of it as floating over the subject's torso area, leaving roughly a third of the canvas as empty scene below it.
 - Text alignment inside card: centered.
 - Corner radius: ~2-3% of canvas width.
 - **Text size:** text must be large enough to read comfortably on mobile — minimum ~4% of canvas height per line of text. Reduce slightly from the source proportions so the card stays flat and wide, but do not make text tiny. Fit on 1-2 short lines with clear padding.
