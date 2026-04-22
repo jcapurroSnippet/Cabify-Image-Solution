@@ -118,10 +118,10 @@ ${SCENE_PROHIBITIONS}
 };
 
 const loadCardReferences = (targetRatio) => {
-  if (targetRatio === '1:1') return [];
-
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const folder = path.join(__dirname, 'assets/card-references/9-16');
+  const folder = targetRatio === '1:1'
+    ? path.join(__dirname, 'assets/card-references/1-1')
+    : path.join(__dirname, 'assets/card-references/9-16');
 
   if (!existsSync(folder)) return [];
 
@@ -152,7 +152,6 @@ ${refList}
 - These are canonical Cabify ad layouts provided as visual style guides for the card.
 - Observe ONLY: card size relative to canvas, card vertical position, card typography (font, weight, spacing), card colors (#F4F4F4 background, #6F49E8 text), corner radius, button shape and style.
 - **DO NOT copy ANY text, headline, message, label, or campaign copy from Images 3+.** The card text must come exclusively from Image 2.
-- **⚠️ CRITICAL: Reproduce the EXACT words from Image 2's card — character by character, word by word. Do NOT paraphrase, translate, summarize, or alter the text in any way. Only the font size may differ from Image 2.**
 - **DO NOT copy ANY scene, subject, person, object, background, or logo from Images 3+.** The scene must come exclusively from Image 1.
 - Images 3+ are purely a visual reference for card geometry and typographic style — nothing else.
 
@@ -181,7 +180,7 @@ ${refList}
 - Text size: ~5.5–6% of canvas height per line (60–66px at 1080).
 - Padding inside card: ~3.7% top/left/right, ~2.8% bottom.
 - Button: yellow pill, left-aligned, below text. Match reference images for style.
-- **⚠️ CRITICAL: The button label must be copied character-by-character from Image 2. Do NOT alter, invent, or misspell any letter.**
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**
 - The reference images (3+) confirm these dimensions visually — use them to calibrate typography, corner radius, button style, and card proportions.`;
   }
 
@@ -199,7 +198,7 @@ ${refList}
 - Text size: ~3.9–4.2% of canvas height per line (74–80px at 1920).
 - Padding inside card: ~3.1% top, ~3.7% left/right, ~2.6% bottom.
 - Button: yellow pill, centered, below text. Match reference images for style.
-- **⚠️ CRITICAL: The button label must be copied character-by-character from Image 2. Do NOT alter, invent, or misspell any letter.**
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**
 - The reference images (3+) confirm these dimensions visually — use them to calibrate typography, corner radius, button style, and card proportions.`;
 };
 
