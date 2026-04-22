@@ -152,6 +152,7 @@ ${refList}
 - These are canonical Cabify ad layouts provided as visual style guides for the card.
 - Observe ONLY: card size relative to canvas, card vertical position, card typography (font, weight, spacing), card colors (#F4F4F4 background, #6F49E8 text), corner radius, button shape and style.
 - **DO NOT copy ANY text, headline, message, label, or campaign copy from Images 3+.** The card text must come exclusively from Image 2.
+- **⚠️ CRITICAL: Reproduce the EXACT words from Image 2's card — character by character, word by word. Do NOT paraphrase, translate, summarize, or alter the text in any way. Only the font size may differ from Image 2.**
 - **DO NOT copy ANY scene, subject, person, object, background, or logo from Images 3+.** The scene must come exclusively from Image 1.
 - Images 3+ are purely a visual reference for card geometry and typographic style — nothing else.
 
