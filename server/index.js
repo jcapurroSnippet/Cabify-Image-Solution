@@ -166,21 +166,38 @@ ${refList}
   if (ratio === '1:1') {
     return `${shared}
 
-**CARD STYLE REFERENCE (1:1):**
-- Replicate the card layout exactly as shown in the reference images — size, position, typography, colors, corner radius, button placement.
-- Text alignment inside card: left-aligned.
-- Button: left-aligned, below the text.
-- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**`;
+**CARD DIMENSIONS — 1:1 (non-negotiable, confirmed by reference images):**
+- Card width: **93% of canvas width** (1003px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge — only ~3.5% gap on each side (~41px at 1080).
+- Card height: ~32% of canvas height (343px at 1080 reference).
+- Card top edge: ~64.6% from the top of the canvas (y≈698px at 1080).
+- Bottom gap below card: ~3.6% of canvas height (~39px at 1080). Small gap only.
+- Corner radius: ~3.9% of canvas width (42px at 1080).
+- Card background color: #F4F4F4 (off-white — NOT pure white).
+- Text color: #6F49E8 (Cabify purple). Text weight: 700 bold.
+- Text alignment: left-aligned. Line-height ~1.1.
+- Text size: ~5.5–6% of canvas height per line (60–66px at 1080).
+- Padding inside card: ~3.7% top/left/right, ~2.8% bottom.
+- Button: yellow pill, left-aligned, below text. Match reference images for style.
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**
+- The reference images (3+) confirm these dimensions visually — use them to calibrate typography, corner radius, button style, and card proportions.`;
   }
 
   return `${shared}
 
-**CARD STYLE REFERENCE (9:16):**
-- Replicate the card layout exactly as shown in the reference images — size, position, typography, colors, corner radius, button placement.
-- The card must be flat and wide — NOT tall or square.
-- Text alignment inside card: centered.
-- Button: centered, below the text.
-- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**`;
+**CARD DIMENSIONS — 9:16 (non-negotiable, confirmed by reference images):**
+- Card width: **93% of canvas width** (1002px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge — only ~3.5% gap on each side (~39px at 1080). This is the most critical dimension.
+- Card height: ~18% of canvas height (343px at 1920 reference). Flat and wide — NOT tall or square.
+- Card top edge: ~65.5% from the top of the canvas (y≈1258px at 1920).
+- Bottom gap below card: ~16.6% of canvas height (~319px at 1920). Visible empty scene below card.
+- Corner radius: ~3.9% of canvas width (42px at 1080).
+- Card background color: #F4F4F4 (off-white — NOT pure white).
+- Text color: #6F49E8 (Cabify purple). Text weight: 700 bold.
+- Text alignment: centered. Line-height ~1.1.
+- Text size: ~3.9–4.2% of canvas height per line (74–80px at 1920).
+- Padding inside card: ~3.1% top, ~3.7% left/right, ~2.6% bottom.
+- Button: yellow pill, centered, below text. Match reference images for style.
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**
+- The reference images (3+) confirm these dimensions visually — use them to calibrate typography, corner radius, button style, and card proportions.`;
 };
 
 const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeType, targetRatio) => {
