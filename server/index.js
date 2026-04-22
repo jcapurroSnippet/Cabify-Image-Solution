@@ -1,4 +1,4 @@
-﻿import { existsSync } from 'node:fs';
+﻿import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -117,61 +117,70 @@ ${SCENE_PROHIBITIONS}
   ];
 };
 
-const getCardPlacementPrompt = (targetRatio) => {
+const loadCardReferences = (targetRatio) => {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const folder = targetRatio === '1:1'
+    ? path.join(__dirname, 'assets/card-references/1-1')
+    : path.join(__dirname, 'assets/card-references/9-16');
+
+  if (!existsSync(folder)) return [];
+
+  return readdirSync(folder)
+    .filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f))
+    .map(f => {
+      const buf = readFileSync(path.join(folder, f));
+      const ext = path.extname(f).toLowerCase().replace('.', '');
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+      return { data: buf.toString('base64'), mimeType: mime };
+    });
+};
+
+const getCardPlacementPrompt = (targetRatio, refCount) => {
   const ratio = String(targetRatio).trim();
+  const refList = refCount > 0
+    ? Array.from({ length: refCount }, (_, i) => `${i + 3}. Image ${i + 3} — layout reference (see LAYOUT REFERENCES below).`).join('\n')
+    : '';
 
   const shared = `**TASK:** Composite a UI card onto a clean scene.
 
 **INPUTS (in order):**
-1. First image — the clean scene (target aspect ratio, no card yet). Use this as the base.
-2. Second image — the source reference containing the white rounded UI card. Extract the card design from here (text, colors, button, typography, corner radius).
+1. Image 1 — the clean scene (target aspect ratio, no card). Use this as the BASE — keep subject, background, logo EXACTLY as-is.
+2. Image 2 — the source creative. Extract ONLY: the card text content, button label, and button colors. Do NOT copy its scene, background, or subject.
+${refList}
+
+**LAYOUT REFERENCES (Images 3+):**
+- These are canonical Cabify ad layouts showing the correct card as it should appear in the final composition.
+- Observe ONLY: card size relative to canvas, card vertical position, card typography (font, weight, spacing), card colors, corner radius, button style.
+- IGNORE everything else in images 3+: their scene, subject, background, logo — ALL of that must come from Image 1.
 
 **WHAT TO DO:**
-- Output must be the first image with the card from the second image added on top of it.
-- Keep the first image's subject, background, logo, and composition EXACTLY as-is.
-- Reproduce the card's text, colors, typography, and button EXACTLY as in the second image.
+- Place a UI card on Image 1 matching the layout, size, position, and typographic style shown in the reference images (3+).
+- Card text content and button label must match Image 2.
+- The card must appear as a foreground UI overlay (off-white #F4F4F4 rounded rectangle with soft shadow).
 
 **STRICT:**
-- Do NOT copy the background/subject/scene from the second image — only the card.
-- Do NOT modify anything else in the first image.
-- The card must appear as a foreground UI overlay (white rounded rectangle with soft shadow).
+- Do NOT modify the scene, subject, background, or logo from Image 1.
+- Do NOT copy scene/background from Image 2 or Images 3+.
 - ${BRAND_LOCK}`;
 
   if (ratio === '1:1') {
     return `${shared}
 
-**CARD POSITION AND SIZE (1:1 output, spec-based, reference 1080×1080):**
-- Width: ~93% of canvas width (1003/1080).
-- Height: ~32% of canvas height (343/1080).
-- Left margin: ~3.8% of canvas width (41/1080). Card is horizontally centered with equal margins.
-- Top edge of card: at ~64.6% from the top of the canvas (y=698/1080).
-- Bottom edge of card: ~3.6% from the bottom of the canvas (small gap below card).
-- Corner radius: ~3.9% of canvas width (42/1080).
-- Card background color: **#F4F4F4** (off-white, NOT pure white).
-- Text color: **#6F49E8** (Cabify purple).
-- Text weight: **700 (bold)**.
-- Text alignment: **left-aligned**.
-- Text size: ~5.5-6% of canvas height per line (60-66px at 1080 reference). Line-height ~1.1.
-- Text padding inside card: ~3.7% top, ~3.7% left/right, ~2.8% bottom.
-- Button (if present): yellow pill with small compact label, placed below the text, left-aligned.`;
+**CARD STYLE REFERENCE (1:1):**
+- Replicate the card layout exactly as shown in the reference images — size, position, typography, colors, corner radius, button placement.
+- Text alignment inside card: left-aligned.
+- Button: left-aligned, below the text.
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**`;
   }
 
   return `${shared}
 
-**CARD POSITION AND SIZE (9:16 output, spec-based, reference 1080×1920):**
-- Width: ~93% of canvas width (1002/1080).
-- Height: ~18% of canvas height (343/1920). Flat and wide — NOT tall or square.
-- Left margin: ~3.6% of canvas width (39/1080). Card is horizontally centered with equal margins.
-- Top edge of card: at ~65.5% from the top of the canvas (y=1258/1920).
-- Bottom edge of card: ~16.6% from the bottom of the canvas (card floats clearly above the bottom edge — there is a visible gap of empty scene below it).
-- Corner radius: ~3.9% of canvas width (42/1080).
-- Card background color: **#F4F4F4** (off-white, NOT pure white).
-- Text color: **#6F49E8** (Cabify purple).
-- Text weight: **700 (bold)**.
-- Text alignment: **centered**.
-- Text size: ~3.9-4.2% of canvas height per line (74-80px at 1920 reference). Line-height ~1.1.
-- Text padding inside card: ~3.1% top, ~3.7% left/right, ~2.6% bottom.
-- Button (if present): yellow pill with small compact label, centered below the text. **Preserve the exact button label character-by-character — do NOT invent, alter, or misspell letters.**`;
+**CARD STYLE REFERENCE (9:16):**
+- Replicate the card layout exactly as shown in the reference images — size, position, typography, colors, corner radius, button placement.
+- The card must be flat and wide — NOT tall or square.
+- Text alignment inside card: centered.
+- Button: centered, below the text.
+- **Preserve button label character-by-character from Image 2. Do NOT alter any letters.**`;
 };
 
 const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeType, targetRatio) => {
@@ -179,15 +188,18 @@ const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeTyp
   if (!sceneMatch) throw new Error('Invalid scene data URL');
   const [, sceneMime, sceneData] = sceneMatch;
 
+  const refs = loadCardReferences(targetRatio);
+
+  const parts = [
+    { inlineData: { data: sceneData, mimeType: sceneMime } },
+    { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
+    ...refs.map(r => ({ inlineData: { data: r.data, mimeType: r.mimeType } })),
+    { text: getCardPlacementPrompt(targetRatio, refs.length) },
+  ];
+
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
-    contents: {
-      parts: [
-        { inlineData: { data: sceneData, mimeType: sceneMime } },
-        { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
-        { text: getCardPlacementPrompt(targetRatio) },
-      ],
-    },
+    contents: { parts },
     config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
   });
   return extractFirstImageFromResponse(response);
