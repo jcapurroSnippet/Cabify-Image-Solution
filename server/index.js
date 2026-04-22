@@ -148,10 +148,12 @@ const getCardPlacementPrompt = (targetRatio, refCount) => {
 2. Image 2 — the source creative. Extract ONLY: the card text content, button label, and button colors. Do NOT copy its scene, background, or subject.
 ${refList}
 
-**LAYOUT REFERENCES (Images 3+):**
-- These are canonical Cabify ad layouts showing the correct card as it should appear in the final composition.
-- Observe ONLY: card size relative to canvas, card vertical position, card typography (font, weight, spacing), card colors, corner radius, button style.
-- IGNORE everything else in images 3+: their scene, subject, background, logo — ALL of that must come from Image 1.
+**LAYOUT REFERENCES (Images 3+) — STYLE ONLY:**
+- These are canonical Cabify ad layouts provided as visual style guides for the card.
+- Observe ONLY: card size relative to canvas, card vertical position, card typography (font, weight, spacing), card colors (#F4F4F4 background, #6F49E8 text), corner radius, button shape and style.
+- **DO NOT copy ANY text, headline, message, label, or campaign copy from Images 3+.** The card text must come exclusively from Image 2.
+- **DO NOT copy ANY scene, subject, person, object, background, or logo from Images 3+.** The scene must come exclusively from Image 1.
+- Images 3+ are purely a visual reference for card geometry and typographic style — nothing else.
 
 **WHAT TO DO:**
 - Place a UI card on Image 1 matching the layout, size, position, and typographic style shown in the reference images (3+).
