@@ -140,25 +140,38 @@ const getCardPlacementPrompt = (targetRatio) => {
   if (ratio === '1:1') {
     return `${shared}
 
-**CARD POSITION AND SIZE (1:1 output):**
-- Width: ~94% of canvas width (nearly edge to edge, only ~3% margin each side).
-- Height: ~28-32% of canvas height.
-- Position: anchored near the bottom, ~5% bottom margin.
-- Text alignment inside card: left-aligned.
-- Corner radius: ~2-3% of canvas width.`;
+**CARD POSITION AND SIZE (1:1 output, spec-based, reference 1080×1080):**
+- Width: ~93% of canvas width (1003/1080).
+- Height: ~32% of canvas height (343/1080).
+- Left margin: ~3.8% of canvas width (41/1080). Card is horizontally centered with equal margins.
+- Top edge of card: at ~64.6% from the top of the canvas (y=698/1080).
+- Bottom edge of card: ~3.6% from the bottom of the canvas (small gap below card).
+- Corner radius: ~3.9% of canvas width (42/1080).
+- Card background color: **#F4F4F4** (off-white, NOT pure white).
+- Text color: **#6F49E8** (Cabify purple).
+- Text weight: **700 (bold)**.
+- Text alignment: **left-aligned**.
+- Text size: ~5.5-6% of canvas height per line (60-66px at 1080 reference). Line-height ~1.1.
+- Text padding inside card: ~3.7% top, ~3.7% left/right, ~2.8% bottom.
+- Button (if present): yellow pill with small compact label, placed below the text, left-aligned.`;
   }
 
   return `${shared}
 
-**CARD POSITION AND SIZE (9:16 output):**
-- Width: MUST be between 93% and 97% of canvas width — NEVER less than 93%. The card spans nearly edge to edge (only ~3-5% margin each side). This is the most important dimension.
-- Height: ~20-30% of canvas height (flat and wide, not tall/square).
-- Position: horizontally centered. The BOTTOM edge of the card must sit between 32% and 38% from the bottom of the canvas (measured from card's bottom edge to canvas bottom edge). The card sits in the MIDDLE-LOWER region — clearly above the bottom third but not in the vertical center.
-- **The card must NOT be vertically centered in the canvas.** It must NOT touch or sit near the bottom edge. Think of it as floating over the subject's torso area, leaving roughly a third of the canvas as empty scene below it.
-- Text alignment inside card: centered.
-- Corner radius: ~2-3% of canvas width.
-- **Text size:** text must be large enough to read comfortably on mobile — minimum ~4% of canvas height per line of text. Reduce slightly from the source proportions so the card stays flat and wide, but do not make text tiny. Fit on 1-2 short lines with clear padding.
-- Button: small, compact, centered below the text. **Preserve the exact button label from the source character-by-character — do NOT invent, alter, or misspell letters. `;
+**CARD POSITION AND SIZE (9:16 output, spec-based, reference 1080×1920):**
+- Width: ~93% of canvas width (1002/1080).
+- Height: ~18% of canvas height (343/1920). Flat and wide — NOT tall or square.
+- Left margin: ~3.6% of canvas width (39/1080). Card is horizontally centered with equal margins.
+- Top edge of card: at ~65.5% from the top of the canvas (y=1258/1920).
+- Bottom edge of card: ~16.6% from the bottom of the canvas (card floats clearly above the bottom edge — there is a visible gap of empty scene below it).
+- Corner radius: ~3.9% of canvas width (42/1080).
+- Card background color: **#F4F4F4** (off-white, NOT pure white).
+- Text color: **#6F49E8** (Cabify purple).
+- Text weight: **700 (bold)**.
+- Text alignment: **centered**.
+- Text size: ~3.9-4.2% of canvas height per line (74-80px at 1920 reference). Line-height ~1.1.
+- Text padding inside card: ~3.1% top, ~3.7% left/right, ~2.6% bottom.
+- Button (if present): yellow pill with small compact label, centered below the text. **Preserve the exact button label character-by-character — do NOT invent, alter, or misspell letters.**`;
 };
 
 const placeCardOnScene = async (ai, sceneDataUrl, sourceImageData, sourceMimeType, targetRatio) => {
