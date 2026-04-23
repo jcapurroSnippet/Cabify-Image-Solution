@@ -9,7 +9,7 @@ import url from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const OAUTH_TOKEN_FILE = path.join(__dirname, '.oauth-token.json');
+const OAUTH_TOKEN_FILE = path.join(__dirname, '../../.oauth-token.json');
 const OAUTH_CONFIG = {
   clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
   clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
@@ -40,6 +40,8 @@ export function getAuthorizationUrl(oauth2Client) {
   const scopes = [
     'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/photoslibrary.appendonly',
+    'https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata',
   ];
   
   const authUrl = oauth2Client.generateAuthUrl({
@@ -91,9 +93,20 @@ export async function performOAuthFlow() {
   const authUrl = getAuthorizationUrl(oauth2Client);
   
   console.log('\n🔐 OAuth Authentication Required\n');
-  console.log('Please visit this URL to authorize the application:');
-  console.log(authUrl);
-  console.log('\nWaiting for authorization...\n');
+  console.log('Opening browser... If it does not open, visit this URL manually:');
+  console.log('\n' + authUrl + '\n');
+  console.log('Waiting for authorization...\n');
+
+  // Auto-open browser
+  try {
+    const { exec } = await import('child_process');
+    const cmd = process.platform === 'win32'
+      ? `start "" "${authUrl}"`
+      : process.platform === 'darwin'
+        ? `open "${authUrl}"`
+        : `xdg-open "${authUrl}"`;
+    exec(cmd);
+  } catch (_) {}
   
   return new Promise((resolve, reject) => {
     // Start a local server to handle the callback

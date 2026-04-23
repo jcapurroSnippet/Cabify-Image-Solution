@@ -9,6 +9,7 @@ import {
 } from './sheetsService.js';
 import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
+import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
@@ -806,8 +807,17 @@ export const processBatch = async (options) => {
     onProgress,
   } = options;
 
-  // FIXED Drive folder ID for all uploads
+  // FIXED Drive folder ID for all uploads (fallback if Photos fails)
   const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
+  const PHOTOS_ALBUM_SHARE_URL = 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
+
+  let photosAlbumId = null;
+  try {
+    photosAlbumId = await resolveAlbumIdFromShareUrl(PHOTOS_ALBUM_SHARE_URL);
+    console.log(`[BATCH] Google Photos album resolved: ${photosAlbumId}`);
+  } catch (e) {
+    console.warn(`[BATCH] Could not resolve Photos album, will fallback to Drive: ${e.message}`);
+  }
 
   try {
     console.log('\n========================================');
@@ -1056,16 +1066,26 @@ export const processBatch = async (options) => {
         // Upload 1:1 variations
         for (let i = 0; i < oneToOneImages.length; i++) {
           const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_1-1_var${i + 1}.png`;
-          const upload = await uploadImageToDrive(oneToOneImages[i], fileName, folderId);
-          const link = await makeFilePublic(upload.fileId);
+          let link;
+          if (photosAlbumId) {
+            link = await uploadImageToPhotos(oneToOneImages[i], fileName, photosAlbumId);
+          } else {
+            const upload = await uploadImageToDrive(oneToOneImages[i], fileName, folderId);
+            link = await makeFilePublic(upload.fileId);
+          }
           uploadedLinks['1:1'].push(link);
         }
 
         // Upload 9:16 variations
         for (let i = 0; i < nineByEditSixteenImages.length; i++) {
           const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_9-16_var${i + 1}.png`;
-          const upload = await uploadImageToDrive(nineByEditSixteenImages[i], fileName, folderId);
-          const link = await makeFilePublic(upload.fileId);
+          let link;
+          if (photosAlbumId) {
+            link = await uploadImageToPhotos(nineByEditSixteenImages[i], fileName, photosAlbumId);
+          } else {
+            const upload = await uploadImageToDrive(nineByEditSixteenImages[i], fileName, folderId);
+            link = await makeFilePublic(upload.fileId);
+          }
           uploadedLinks['9:16'].push(link);
         }
 
