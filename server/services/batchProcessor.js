@@ -918,7 +918,7 @@ export const processBatch = async (options) => {
     });
 
     // Step 3.5: Get column header name for the detected column
-    // We'll need to read the header row to know the exact column name
+    console.log('[BATCH] Reading header row...');
     const sheetsClient = await getSheetsClient();
     const headerResponse = await sheetsClient.spreadsheets.get({
       spreadsheetId,
@@ -983,8 +983,10 @@ export const processBatch = async (options) => {
       message: 'Reading Google Sheet...',
     });
 
+    console.log('[BATCH] Reading sheet rows...');
     const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
     const totalRows = rows.length;
+    console.log(`[BATCH] Read ${totalRows} data rows`);
 
     if (totalRows === 0) {
       throw new Error('No data rows found in the sheet');
@@ -993,6 +995,8 @@ export const processBatch = async (options) => {
     // Step 5: Process each row
     const updates = [];
 
+    console.log(`[BATCH] Starting row loop. imageUrlColumnName="${imageUrlColumnName}", ratioColumns=${JSON.stringify(ratioColumns)}`);
+
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
       const row = rows[rowIndex];
       const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex); // Prefer real sheet row
@@ -1000,6 +1004,7 @@ export const processBatch = async (options) => {
       try {
         // Get image URL from the detected column (now using column name as key)
         const imageUrl = row[imageUrlColumnName]?.trim();
+        console.log(`[BATCH] Row ${rowNumber}: imageUrl=${imageUrl ? imageUrl.substring(0, 60) : 'EMPTY'}`);
 
         if (!imageUrl || imageUrl === '') {
           onProgress?.({
