@@ -9,8 +9,10 @@ let cachedAlbumId = null;
 
 const getAccessToken = async () => {
   const auth = await getAuthClient();
+  console.log('[PHOTOS] Auth client type:', auth?.constructor?.name);
   const tokenResponse = await auth.getAccessToken();
   const token = tokenResponse?.token ?? tokenResponse;
+  console.log('[PHOTOS] Access token present:', !!token);
   if (!token) throw new Error('Could not get OAuth access token for Google Photos');
   return token;
 };
@@ -95,6 +97,9 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
       'X-Goog-Upload-File-Name': filename,
       'X-Goog-Upload-Protocol': 'raw',
     },
+  }).catch(e => {
+    console.error('[PHOTOS] Upload bytes failed:', e.response?.status, JSON.stringify(e.response?.data));
+    throw e;
   });
 
   const uploadToken = uploadRes.data;

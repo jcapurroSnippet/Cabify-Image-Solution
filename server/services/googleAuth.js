@@ -13,33 +13,55 @@ const credentialsPath = path.join(__dirname, '../../.credentials.json');
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
 
 /**
- * Get OAuth2 credentials from saved tokens
+ * Get OAuth2 credentials from saved tokens (file or env var)
  */
 const getOAuthClient = async () => {
-  if (!fs.existsSync(oauthTokenPath)) {
-    return null;
+  let tokens = null;
+
+  // Try env var first (production / Cloud Run)
+  if (process.env.GOOGLE_OAUTH_TOKEN_JSON) {
+    try {
+      tokens = JSON.parse(process.env.GOOGLE_OAUTH_TOKEN_JSON);
+      console.log('📍 OAuth tokens loaded from GOOGLE_OAUTH_TOKEN_JSON env var');
+    } catch (e) {
+      console.warn('⚠️  Could not parse GOOGLE_OAUTH_TOKEN_JSON:', e.message);
+    }
   }
-  
+
+  // Fallback: local file (development)
+  if (!tokens && fs.existsSync(oauthTokenPath)) {
+    try {
+      tokens = JSON.parse(fs.readFileSync(oauthTokenPath, 'utf-8'));
+      console.log('📍 OAuth tokens loaded from .oauth-token.json');
+    } catch (e) {
+      console.warn('⚠️  Could not load .oauth-token.json:', e.message);
+    }
+  }
+
+  if (!tokens) return null;
+
   try {
-    const tokens = JSON.parse(fs.readFileSync(oauthTokenPath, 'utf-8'));
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_OAUTH_CLIENT_ID || 'YOUR_CLIENT_ID',
       process.env.GOOGLE_OAUTH_CLIENT_SECRET || 'YOUR_CLIENT_SECRET',
       'http://localhost:8888/oauth-callback'
     );
-    
+
     oauth2Client.setCredentials(tokens);
-    
+
     // Refresh if expired
     if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
       const { credentials } = await oauth2Client.refreshAccessToken();
-      fs.writeFileSync(oauthTokenPath, JSON.stringify(credentials, null, 2));
+      // Save back to file if available (dev only)
+      if (fs.existsSync(oauthTokenPath)) {
+        fs.writeFileSync(oauthTokenPath, JSON.stringify(credentials, null, 2));
+      }
       oauth2Client.setCredentials(credentials);
     }
-    
+
     return oauth2Client;
   } catch (error) {
-    console.warn('⚠️  Could not load OAuth tokens:', error.message);
+    console.warn('⚠️  Could not create OAuth client:', error.message);
     return null;
   }
 };
