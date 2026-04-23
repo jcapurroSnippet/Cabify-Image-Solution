@@ -1,16 +1,60 @@
 import axios from 'axios';
-import { getAuthClient } from './googleAuth.js';
+import { google } from 'googleapis';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const PHOTOS_UPLOAD_URL = 'https://photoslibrary.googleapis.com/v1/uploads';
 const PHOTOS_CREATE_URL = 'https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate';
 const PHOTOS_ALBUMS_URL = 'https://photoslibrary.googleapis.com/v1/albums';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
+
 let cachedAlbumId = null;
+let cachedOAuthClient = null;
+
+const getPhotosOAuthClient = async () => {
+  if (cachedOAuthClient) return cachedOAuthClient;
+
+  let tokens = null;
+
+  if (process.env.GOOGLE_OAUTH_TOKEN_JSON) {
+    try {
+      tokens = JSON.parse(process.env.GOOGLE_OAUTH_TOKEN_JSON);
+      console.log('[PHOTOS] OAuth tokens loaded from env var');
+    } catch (e) {
+      console.warn('[PHOTOS] Could not parse GOOGLE_OAUTH_TOKEN_JSON:', e.message);
+    }
+  }
+
+  if (!tokens && fs.existsSync(oauthTokenPath)) {
+    tokens = JSON.parse(fs.readFileSync(oauthTokenPath, 'utf-8'));
+    console.log('[PHOTOS] OAuth tokens loaded from file');
+  }
+
+  if (!tokens) throw new Error('No OAuth tokens available for Google Photos');
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_OAUTH_CLIENT_ID,
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    'http://localhost:8888/oauth-callback'
+  );
+  oauth2Client.setCredentials(tokens);
+
+  if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
+    console.log('[PHOTOS] Refreshing expired OAuth token...');
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    oauth2Client.setCredentials(credentials);
+  }
+
+  cachedOAuthClient = oauth2Client;
+  return oauth2Client;
+};
 
 const getAccessToken = async () => {
-  const auth = await getAuthClient();
-  console.log('[PHOTOS] Auth client type:', auth?.constructor?.name);
-  const tokenResponse = await auth.getAccessToken();
+  const client = await getPhotosOAuthClient();
+  const tokenResponse = await client.getAccessToken();
   const token = tokenResponse?.token ?? tokenResponse;
   console.log('[PHOTOS] Access token present:', !!token);
   if (!token) throw new Error('Could not get OAuth access token for Google Photos');
