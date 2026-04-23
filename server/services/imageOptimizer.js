@@ -8,10 +8,8 @@ import sharp from 'sharp';
  */
 export const optimizeImageBuffer = async (imageBuffer) => {
   try {
-    console.log('[OPTIMIZE] Optimization disabled. Returning original buffer.');
     return imageBuffer;
   } catch (error) {
-    console.warn(`[OPTIMIZE] Could not optimize with sharp, using original:`, error.message);
     return imageBuffer;
   }
 };
@@ -40,14 +38,12 @@ export const downloadAndOptimizeImage = async (imageUrl) => {
       }
     }
 
-    console.log(`[DOWNLOAD] Fetching: ${downloadUrl.substring(0, 60)}...`);
     const response = await axios.get(downloadUrl, { 
       responseType: 'arraybuffer',
       maxRedirects: 5,
       timeout: 30000,
     });
 
-    console.log(`[DOWNLOAD] Downloaded ${response.data.byteLength} bytes`);
     
     // Optimize
     const optimized = await optimizeImageBuffer(response.data);
@@ -57,7 +53,6 @@ export const downloadAndOptimizeImage = async (imageUrl) => {
     
     return dataUrl;
   } catch (error) {
-    console.error(`[ERROR]`, error.message);
     throw error;
   }
 };

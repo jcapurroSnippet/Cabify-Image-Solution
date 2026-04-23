@@ -32,7 +32,6 @@ export const getDriveDirectDownloadUrl = (fileId) => {
  */
 export const downloadImageAsDataUrlV2 = async (imageUrl) => {
   try {
-    console.log(`[IMAGE DOWNLOAD] Processing URL...`);
 
     let downloadUrl = imageUrl;
 
@@ -40,16 +39,12 @@ export const downloadImageAsDataUrlV2 = async (imageUrl) => {
     if (imageUrl.includes('drive.google.com')) {
       const fileId = extractDriveFileId(imageUrl);
       if (fileId) {
-        console.log(`[IMAGE DOWNLOAD] ✓ Detected Google Drive URL`);
-        console.log(`[IMAGE DOWNLOAD] File ID: ${fileId}`);
         // Convert to direct download URL
         downloadUrl = getDriveDirectDownloadUrl(fileId);
-        console.log(`[IMAGE DOWNLOAD] Using direct download endpoint`);
       }
     }
 
     // Download with HTTP
-    console.log(`[IMAGE DOWNLOAD] Fetching from: ${downloadUrl.substring(0, 80)}...`);
     
     const response = await axios.get(downloadUrl, { 
       responseType: 'arraybuffer',
@@ -61,11 +56,9 @@ export const downloadImageAsDataUrlV2 = async (imageUrl) => {
     const base64 = Buffer.from(response.data).toString('base64');
     const dataUrl = `data:${mimeType};base64,${base64}`;
     
-    console.log(`[IMAGE DOWNLOAD] ✓ Downloaded successfully (${response.data.byteLength} bytes)`);
     return dataUrl;
 
   } catch (error) {
-    console.error(`[IMAGE DOWNLOAD] Error: ${error.message}`);
     throw new Error(`Failed to download image from ${imageUrl}: ${error.message}`);
   }
 };
@@ -76,7 +69,6 @@ export const downloadImageAsDataUrlV2 = async (imageUrl) => {
  */
 export const downloadDriveFileAsDataUrl = async (fileId) => {
   try {
-    console.log(`[DRIVE API] Downloading file ID: ${fileId}`);
     
     const auth = await getAuthClient();
     const drive = google.drive({ version: 'v3', auth });
@@ -88,7 +80,6 @@ export const downloadDriveFileAsDataUrl = async (fileId) => {
     });
 
     const mimeType = fileMetadata.data.mimeType || 'image/png';
-    console.log(`[DRIVE API] File MIME type: ${mimeType}`);
 
     // Download file content
     const response = await drive.files.get(
@@ -99,11 +90,9 @@ export const downloadDriveFileAsDataUrl = async (fileId) => {
     const base64 = Buffer.from(response.data).toString('base64');
     const dataUrl = `data:${mimeType};base64,${base64}`;
     
-    console.log(`[DRIVE API] ✓ Downloaded successfully (${response.data.byteLength} bytes)`);
     return dataUrl;
 
   } catch (error) {
-    console.error(`[DRIVE API] Error:`, error.message);
     throw new Error(`Failed to download from Drive: ${error.message}`);
   }
 };

@@ -94,7 +94,6 @@ const logLine = (message) => {
   try {
     process.stdout.write(`${message}\n`);
   } catch {
-    console.log(message);
   }
 };
 
@@ -206,7 +205,6 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
     if (imageUrl.includes('drive.google.com')) {
       const fileId = extractDriveFileId(imageUrl);
       if (!fileId) throw new Error('Could not extract Drive file ID');
-      console.log(`[IMAGE] Downloading via API: ${fileId.substring(0, 20)}...`);
       
       const drive = await getDriveClient();
       
@@ -224,7 +222,6 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
         buffer = normalizeBuffer(response.data);
       } catch (apiError) {
         // If API fails, try direct HTTP with auth header
-        console.log('[IMAGE] API failed, trying direct download...');
         
         const auth = await getAuthClient();
         let headers = {
@@ -249,7 +246,6 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
       }
     } else {
       // Use HTTP for other URLs
-      console.log(`[IMAGE] Downloading from: ${imageUrl.substring(0, 70)}...`);
       
       const response = await axios.get(imageUrl, {
         responseType: 'arraybuffer',
@@ -263,7 +259,6 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
       buffer = normalizeBuffer(response.data);
     }
 
-    console.log(`[IMAGE] Downloaded: ${buffer.byteLength} bytes`);
     
     // Optimize the image
     const optimized = await optimizeImageBuffer(buffer);
@@ -273,7 +268,6 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
     
     return dataUrl;
   } catch (error) {
-    console.error('Error downloading image:', error.message);
     throw new Error(`Failed to download image from ${imageUrl}: ${error.message}`);
   }
 };
@@ -297,7 +291,6 @@ export const generateAspectRatioVariations = async (imageDataUrl, targetRatio, b
 
     return response.data.images || [];
   } catch (error) {
-    console.error('Error generating aspect ratio variations:', error.message);
     throw new Error(`Failed to generate ${targetRatio} variations: ${error.message}`);
   }
 };
@@ -338,7 +331,6 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
           );
           
           if (hasImageColumn) {
-            console.log(`Found sheet with image columns: "${sheetName}"`);
             return sheetName;
           }
         }
@@ -361,7 +353,6 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
         const hasData = allRows.length > 1;
 
         if (hasHeaders && hasData) {
-          console.log(`Found sheet with data: "${sheetName}"`);
           return sheetName;
         }
       } catch (error) {
@@ -371,10 +362,8 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
 
     // Fallback to first sheet if all are empty
     const fallbackSheet = sheetNames[0] || 'Sheet1';
-    console.log(`No suitable sheets found. Using fallback: "${fallbackSheet}"`);
     return fallbackSheet;
   } catch (error) {
-    console.error('Error finding sheet with data:', error.message);
     throw error;
   }
 };
@@ -459,7 +448,6 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
 
     return rows;
   } catch (error) {
-    console.error('Error reading sheet rows with hyperlinks:', error.message);
     throw error;
   }
 };
@@ -493,13 +481,11 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
 
     const sheet = response.data.sheets?.[0];
     if (!sheet) {
-      console.log('[URL DETECTION] ERROR: Could not find sheet in response');
       return -1;
     }
 
     const gridData = sheet.data?.[0];
     if (!gridData || !gridData.rowData) {
-      console.log('[URL DETECTION] ERROR: No grid data or row data found');
       return -1;
     }
 
@@ -556,7 +542,6 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
     for (let rowIdx = headerRowIndex + 1; rowIdx < headerRowIndex + 1 + rowsToScan; rowIdx++) {
       const row = gridData.rowData[rowIdx];
       if (!row.values) {
-        console.log(`[URL DETECTION] Row ${rowIdx}: No values`);
         continue;
       }
 
@@ -653,8 +638,6 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
     debug('No URL column found', { headerRowIndex });
     return -1;
   } catch (error) {
-    console.error('[URL DETECTION] ERROR:', error.message);
-    console.error('[URL DETECTION] Stack:', error.stack);
     return -1;
   }
 };
@@ -821,9 +804,7 @@ export const processBatch = async (options) => {
   }
 
   try {
-    console.log('\n========================================');
     console.log('[BATCH PROCESSOR] Starting batch process');
-    console.log('========================================');
     console.log(`[BATCH] Input sheetsUrl: ${sheetsUrl}`);
     console.log(`[BATCH] Provided sheetName: ${providedSheetName || 'AUTO'}`);
     console.log(`[BATCH] Base URL: ${baseUrl}`);
@@ -1141,7 +1122,6 @@ export const processBatch = async (options) => {
           rowData: row,
         });
       } catch (error) {
-        console.error(`Error processing row ${rowNumber}:`, error.message);
         onProgress?.({
           rowNumber,
           currentRow: rowIndex + 1,

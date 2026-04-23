@@ -42,10 +42,8 @@ export const getFirstSheetName = async (spreadsheetId) => {
       throw new Error('No sheets found in spreadsheet');
     }
 
-    console.log(`Using sheet: "${sheetName}"`);
     return sheetName;
   } catch (error) {
-    console.error('Error getting sheet name:', error.message);
     throw new Error(`Failed to get sheet name: ${error.message}`);
   }
 };
@@ -99,7 +97,6 @@ export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
         });
       }
     } catch (error) {
-      console.warn('Warning: Could not extract hyperlinks:', error.message);
     }
 
     // Convert to array of objects, using hyperlinks when available
@@ -116,7 +113,6 @@ export const readSheetRows = async (spreadsheetId, sheetName = 'Sheet1') => {
       return obj;
     });
   } catch (error) {
-    console.error('Error reading sheet rows:', error);
     throw new Error(`Failed to read Google Sheet: ${error.message}`);
   }
 };
@@ -143,7 +139,6 @@ export const updateSheetCells = async (spreadsheetId, updates) => {
 
     return response.data;
   } catch (error) {
-    console.error('Error updating sheet cells:', error);
     throw new Error(`Failed to update Google Sheet: ${error.message}`);
   }
 };
@@ -169,7 +164,6 @@ export const findColumnIndex = async (spreadsheetId, sheetName, headerName) => {
 
     return index; // 0-based index
   } catch (error) {
-    console.error('Error finding column index:', error);
     throw new Error(`Failed to find column: ${error.message}`);
   }
 };

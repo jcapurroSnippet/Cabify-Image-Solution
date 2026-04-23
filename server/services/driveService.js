@@ -39,7 +39,6 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
       webContentLink: response.data.webContentLink,
     };
   } catch (error) {
-    console.error('Error uploading to Drive:', error);
     throw new Error(`Failed to upload image to Drive: ${error.message}`);
   }
 };
@@ -64,7 +63,6 @@ export const makeFilePublic = async (fileId) => {
     // Construct the standard shared link
     return `https://drive.google.com/file/d/${fileId}/view`;
   } catch (error) {
-    console.error('Error making file public:', error);
     throw new Error(`Failed to share file: ${error.message}`);
   }
 };
@@ -78,7 +76,6 @@ export const getShareableLink = async (fileId) => {
     // Always return the standard shareable format
     return `https://drive.google.com/file/d/${fileId}/view`;
   } catch (error) {
-    console.error('Error generating shareable link:', error);
     throw new Error(`Failed to generate shareable link: ${error.message}`);
   }
 };

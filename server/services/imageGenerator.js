@@ -214,7 +214,6 @@ export const generateAspectRatioImages = async (imageDataUrl, targetRatio) => {
       const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio);
       outputs.push(finalUrl ?? sceneUrl);
     } catch (error) {
-      console.error(`[GENERATOR] Variation failed for ${targetRatio}:`, error.message);
       errors.push(error.message);
     }
   }

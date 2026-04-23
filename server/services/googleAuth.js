@@ -22,9 +22,7 @@ const getOAuthClient = async () => {
   if (process.env.GOOGLE_OAUTH_TOKEN_JSON) {
     try {
       tokens = JSON.parse(process.env.GOOGLE_OAUTH_TOKEN_JSON);
-      console.log('📍 OAuth tokens loaded from GOOGLE_OAUTH_TOKEN_JSON env var');
     } catch (e) {
-      console.warn('⚠️  Could not parse GOOGLE_OAUTH_TOKEN_JSON:', e.message);
     }
   }
 
@@ -32,9 +30,7 @@ const getOAuthClient = async () => {
   if (!tokens && fs.existsSync(oauthTokenPath)) {
     try {
       tokens = JSON.parse(fs.readFileSync(oauthTokenPath, 'utf-8'));
-      console.log('📍 OAuth tokens loaded from .oauth-token.json');
     } catch (e) {
-      console.warn('⚠️  Could not load .oauth-token.json:', e.message);
     }
   }
 
@@ -61,7 +57,6 @@ const getOAuthClient = async () => {
 
     return oauth2Client;
   } catch (error) {
-    console.warn('⚠️  Could not create OAuth client:', error.message);
     return null;
   }
 };
@@ -77,15 +72,12 @@ export const getAuthClient = async () => {
   }
 
   // Try OAuth first (if tokens exist)
-  console.log('📍 Checking for OAuth tokens...');
   const oauthClient = await getOAuthClient();
   if (oauthClient) {
-    console.log('✓ Using OAuth credentials (user account)');
     cachedAuthClient = oauthClient;
     return oauthClient;
   }
 
-  console.log('⚠️  No OAuth tokens found');
 
   const isProduction = process.env.NODE_ENV === 'production';
   let credentials = null;
@@ -93,7 +85,6 @@ export const getAuthClient = async () => {
   // PRODUCTION: Try ADC first (this is the service account in Cloud Run/App Engine)
   if (isProduction) {
     try {
-      console.log('📍 Production mode: Attempting Application Default Credentials (service account)...');
       const auth = new GoogleAuth({
         scopes: [
           'https://www.googleapis.com/auth/spreadsheets',
@@ -103,11 +94,9 @@ export const getAuthClient = async () => {
       });
     
       const client = await auth.getClient();
-      console.log('✓ Production service account loaded via ADC');
       cachedAuthClient = client;
       return client;
     } catch (error) {
-      console.error('❌ Production mode ADC failed:', error.message);
       throw new Error(
         'Failed to load service account credentials in production.\n' +
         'Ensure the service account has proper IAM roles in your GCP project.\n' +
@@ -118,42 +107,30 @@ export const getAuthClient = async () => {
 
   // DEVELOPMENT: Try local .credentials.json file first
   if (!credentials) {
-    console.log(`📍 Development mode: Looking for .credentials.json at: ${credentialsPath}`);
     if (fs.existsSync(credentialsPath)) {
       try {
-        console.log('📍 Found .credentials.json, attempting to load...');
         const credentialsFile = fs.readFileSync(credentialsPath, 'utf-8');
         credentials = JSON.parse(credentialsFile);
-        console.log('✓ Successfully loaded credentials from .credentials.json');
       } catch (error) {
-        console.warn('⚠️  Error reading .credentials.json:', error.message);
       }
     } else {
-      console.log('⚠️  .credentials.json NOT FOUND at:', credentialsPath);
-      console.log('⚠️  This is required for local development authentication!');
     }
   }
 
   // Try explicit service account env var
   if (!credentials && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     try {
-      console.log('📍 Found GOOGLE_SERVICE_ACCOUNT_KEY environment variable');
       credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
-      console.log('✓ Successfully parsed GOOGLE_SERVICE_ACCOUNT_KEY');
     } catch (error) {
-      console.warn('⚠️  Could not parse GOOGLE_SERVICE_ACCOUNT_KEY:', error.message);
     }
   }
 
   // Try base64-encoded env var
   if (!credentials && process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64) {
     try {
-      console.log('📍 Found GOOGLE_SERVICE_ACCOUNT_KEY_B64 environment variable');
       const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64, 'base64').toString('utf-8');
       credentials = JSON.parse(decoded);
-      console.log('✓ Successfully decoded GOOGLE_SERVICE_ACCOUNT_KEY_B64');
     } catch (error) {
-      console.warn('⚠️  Could not decode GOOGLE_SERVICE_ACCOUNT_KEY_B64:', error.message);
     }
   }
 
@@ -169,18 +146,15 @@ export const getAuthClient = async () => {
           'https://www.googleapis.com/auth/drive',
         ],
       });
-      console.log('✓ JWT client created with service account (development)');
       cachedAuthClient = jwtClient;
       return jwtClient;
     } catch (error) {
-      console.error('❌ Could not create JWT client:', error.message);
       throw new Error('Failed to create JWT auth client: ' + error.message);
     }
   }
 
   // Last resort: try GoogleAuth with no explicit key
   try {
-    console.log('📍 Attempting GoogleAuth (gcloud configured)...');
     const auth = new GoogleAuth({
       scopes: [
         'https://www.googleapis.com/auth/spreadsheets',
@@ -190,11 +164,9 @@ export const getAuthClient = async () => {
     });
 
     const client = await auth.getClient();
-    console.log('✓ GoogleAuth client created');
     cachedAuthClient = client;
     return client;
   } catch (error) {
-    console.warn('⚠️  GoogleAuth failed:', error.message);
   }
 
   // If we got here, all auth methods failed

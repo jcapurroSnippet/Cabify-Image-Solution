@@ -66,7 +66,6 @@ export async function exchangeCodeForTokens(oauth2Client, code) {
  */
 export function saveOAuthTokens(tokens) {
   fs.writeFileSync(OAUTH_TOKEN_FILE, JSON.stringify(tokens, null, 2));
-  console.log('✅ OAuth tokens saved to .oauth-token.json');
 }
 
 /**
@@ -80,7 +79,6 @@ export function loadOAuthTokens() {
   try {
     return JSON.parse(fs.readFileSync(OAUTH_TOKEN_FILE, 'utf-8'));
   } catch (error) {
-    console.error('Error loading OAuth tokens:', error.message);
     return null;
   }
 }
@@ -92,10 +90,6 @@ export async function performOAuthFlow() {
   const oauth2Client = createOAuth2Client();
   const authUrl = getAuthorizationUrl(oauth2Client);
   
-  console.log('\n🔐 OAuth Authentication Required\n');
-  console.log('Opening browser... If it does not open, visit this URL manually:');
-  console.log('\n' + authUrl + '\n');
-  console.log('Waiting for authorization...\n');
 
   // Auto-open browser
   try {
@@ -154,7 +148,6 @@ export async function performOAuthFlow() {
     });
     
     server.listen(8888, () => {
-      console.log('Callback server listening on http://localhost:8888\n');
     });
   });
 }
@@ -168,12 +161,10 @@ export async function getOAuthClient() {
   // Try to load saved tokens
   const savedTokens = loadOAuthTokens();
   if (savedTokens) {
-    console.log('📍 Using saved OAuth tokens');
     oauth2Client.setCredentials(savedTokens);
     
     // Refresh token if needed
     if (savedTokens.expiry_date && savedTokens.expiry_date < Date.now()) {
-      console.log('🔄 Refreshing expired token...');
       const { credentials } = await oauth2Client.refreshAccessToken();
       saveOAuthTokens(credentials);
       oauth2Client.setCredentials(credentials);

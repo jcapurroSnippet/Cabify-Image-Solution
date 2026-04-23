@@ -120,7 +120,6 @@ app.post('/api/nano-editor', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    console.error('Nano editor generation error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Unexpected image generation error.'),
     });
@@ -155,7 +154,6 @@ app.post('/api/aspect-ratio', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    console.error('Aspect ratio generation error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Unexpected image generation error.'),
     });
@@ -330,7 +328,6 @@ app.get('/api/ads/campaigns', async (request, response) => {
     if (error instanceof RequestValidationError) {
       return response.status(400).json({ error: error.message });
     }
-    console.error('Campaigns error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to fetch campaigns.'),
     });
@@ -365,7 +362,6 @@ app.get('/api/ads/worst-performers', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    console.error('Worst performers error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to fetch worst performers.'),
     });
@@ -387,7 +383,6 @@ app.post('/api/ads/download-image', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    console.error('Download ad image error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to download ad image.'),
     });
@@ -427,7 +422,6 @@ app.post('/api/ads/replace-creative', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    console.error('Replace creative error:', error);
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to replace ad creative.'),
     });
@@ -458,5 +452,4 @@ app.get(/.*/, (request, response) => {
 });
 
 app.listen(port, () => {
-  console.log(`Cabify Image Suite server listening on port ${port}`);
 });

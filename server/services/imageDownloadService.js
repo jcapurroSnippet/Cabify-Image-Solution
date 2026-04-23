@@ -195,11 +195,6 @@ export const retryWithBackoff = async (
       // Calculate backoff delay (1s, 2s, 4s, ...)
       const delayMs = initialDelayMs * Math.pow(2, attempt);
 
-      console.warn(
-        `Attempt ${attempt + 1}/${maxRetries} failed. ` +
-        `Retrying in ${delayMs}ms...`,
-        error.message
-      );
 
       await delay(delayMs);
     }
@@ -260,7 +255,6 @@ export const downloadImageAsDataUrl = async (
   // Attempt download with retry
   return await retryWithBackoff(async () => {
     try {
-      console.log(`Downloading image: ${imageUrl}`);
 
       const response = await axios.get(imageUrl, {
         responseType: 'arraybuffer',
@@ -278,7 +272,6 @@ export const downloadImageAsDataUrl = async (
       // Convert to base64
       const base64 = Buffer.from(response.data).toString('base64');
 
-      console.log(`✓ Downloaded ${response.data.length} bytes (${mimeType})`);
 
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
@@ -387,7 +380,6 @@ export const readAllSheetRows = async (spreadsheetId, sheetName) => {
   try {
     const sheets = await getSheetsClient();
 
-    console.log(`Reading sheet: "${sheetName}"`);
 
     // Step 1: Get raw values
     const valuesResponse = await sheets.spreadsheets.values.get({
@@ -398,13 +390,11 @@ export const readAllSheetRows = async (spreadsheetId, sheetName) => {
     const allValues = valuesResponse.data.values || [];
 
     if (allValues.length === 0) {
-      console.warn(`Sheet is empty: "${sheetName}"`);
       return [];
     }
 
     const [headers, ...dataRows] = allValues;
 
-    console.log(`Found ${dataRows.length} data rows and ${headers.length} columns`);
 
     // Step 2: Extract hyperlinks from grid data
     let hyperlinks = {};
@@ -432,9 +422,7 @@ export const readAllSheetRows = async (spreadsheetId, sheetName) => {
         });
       }
 
-      console.log(`Extracted ${Object.keys(hyperlinks).length} hyperlinks`);
     } catch (error) {
-      console.warn(`Could not extract hyperlinks: ${error.message}`);
       // Continue anyway - we still have the cell values
     }
 
@@ -455,11 +443,9 @@ export const readAllSheetRows = async (spreadsheetId, sheetName) => {
       return obj;
     });
 
-    console.log(`✓ Successfully read ${rowObjects.length} rows from sheet`);
 
     return rowObjects;
   } catch (error) {
-    console.error('Error reading sheet:', error);
     throw new Error(`Failed to read Google Sheet: ${error.message}`);
   }
 };
@@ -500,7 +486,6 @@ export const findDataSheet = async (spreadsheetId) => {
       throw new Error('Spreadsheet has no sheets');
     }
 
-    console.log(`Found ${sheetNames.length} sheets in spreadsheet`);
 
     // Keywords that indicate image data
     const imageKeywords = ['preview', 'imagen', 'image', 'creative', 'creativo', 'piezas'];
@@ -521,7 +506,6 @@ export const findDataSheet = async (spreadsheetId) => {
           );
 
           if (hasImageColumn) {
-            console.log(`✓ Found sheet with image columns: "${sheetName}"`);
             return sheetName;
           }
         }
@@ -544,7 +528,6 @@ export const findDataSheet = async (spreadsheetId) => {
         const hasData = rows.length > 1;
 
         if (hasHeaders && hasData) {
-          console.log(`✓ Found sheet with data: "${sheetName}"`);
           return sheetName;
         }
       } catch (error) {
@@ -553,10 +536,8 @@ export const findDataSheet = async (spreadsheetId) => {
     }
 
     // Strategy 3: Use first sheet as fallback
-    console.warn(`⚠ Using first sheet as fallback: "${sheetNames[0]}"`);
     return sheetNames[0];
   } catch (error) {
-    console.error('Error finding data sheet:', error);
     throw new Error(`Failed to find data sheet: ${error.message}`);
   }
 };
