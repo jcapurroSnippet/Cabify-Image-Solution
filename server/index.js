@@ -1,4 +1,6 @@
 ﻿import express from 'express';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import axios from 'axios';
 import { processBatch, getBatchStatus } from './services/batchProcessor.js';
 import { generateAspectRatioImages } from './services/imageGenerator.js';
