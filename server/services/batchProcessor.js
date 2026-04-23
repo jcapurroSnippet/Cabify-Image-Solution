@@ -1028,7 +1028,9 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
+        console.log(`[BATCH] Row ${rowNumber}: downloading image...`);
         const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
+        console.log(`[BATCH] Row ${rowNumber}: download complete, size=${imageDataUrl?.length ?? 0}`);
 
         // Generate 1:1 variations
         onProgress?.({
