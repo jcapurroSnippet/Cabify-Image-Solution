@@ -19,12 +19,14 @@ const getPhotosOAuthClient = async () => {
 
   let tokens = null;
 
-  if (process.env.GOOGLE_OAUTH_TOKEN_JSON) {
+  const rawEnvToken = process.env.GOOGLE_OAUTH_TOKEN_JSON;
+  console.log('[PHOTOS] GOOGLE_OAUTH_TOKEN_JSON present:', !!rawEnvToken, '| length:', rawEnvToken?.length ?? 0);
+  if (rawEnvToken) {
     try {
-      tokens = JSON.parse(process.env.GOOGLE_OAUTH_TOKEN_JSON);
-      console.log('[PHOTOS] OAuth tokens loaded from env var');
+      tokens = JSON.parse(rawEnvToken.trim());
+      console.log('[PHOTOS] OAuth tokens parsed from env var OK, keys:', Object.keys(tokens).join(','));
     } catch (e) {
-      console.warn('[PHOTOS] Could not parse GOOGLE_OAUTH_TOKEN_JSON:', e.message);
+      console.warn('[PHOTOS] Could not parse GOOGLE_OAUTH_TOKEN_JSON:', e.message, '| first 50 chars:', rawEnvToken.slice(0, 50));
     }
   }
 
