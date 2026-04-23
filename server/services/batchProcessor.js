@@ -10,6 +10,7 @@ import {
 import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
+import { generateAspectRatioImages } from './imageGenerator.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
@@ -1042,7 +1043,7 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
-        const oneToOneImages = await generateAspectRatioVariations(imageDataUrl, '1:1', baseUrl);
+        const { images: oneToOneImages } = await generateAspectRatioImages(imageDataUrl, '1:1');
 
         // Generate 9:16 variations
         onProgress?.({
@@ -1054,7 +1055,7 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
-        const nineByEditSixteenImages = await generateAspectRatioVariations(imageDataUrl, '9:16', baseUrl);
+        const { images: nineByEditSixteenImages } = await generateAspectRatioImages(imageDataUrl, '9:16');
 
         // Upload all variations to Drive
         onProgress?.({

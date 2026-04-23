@@ -36,7 +36,10 @@ const getPhotosOAuthClient = async () => {
     console.log('[PHOTOS] OAuth tokens loaded from file');
   }
 
-  if (!tokens) throw new Error('No OAuth tokens available for Google Photos');
+  if (!tokens) {
+    console.error('[PHOTOS] No tokens found. GOOGLE_OAUTH_TOKEN_JSON present:', !!process.env.GOOGLE_OAUTH_TOKEN_JSON, '| file exists:', fs.existsSync(oauthTokenPath));
+    throw new Error('No OAuth tokens available for Google Photos');
+  }
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_OAUTH_CLIENT_ID,
@@ -45,10 +48,20 @@ const getPhotosOAuthClient = async () => {
   );
   oauth2Client.setCredentials(tokens);
 
+  console.log('[PHOTOS] Token expiry_date:', tokens.expiry_date, '| now:', Date.now(), '| expired:', tokens.expiry_date ? tokens.expiry_date < Date.now() : 'no expiry');
+  console.log('[PHOTOS] Has refresh_token:', !!tokens.refresh_token);
+
   if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
     console.log('[PHOTOS] Refreshing expired OAuth token...');
-    const { credentials } = await oauth2Client.refreshAccessToken();
-    oauth2Client.setCredentials(credentials);
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+      console.log('[PHOTOS] Token refreshed successfully');
+    } catch (refreshErr) {
+      console.error('[PHOTOS] Token refresh failed:', refreshErr.message);
+      cachedOAuthClient = null;
+      throw new Error(`OAuth token refresh failed: ${refreshErr.message}`);
+    }
   }
 
   cachedOAuthClient = oauth2Client;
