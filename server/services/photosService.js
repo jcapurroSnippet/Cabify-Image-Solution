@@ -19,6 +19,7 @@ const getPhotosOAuthClient = async () => {
 
   let tokens = null;
 
+  console.log('[PHOTOS] getPhotosOAuthClient called');
   const rawEnvToken = process.env.GOOGLE_OAUTH_TOKEN_JSON;
   console.log('[PHOTOS] GOOGLE_OAUTH_TOKEN_JSON present:', !!rawEnvToken, '| length:', rawEnvToken?.length ?? 0);
   if (rawEnvToken) {
@@ -66,6 +67,7 @@ const getAccessToken = async () => {
 export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
   if (cachedAlbumId) return cachedAlbumId;
 
+  console.log('[PHOTOS] resolveAlbumIdFromShareUrl called, PHOTOS_ALBUM_ID env:', !!process.env.PHOTOS_ALBUM_ID);
   // Primary: read from env var (most reliable)
   if (process.env.PHOTOS_ALBUM_ID) {
     cachedAlbumId = process.env.PHOTOS_ALBUM_ID.trim();
@@ -77,6 +79,7 @@ export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
   try {
     const response = await axios.get(shareUrl, {
       maxRedirects: 10,
+      timeout: 5000,
       validateStatus: s => s < 400,
     });
     // Try multiple ways to get the final URL
