@@ -22,15 +22,15 @@ if (fs.existsSync(envPath)) {
 
 const { performOAuthFlow } = await import('./server/services/oauthAuth.js');
 
-console.log('\n🔐 OAuth Setup — Google Drive + Sheets + Photos\n');
+console.log('\nOAuth Setup - Google Drive + Sheets + Photos\n');
 console.log('This will open a browser window to authorize the app.\n');
 
 try {
   await performOAuthFlow();
-  console.log('\n✅ OAuth tokens saved successfully.');
-  console.log('   Scopes include: Drive, Sheets, Google Photos\n');
+  console.log('\nOAuth tokens saved successfully.');
+  console.log('Scopes include: Drive, Sheets, and Google Photos upload\n');
   process.exit(0);
 } catch (error) {
-  console.error('\n❌ OAuth flow failed:', error.message);
+  console.error('\nOAuth flow failed:', error.message);
   process.exit(1);
 }

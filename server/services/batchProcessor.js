@@ -793,7 +793,14 @@ export const processBatch = async (options) => {
 
   // FIXED Drive folder ID for all uploads (fallback if Photos fails)
   const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
-  const PHOTOS_ALBUM_SHARE_URL = 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
+  const PHOTOS_ALBUM_SHARE_URL =
+    process.env.PHOTOS_ALBUM_SHARE_URL?.trim() || 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
+
+  if (!process.env.PHOTOS_ALBUM_SHARE_URL?.trim()) {
+    console.warn(
+      '[BATCH] PHOTOS_ALBUM_SHARE_URL is not set. If you want the album to stay public, share it manually in Google Photos and put that public link in .env.'
+    );
+  }
 
   let photosAlbumId = null;
   try {

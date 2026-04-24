@@ -68,6 +68,22 @@ const getAccessToken = async () => {
   return token;
 };
 
+const withFreshPhotosToken = async (operation) => {
+  try {
+    const token = await getAccessToken();
+    return await operation(token);
+  } catch (error) {
+    if (error.response?.status === 401) {
+      console.warn('[PHOTOS] Got 401, invalidating token cache and retrying...');
+      cachedOAuthClient = null;
+      const token = await getAccessToken();
+      return operation(token);
+    }
+
+    throw error;
+  }
+};
+
 export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
   if (cachedAlbumId) return cachedAlbumId;
 
@@ -165,18 +181,10 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
 
   let result;
   try {
-    const token = await getAccessToken();
-    result = await uploadOnce(token, buffer, filename, albumId);
-  } catch (e) {
-    if (e.response?.status === 401) {
-      console.warn('[PHOTOS] Got 401, invalidating token cache and retrying...');
-      cachedOAuthClient = null;
-      const token = await getAccessToken();
-      result = await uploadOnce(token, buffer, filename, albumId);
-    } else {
-      console.error('[PHOTOS] Upload failed:', e.response?.status, JSON.stringify(e.response?.data));
-      throw e;
-    }
+    result = await withFreshPhotosToken((token) => uploadOnce(token, buffer, filename, albumId));
+  } catch (error) {
+    console.error('[PHOTOS] Upload failed:', error.response?.status, JSON.stringify(error.response?.data));
+    throw error;
   }
 
   const status = result?.status;
