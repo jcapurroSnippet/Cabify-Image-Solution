@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 const PHOTOS_UPLOAD_URL = 'https://photoslibrary.googleapis.com/v1/uploads';
 const PHOTOS_CREATE_URL = 'https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate';
 const PHOTOS_ALBUMS_URL = 'https://photoslibrary.googleapis.com/v1/albums';
+const PHOTOS_MEDIA_ITEMS_URL = 'https://photoslibrary.googleapis.com/v1/mediaItems';
 const DEFAULT_PHOTOS_DIRECT_IMAGE_PARAMS = 'w16383-h16383';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -96,6 +97,49 @@ const getPhotosDirectImageUrl = (mediaItem) => {
     DEFAULT_PHOTOS_DIRECT_IMAGE_PARAMS;
 
   return `${baseUrl}=${params}`;
+};
+
+const getMediaItemOnce = async (token, mediaItemId) => {
+  const response = await axios.get(`${PHOTOS_MEDIA_ITEMS_URL}/${encodeURIComponent(mediaItemId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  return response.data;
+};
+
+const resolveRedirectedImageUrl = async (url, token) => {
+  if (!url) {
+    return null;
+  }
+
+  const controller = new AbortController();
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : undefined,
+    });
+
+    const finalUrl = response.url || url;
+
+    try {
+      await response.body?.cancel();
+    } catch {
+    }
+
+    return finalUrl;
+  } catch (error) {
+    console.warn('[PHOTOS] Could not resolve redirected image URL, using original direct URL:', error.message);
+    return url;
+  } finally {
+    controller.abort();
+  }
 };
 
 export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
@@ -206,13 +250,29 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
     throw new Error(`Google Photos upload failed: ${status.message}`);
   }
 
-  const directImageUrl = getPhotosDirectImageUrl(result?.mediaItem);
-  const productUrl = result?.mediaItem?.productUrl;
-  const finalUrl = directImageUrl || productUrl;
+  let mediaItem = result?.mediaItem || null;
+
+  if (mediaItem?.id) {
+    try {
+      mediaItem = await withFreshPhotosToken((token) => getMediaItemOnce(token, mediaItem.id));
+    } catch (error) {
+      console.warn('[PHOTOS] Could not fetch media item details after upload:', error.message);
+    }
+  }
+
+  const directImageUrl = getPhotosDirectImageUrl(mediaItem);
+  const redirectedImageUrl = directImageUrl
+    ? await withFreshPhotosToken((token) => resolveRedirectedImageUrl(directImageUrl, token))
+    : null;
+  const productUrl = mediaItem?.productUrl || result?.mediaItem?.productUrl;
+  const finalUrl = redirectedImageUrl || directImageUrl || productUrl;
   if (!finalUrl) throw new Error('No usable URL returned from Google Photos');
 
-  if (directImageUrl) {
-    console.log('[PHOTOS] Uploaded successfully with direct image URL for sheet output.');
+  if (redirectedImageUrl) {
+    console.log(`[PHOTOS] Uploaded successfully with redirected image URL for sheet output: ${redirectedImageUrl}`);
+    console.log('[PHOTOS] Note: redirected Google Photos image URLs are temporary and may expire.');
+  } else if (directImageUrl) {
+    console.log(`[PHOTOS] Uploaded successfully with direct base URL for sheet output: ${directImageUrl}`);
     console.log('[PHOTOS] Note: Google Photos base URLs are temporary and may expire after about 60 minutes.');
   } else {
     console.log('[PHOTOS] Uploaded successfully, falling back to Google Photos product URL.');
