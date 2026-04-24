@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 const PHOTOS_UPLOAD_URL = 'https://photoslibrary.googleapis.com/v1/uploads';
 const PHOTOS_CREATE_URL = 'https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate';
 const PHOTOS_ALBUMS_URL = 'https://photoslibrary.googleapis.com/v1/albums';
+const DEFAULT_PHOTOS_DIRECT_IMAGE_PARAMS = 'w16383-h16383';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
@@ -82,6 +83,19 @@ const withFreshPhotosToken = async (operation) => {
 
     throw error;
   }
+};
+
+const getPhotosDirectImageUrl = (mediaItem) => {
+  const baseUrl = mediaItem?.baseUrl?.trim();
+  if (!baseUrl) {
+    return null;
+  }
+
+  const params =
+    process.env.PHOTOS_DIRECT_IMAGE_PARAMS?.trim().replace(/^=+/, '') ||
+    DEFAULT_PHOTOS_DIRECT_IMAGE_PARAMS;
+
+  return `${baseUrl}=${params}`;
 };
 
 export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
@@ -192,9 +206,17 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
     throw new Error(`Google Photos upload failed: ${status.message}`);
   }
 
+  const directImageUrl = getPhotosDirectImageUrl(result?.mediaItem);
   const productUrl = result?.mediaItem?.productUrl;
-  if (!productUrl) throw new Error('No productUrl returned from Google Photos');
+  const finalUrl = directImageUrl || productUrl;
+  if (!finalUrl) throw new Error('No usable URL returned from Google Photos');
 
-  console.log(`[PHOTOS] Uploaded successfully: ${productUrl}`);
-  return productUrl;
+  if (directImageUrl) {
+    console.log('[PHOTOS] Uploaded successfully with direct image URL for sheet output.');
+    console.log('[PHOTOS] Note: Google Photos base URLs are temporary and may expire after about 60 minutes.');
+  } else {
+    console.log('[PHOTOS] Uploaded successfully, falling back to Google Photos product URL.');
+  }
+
+  return finalUrl;
 };
