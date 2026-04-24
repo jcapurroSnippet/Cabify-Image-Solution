@@ -41,6 +41,10 @@ const getPhotosOAuthClient = async () => {
     throw new Error('No OAuth tokens available for Google Photos');
   }
 
+  if (!tokens.refresh_token) {
+    console.error('[PHOTOS] OAuth token has no refresh_token — long operations will 401 after expiry');
+  }
+
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_OAUTH_CLIENT_ID,
     process.env.GOOGLE_OAUTH_CLIENT_SECRET,
@@ -48,21 +52,9 @@ const getPhotosOAuthClient = async () => {
   );
   oauth2Client.setCredentials(tokens);
 
-  console.log('[PHOTOS] Token expiry_date:', tokens.expiry_date, '| now:', Date.now(), '| expired:', tokens.expiry_date ? tokens.expiry_date < Date.now() : 'no expiry');
-  console.log('[PHOTOS] Has refresh_token:', !!tokens.refresh_token);
-
-  if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
-    console.log('[PHOTOS] Refreshing expired OAuth token...');
-    try {
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
-      console.log('[PHOTOS] Token refreshed successfully');
-    } catch (refreshErr) {
-      console.error('[PHOTOS] Token refresh failed:', refreshErr.message);
-      cachedOAuthClient = null;
-      throw new Error(`OAuth token refresh failed: ${refreshErr.message}`);
-    }
-  }
+  oauth2Client.on('tokens', (newTokens) => {
+    console.log('[PHOTOS] OAuth auto-refresh fired. Has new refresh_token:', !!newTokens.refresh_token);
+  });
 
   cachedOAuthClient = oauth2Client;
   return oauth2Client;
@@ -72,7 +64,6 @@ const getAccessToken = async () => {
   const client = await getPhotosOAuthClient();
   const tokenResponse = await client.getAccessToken();
   const token = tokenResponse?.token ?? tokenResponse;
-  console.log('[PHOTOS] Access token present:', !!token);
   if (!token) throw new Error('Could not get OAuth access token for Google Photos');
   return token;
 };
@@ -145,13 +136,7 @@ export const resolveAlbumIdFromShareUrl = async (shareUrl) => {
   );
 };
 
-export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
-  const token = await getAccessToken();
-  const base64 = imageDataUrl.replace(/^data:[^;]+;base64,/, '');
-  const buffer = Buffer.from(base64, 'base64');
-
-  console.log(`[PHOTOS] Uploading ${filename} to album ${albumId}...`);
-
+const uploadOnce = async (token, buffer, filename, albumId) => {
   const uploadRes = await axios.post(PHOTOS_UPLOAD_URL, buffer, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -159,13 +144,9 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
       'X-Goog-Upload-File-Name': filename,
       'X-Goog-Upload-Protocol': 'raw',
     },
-  }).catch(e => {
-    console.error('[PHOTOS] Upload bytes failed:', e.response?.status, JSON.stringify(e.response?.data));
-    throw e;
   });
 
   const uploadToken = uploadRes.data;
-  console.log(`[PHOTOS] Got upload token, creating media item...`);
 
   const createRes = await axios.post(
     PHOTOS_CREATE_URL,
@@ -173,7 +154,31 @@ export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
     { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
 
-  const result = createRes.data.newMediaItemResults?.[0];
+  return createRes.data.newMediaItemResults?.[0];
+};
+
+export const uploadImageToPhotos = async (imageDataUrl, filename, albumId) => {
+  const base64 = imageDataUrl.replace(/^data:[^;]+;base64,/, '');
+  const buffer = Buffer.from(base64, 'base64');
+
+  console.log(`[PHOTOS] Uploading ${filename} to album ${albumId}...`);
+
+  let result;
+  try {
+    const token = await getAccessToken();
+    result = await uploadOnce(token, buffer, filename, albumId);
+  } catch (e) {
+    if (e.response?.status === 401) {
+      console.warn('[PHOTOS] Got 401, invalidating token cache and retrying...');
+      cachedOAuthClient = null;
+      const token = await getAccessToken();
+      result = await uploadOnce(token, buffer, filename, albumId);
+    } else {
+      console.error('[PHOTOS] Upload failed:', e.response?.status, JSON.stringify(e.response?.data));
+      throw e;
+    }
+  }
+
   const status = result?.status;
   if (status?.code && status.code !== 0) {
     throw new Error(`Google Photos upload failed: ${status.message}`);

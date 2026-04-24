@@ -45,15 +45,17 @@ const getOAuthClient = async () => {
 
     oauth2Client.setCredentials(tokens);
 
-    // Refresh if expired
-    if (tokens.expiry_date && tokens.expiry_date < Date.now()) {
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      // Save back to file if available (dev only)
-      if (fs.existsSync(oauthTokenPath)) {
-        fs.writeFileSync(oauthTokenPath, JSON.stringify(credentials, null, 2));
+    oauth2Client.on('tokens', (newTokens) => {
+      const merged = { ...tokens, ...newTokens };
+      if (!merged.refresh_token && tokens.refresh_token) {
+        merged.refresh_token = tokens.refresh_token;
       }
-      oauth2Client.setCredentials(credentials);
-    }
+      if (fs.existsSync(oauthTokenPath)) {
+        try {
+          fs.writeFileSync(oauthTokenPath, JSON.stringify(merged, null, 2));
+        } catch { /* ignore */ }
+      }
+    });
 
     return oauth2Client;
   } catch (error) {

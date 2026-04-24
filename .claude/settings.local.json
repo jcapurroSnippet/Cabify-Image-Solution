@@ -12,7 +12,20 @@
       "Bash(node --env-file=.env -e \"console.log\\(''CUSTOMER_IDS:'', process.env.GOOGLE_ADS_CUSTOMER_IDS\\); console.log\\(''META_IDS:'', process.env.META_AD_ACCOUNT_IDS\\);\")",
       "Bash(curl -s \"http://localhost:8080/api/ads/worst-performers?platform=google&accountId=7053421764\")",
       "Bash(curl -s \"http://localhost:8080/api/ads/worst-performers?platform=meta&accountId=act_12978665768312\")",
-      "Bash(curl -s \"https://graph.facebook.com/v21.0/act_12978665768312/ads?fields=id,name&effective_status=%5B%22ACTIVE%22%5D&limit=1&access_token=EAAUGM2pSkqEBQxAOAhNqJGDZCZBeyZBORS6S0C7ZBNuzDKZCxOmFPW6zA9kjfQFkN33G3wE9GCzZAMv8WENVKjC95ZChRYPJaTktiIOFyOdBnYXev3vWocZAqR5LWeYDPOCI8dPJZCivAIl35KR3725eEIIrZAw9DJgd8zbmUnLWma8CwtKfJP0BNqanqfowZDZD\")"
+      "Bash(curl -s \"https://graph.facebook.com/v21.0/act_12978665768312/ads?fields=id,name&effective_status=%5B%22ACTIVE%22%5D&limit=1&access_token=EAAUGM2pSkqEBQxAOAhNqJGDZCZBeyZBORS6S0C7ZBNuzDKZCxOmFPW6zA9kjfQFkN33G3wE9GCzZAMv8WENVKjC95ZChRYPJaTktiIOFyOdBnYXev3vWocZAqR5LWeYDPOCI8dPJZCivAIl35KR3725eEIIrZAw9DJgd8zbmUnLWma8CwtKfJP0BNqanqfowZDZD\")",
+      "Bash(node --check server/services/photosService.js)",
+      "Bash(PORT=8090 node --env-file=.env server/index.js)",
+      "Bash(curl -s http://localhost:8090/healthz)",
+      "Bash(curl -s http://localhost:8090/healthz -w \"\\\\nHTTP %{http_code}\\\\n\")",
+      "Bash(node -e ' *)",
+      "Bash(node --env-file=.env test-photos.mjs)",
+      "Bash(node -e \"const t=JSON.parse\\(require\\('fs'\\).readFileSync\\('.oauth-token.json','utf-8'\\)\\); console.log\\('Scope:', t.scope\\);\")",
+      "Bash(node --env-file=.env test-photos-noalbum.mjs)",
+      "Bash(awk -F'=' '{print $2}')",
+      "Bash(awk -F'-' '{print \"Project prefix:\", substr\\($1, 1, 12\\)\"...\"}')",
+      "Bash(node --env-file=.env create-album.mjs)",
+      "Bash(node --env-file=.env share-album.mjs)",
+      "Bash(curl -s http://localhost:8090/healthz -w \" HTTP %{http_code}\\\\n\")"
     ]
   }
 }
