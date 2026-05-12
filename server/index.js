@@ -1,9 +1,10 @@
 ﻿import express from 'express';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
 import { processBatch, getBatchStatus } from './services/batchProcessor.js';
-import { generateAspectRatioImages } from './services/imageGenerator.js';
+import { extractFirstImageFromResponse, generateAspectRatioImages, getGeminiClient } from './services/imageGenerator.js';
 import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
