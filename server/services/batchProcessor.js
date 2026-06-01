@@ -12,6 +12,7 @@ import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
 import { generateAspectRatioImages } from './imageGenerator.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
+import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
 const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
@@ -793,21 +794,26 @@ export const processBatch = async (options) => {
 
   // FIXED Drive folder ID for all uploads (fallback if Photos fails)
   const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
+  const runtimeConfig = getCreativeLibraryConfig();
   const PHOTOS_ALBUM_SHARE_URL =
     process.env.PHOTOS_ALBUM_SHARE_URL?.trim() || 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
 
-  if (!process.env.PHOTOS_ALBUM_SHARE_URL?.trim()) {
+  if (runtimeConfig.preferGooglePhotosForBatch && !process.env.PHOTOS_ALBUM_SHARE_URL?.trim()) {
     console.warn(
       '[BATCH] PHOTOS_ALBUM_SHARE_URL is not set. If you want the album to stay public, share it manually in Google Photos and put that public link in .env.'
     );
   }
 
   let photosAlbumId = null;
-  try {
-    photosAlbumId = await resolveAlbumIdFromShareUrl(PHOTOS_ALBUM_SHARE_URL);
-    console.log(`[BATCH] Google Photos album resolved: ${photosAlbumId}`);
-  } catch (e) {
-    console.warn(`[BATCH] Could not resolve Photos album, will fallback to Drive: ${e.message}`);
+  if (runtimeConfig.preferGooglePhotosForBatch) {
+    try {
+      photosAlbumId = await resolveAlbumIdFromShareUrl(PHOTOS_ALBUM_SHARE_URL);
+      console.log(`[BATCH] Google Photos album resolved: ${photosAlbumId}`);
+    } catch (e) {
+      console.warn(`[BATCH] Could not resolve Photos album, will fallback to Drive: ${e.message}`);
+    }
+  } else {
+    console.log('[BATCH] Using Drive for batch output links by default.');
   }
 
   try {

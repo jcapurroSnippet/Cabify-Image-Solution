@@ -92,6 +92,7 @@ export const getAuthClient = async () => {
           'https://www.googleapis.com/auth/spreadsheets',
           'https://www.googleapis.com/auth/drive.file',
           'https://www.googleapis.com/auth/drive',
+          'https://www.googleapis.com/auth/adwords',
         ],
       });
     
@@ -146,6 +147,7 @@ export const getAuthClient = async () => {
           'https://www.googleapis.com/auth/spreadsheets',
           'https://www.googleapis.com/auth/drive.file',
           'https://www.googleapis.com/auth/drive',
+          'https://www.googleapis.com/auth/adwords',
         ],
       });
       cachedAuthClient = jwtClient;
@@ -162,6 +164,7 @@ export const getAuthClient = async () => {
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive.file',
         'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/adwords',
       ],
     });
 

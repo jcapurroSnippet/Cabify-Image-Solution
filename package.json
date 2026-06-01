@@ -9,7 +9,8 @@
     "build": "vite build",
     "start": "node server/index.js",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --test"
   },
   "dependencies": {
     "@google/genai": "^1.39.0",

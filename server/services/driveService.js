@@ -1,34 +1,24 @@
 import { Readable } from 'node:stream';
 import { getDriveClient } from './googleAuth.js';
 
-/**
- * Upload a base64 image to Google Drive
- * Returns: { fileId, name, webViewLink, webContentLink }
- */
-export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
+export const uploadBufferToDrive = async (buffer, fileName, mimeType = 'image/png', folderId) => {
   try {
     const drive = await getDriveClient();
 
-    // Remove data URL prefix if present
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
-
     const fileMetadata = {
       name: fileName,
-      mimeType: 'image/png',
+      mimeType,
       parents: folderId ? [folderId] : undefined,
-    };
-
-    const media = {
-      mimeType: 'image/png',
-      body: Readable.from(buffer),
     };
 
     const response = await drive.files.create({
       resource: fileMetadata,
-      media,
-      fields: 'id, name, webViewLink, webContentLink, mimeType',
       requestBody: fileMetadata,
+      media: {
+        mimeType,
+        body: Readable.from(buffer),
+      },
+      fields: 'id, name, webViewLink, webContentLink, mimeType',
       supportsAllDrives: true,
     });
 
@@ -37,7 +27,23 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
       name: response.data.name,
       webViewLink: response.data.webViewLink,
       webContentLink: response.data.webContentLink,
+      mimeType: response.data.mimeType,
     };
+  } catch (error) {
+    throw new Error(`Failed to upload file to Drive: ${error.message}`);
+  }
+};
+
+/**
+ * Upload a base64 image to Google Drive
+ * Returns: { fileId, name, webViewLink, webContentLink }
+ */
+export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
+  try {
+    // Remove data URL prefix if present
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    return await uploadBufferToDrive(buffer, fileName, 'image/png', folderId);
   } catch (error) {
     throw new Error(`Failed to upload image to Drive: ${error.message}`);
   }
@@ -90,4 +96,43 @@ export const extractFolderId = (folderUrl) => {
     throw new Error('Invalid Google Drive folder URL. Expected format: https://drive.google.com/drive/folders/{id}');
   }
   return match[1];
+};
+
+export const findOrCreateDriveFolder = async (folderName, parentFolderId) => {
+  try {
+    const drive = await getDriveClient();
+    const escapedName = String(folderName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const parentClause = parentFolderId ? ` and '${parentFolderId}' in parents` : '';
+
+    const existing = await drive.files.list({
+      q: `mimeType = 'application/vnd.google-apps.folder' and trashed = false and name = '${escapedName}'${parentClause}`,
+      fields: 'files(id, name)',
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    const match = existing.data.files?.[0];
+    if (match?.id) {
+      return { folderId: match.id, name: match.name, created: false };
+    }
+
+    const createResponse = await drive.files.create({
+      requestBody: {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: parentFolderId ? [parentFolderId] : undefined,
+      },
+      fields: 'id, name',
+      supportsAllDrives: true,
+    });
+
+    return {
+      folderId: createResponse.data.id,
+      name: createResponse.data.name,
+      created: true,
+    };
+  } catch (error) {
+    throw new Error(`Failed to find or create Drive folder: ${error.message}`);
+  }
 };

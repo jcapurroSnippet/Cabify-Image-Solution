@@ -42,10 +42,12 @@ export function getAuthorizationUrl(oauth2Client) {
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/photoslibrary.appendonly',
     'https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata',
+    'https://www.googleapis.com/auth/adwords',
   ];
   
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
+    prompt: 'consent',
     scope: scopes,
   });
   

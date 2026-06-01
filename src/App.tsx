@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Crop, Sparkles, TrendingDown } from 'lucide-react';
+import { Crop, Library, Sparkles, TrendingDown } from 'lucide-react';
 import AspectRatioTab from './features/aspect-ratio/AspectRatioTab';
 import NanoEditorTab from './features/nano-editor/NanoEditorTab';
 import AdOptimizerTab from './features/ad-optimizer/AdOptimizerTab';
+import CreativeLibraryTab from './features/creative-library/CreativeLibraryTab';
 
-type TabId = 'nano' | 'ratio' | 'optimizer';
+type TabId = 'nano' | 'ratio' | 'optimizer' | 'library';
 
 const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   {
@@ -21,6 +22,11 @@ const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
     id: 'optimizer',
     label: 'Editor Batch',
     icon: <TrendingDown className="h-4 w-4" />,
+  },
+  {
+    id: 'library',
+    label: 'Creative Library',
+    icon: <Library className="h-4 w-4" />,
   },
 ];
 
@@ -65,6 +71,9 @@ export default function App() {
           </section>
           <section aria-hidden={activeTab !== 'optimizer'} className={activeTab === 'optimizer' ? 'block' : 'hidden'}>
             <AdOptimizerTab />
+          </section>
+          <section aria-hidden={activeTab !== 'library'} className={activeTab === 'library' ? 'block' : 'hidden'}>
+            <CreativeLibraryTab />
           </section>
         </main>
       </div>

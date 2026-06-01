@@ -3,11 +3,22 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
-import { processBatch, getBatchStatus } from './services/batchProcessor.js';
+import { processBatch, getBatchStatus, downloadImageAsDataUrl as downloadSheetImageAsDataUrl } from './services/batchProcessor.js';
 import { extractFirstImageFromResponse, generateAspectRatioImages, getGeminiClient } from './services/imageGenerator.js';
 import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, getWorstPerformers as getGoogleWorstPerformers, replaceAdCreative as replaceGoogleAdCreative } from './services/googleAdsService.js';
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
+import {
+  getCreativeLibrarySheetConfig,
+  listCreativeLibrary,
+  syncAcceptedCreatives,
+} from './services/creativeLibraryService.js';
+import { getCreativeLibraryConfig } from './services/creativeLibraryConfig.js';
+import {
+  buildGoogleReplacementPlan,
+  executeGoogleReplacements,
+  getGoogleLowPerformers,
+} from './services/googleReplacementService.js';
 
 class RequestValidationError extends Error {}
 
@@ -42,7 +53,16 @@ Generate exactly one image. No explanation, no alternatives, no commentary.`;
 
 const getErrorMessage = (error, fallbackMessage) => {
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '';
-  return message || fallbackMessage;
+  const apiMessage =
+    error &&
+    typeof error === 'object' &&
+    'errors' in error &&
+    Array.isArray(error.errors) &&
+    error.errors[0]?.message
+      ? String(error.errors[0].message)
+      : '';
+
+  return apiMessage || message || fallbackMessage;
 };
 
 const parseDataUrl = (imageDataUrl) => {
@@ -63,6 +83,18 @@ const parseDataUrl = (imageDataUrl) => {
   return { imageData, mimeType };
 };
 
+const normalizeOptionalStringList = (value) => {
+  if (value === undefined || value === null || value === '') return [];
+  const rawValues = Array.isArray(value) ? value : [value];
+  return [...new Set(rawValues.map((item) => String(item).trim()).filter(Boolean))];
+};
+
+const getCategoryOptions = async (sheetsUrl) => {
+  const trimmedSheetsUrl = typeof sheetsUrl === 'string' ? sheetsUrl.trim() : '';
+  if (!trimmedSheetsUrl) return getCreativeLibraryConfig().categories;
+  return (await getCreativeLibrarySheetConfig({ sheetsUrl: trimmedSheetsUrl })).categories;
+};
+
 const downloadImageAsDataUrl = async (imageUrl) => {
   try {
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
@@ -76,6 +108,33 @@ const downloadImageAsDataUrl = async (imageUrl) => {
 
 app.get('/healthz', (_request, response) => {
   response.status(200).json({ ok: true });
+});
+
+app.get('/api/image-preview', async (request, response) => {
+  try {
+    const imageUrl = String(request.query.url ?? '').trim();
+    if (!imageUrl) {
+      throw new RequestValidationError('url query param is required.');
+    }
+
+    const dataUrl = await downloadSheetImageAsDataUrl(imageUrl);
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      throw new Error('Invalid image response.');
+    }
+
+    response.setHeader('Content-Type', match[1]);
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    return response.send(Buffer.from(match[2], 'base64'));
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(502).json({
+      error: getErrorMessage(error, 'Failed to load image preview.'),
+    });
+  }
 });
 
 app.post('/api/nano-editor', async (request, response) => {
@@ -282,6 +341,54 @@ app.post('/api/batch-status', async (request, response) => {
   }
 });
 
+// ── Creative Library endpoints ──────────────────────────────────────────────
+
+app.post('/api/creative-library/sync', async (request, response) => {
+  try {
+    const { sheetsUrl, sheetName } = request.body ?? {};
+
+    if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+
+    const result = await syncAcceptedCreatives({
+      sheetsUrl: sheetsUrl.trim(),
+      sheetName: sheetName ? String(sheetName).trim() : undefined,
+    });
+
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to sync accepted creatives.'),
+    });
+  }
+});
+
+app.get('/api/creative-library', async (request, response) => {
+  try {
+    const sheetsUrl = String(request.query.sheetsUrl ?? '').trim();
+
+    if (!sheetsUrl) {
+      throw new RequestValidationError('sheetsUrl query param is required.');
+    }
+
+    const result = await listCreativeLibrary({ sheetsUrl });
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to read creative library.'),
+    });
+  }
+});
+
 // ── Ad Optimizer endpoints ──────────────────────────────────────────────────
 
 app.get('/api/ads/accounts', (request, response) => {
@@ -425,6 +532,123 @@ app.post('/api/ads/replace-creative', async (request, response) => {
 
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to replace ad creative.'),
+    });
+  }
+});
+
+app.post('/api/ads/google/low-performers', async (request, response) => {
+  try {
+    const { accountId, campaignId, campaignIds, limit, sheetsUrl } = request.body ?? {};
+
+    if (!accountId) {
+      throw new RequestValidationError('accountId is required.');
+    }
+
+    const assets = await getGoogleLowPerformers({
+      accountId: String(accountId).trim(),
+      campaignIds: normalizeOptionalStringList(campaignIds ?? campaignId),
+      sheetsUrl: sheetsUrl ? String(sheetsUrl).trim() : undefined,
+      limit: Number(limit) || 100,
+    });
+
+    return response.status(200).json({
+      assets,
+      categories: await getCategoryOptions(sheetsUrl),
+    });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to fetch Google Ads low performers.'),
+    });
+  }
+});
+
+app.post('/api/ads/google/replacement-plan', async (request, response) => {
+  try {
+    const {
+      sheetsUrl,
+      accountId,
+      campaignId,
+      campaignIds,
+      limit,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+    } = request.body ?? {};
+
+    if (!sheetsUrl) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+    if (!accountId) {
+      throw new RequestValidationError('accountId is required.');
+    }
+
+    const plan = await buildGoogleReplacementPlan({
+      sheetsUrl: String(sheetsUrl).trim(),
+      accountId: String(accountId).trim(),
+      campaignIds: normalizeOptionalStringList(campaignIds ?? campaignId),
+      limit: Number(limit) || 20,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+    });
+
+    return response.status(200).json(plan);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to build Google Ads replacement plan.'),
+    });
+  }
+});
+
+app.post('/api/ads/google/execute-replacements', async (request, response) => {
+  try {
+    const {
+      sheetsUrl,
+      accountId,
+      campaignId,
+      campaignIds,
+      limit,
+      confirm,
+      selectedOperationIds,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+    } = request.body ?? {};
+
+    if (!sheetsUrl) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+    if (!accountId) {
+      throw new RequestValidationError('accountId is required.');
+    }
+    if (confirm !== true) {
+      throw new RequestValidationError('confirm must be true.');
+    }
+
+    const result = await executeGoogleReplacements({
+      sheetsUrl: String(sheetsUrl).trim(),
+      accountId: String(accountId).trim(),
+      campaignIds: normalizeOptionalStringList(campaignIds ?? campaignId),
+      limit: Number(limit) || 10,
+      confirm,
+      selectedOperationIds,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+    });
+
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to execute Google Ads replacements.'),
     });
   }
 });

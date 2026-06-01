@@ -1,13 +1,31 @@
 import { GoogleAdsApi } from 'google-ads-api';
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
+import {
+  isGoogleLowPerformanceLabel,
+  isImageAssetFieldType,
+  normalizeGoogleAdType,
+  normalizeGoogleAssetFieldType,
+  normalizeGooglePerformanceLabel,
+} from './creativeLibraryCore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
+const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
 
 const getOAuthTokens = () => {
+  if (process.env.GOOGLE_OAUTH_TOKEN_JSON) {
+    try {
+      return JSON.parse(process.env.GOOGLE_OAUTH_TOKEN_JSON);
+    } catch {
+      // fall through
+    }
+  }
+
   if (fs.existsSync(oauthTokenPath)) {
     try {
       return JSON.parse(fs.readFileSync(oauthTokenPath, 'utf-8'));
@@ -42,6 +60,11 @@ const getClient = (customerId) => {
   if (!tokens?.refresh_token && !process.env.GOOGLE_ADS_REFRESH_TOKEN) {
     throw new Error('Missing OAuth refresh token. Set up OAuth or set GOOGLE_ADS_REFRESH_TOKEN.');
   }
+  if (tokens?.scope && !String(tokens.scope).includes('https://www.googleapis.com/auth/adwords')) {
+    throw new Error(
+      'Saved Google OAuth token is missing the Google Ads scope. Run setup-oauth.js again to grant https://www.googleapis.com/auth/adwords.'
+    );
+  }
 
   const client = new GoogleAdsApi({
     client_id: clientId || '',
@@ -73,6 +96,392 @@ export const getCampaigns = async (customerId) => {
     id: String(row.campaign.id),
     label: row.campaign.name || `Campaign ${row.campaign.id}`,
   }));
+};
+
+const microsToCurrency = (micros) => Number(micros ?? 0) / 1_000_000;
+
+const getAllTimePerformanceDateFilter = () => {
+  const startDate = process.env.GOOGLE_LOW_PERFORMANCE_START_DATE || '2010-01-01';
+  const endDate = new Date().toISOString().slice(0, 10);
+  return `AND segments.date BETWEEN '${startDate}' AND '${endDate}'`;
+};
+
+const getAssetFieldType = (view) => {
+  if (!view) return '';
+  if (view.field_type !== undefined && view.field_type !== null) {
+    return normalizeGoogleAssetFieldType(view.field_type);
+  }
+
+  const resourceFieldType = String(view.resource_name || '').split('~').pop();
+  if (/^[A-Z][A-Z0-9_]*$/.test(resourceFieldType)) return normalizeGoogleAssetFieldType(resourceFieldType);
+
+  return '';
+};
+
+const buildImageResolution = (asset) => {
+  const fullSize = asset?.image_asset?.full_size || {};
+  const width = Number(fullSize.width_pixels ?? fullSize.widthPixels ?? 0);
+  const height = Number(fullSize.height_pixels ?? fullSize.heightPixels ?? 0);
+
+  return {
+    imageWidth: Number.isFinite(width) ? width : 0,
+    imageHeight: Number.isFinite(height) ? height : 0,
+    imageResolution: width > 0 && height > 0 ? `${width}x${height}` : '',
+  };
+};
+
+const getGoogleAdsUiParam = (key, fallback = '') => String(process.env[key] || fallback).replace(/-/g, '').trim();
+
+const buildGoogleAdsAssetUrl = ({ customerId }) => {
+  const cleanCustomerId = String(customerId || '').replace(/-/g, '');
+  const ocid = getGoogleAdsUiParam('GOOGLE_ADS_UI_OCID', process.env.GOOGLE_ADS_ASSET_REPORT_OCID || cleanCustomerId);
+  const ascid = getGoogleAdsUiParam('GOOGLE_ADS_UI_ASCID', process.env.GOOGLE_ADS_ASSET_REPORT_ASCID || ocid);
+  const uscid = getGoogleAdsUiParam(
+    'GOOGLE_ADS_UI_USCID',
+    process.env.GOOGLE_ADS_ASSET_REPORT_USCID || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || ocid,
+  );
+  const params = new URLSearchParams({
+    ocid,
+    ascid,
+  });
+  const optionalParams = [
+    ['euid', getGoogleAdsUiParam('GOOGLE_ADS_UI_EUID', '1160530543')],
+    ['__u', getGoogleAdsUiParam('GOOGLE_ADS_UI_U', '2272046007')],
+    ['uscid', uscid],
+    ['__c', getGoogleAdsUiParam('GOOGLE_ADS_UI_C', '2873937632')],
+    ['authuser', getGoogleAdsUiParam('GOOGLE_ADS_UI_AUTHUSER', '0')],
+  ];
+
+  for (const [key, value] of optionalParams) {
+    if (value) params.set(key, value);
+  }
+
+  return `https://ads.google.com/aw/assetreport/performance?${params.toString()}`;
+};
+
+const normalizeCampaignIds = (options = {}) => {
+  const rawIds = Array.isArray(options.campaignIds)
+    ? options.campaignIds
+    : options.campaignIds
+      ? [options.campaignIds]
+      : options.campaignId
+        ? [options.campaignId]
+        : [];
+  const cleanedIds = rawIds
+    .map((id) => String(id).replace(/-/g, '').trim())
+    .filter(Boolean);
+  const invalidIds = cleanedIds.filter((id) => !/^\d+$/.test(id));
+
+  if (invalidIds.length > 0) {
+    throw new Error('campaignIds must be numeric Google Ads campaign IDs.');
+  }
+
+  return [...new Set(cleanedIds)];
+};
+
+const buildCampaignFilter = (campaignIds) => {
+  if (campaignIds.length === 0) return '';
+  if (campaignIds.length === 1) return `AND campaign.id = ${campaignIds[0]}`;
+  return `AND campaign.id IN (${campaignIds.join(', ')})`;
+};
+
+export const buildGoogleLowPerformerId = ({
+  customerId,
+  campaignId,
+  adGroupId,
+  assetGroupId,
+  adId,
+  assetResourceName,
+  assetUrl,
+}) =>
+  `replacement_${crypto
+    .createHash('sha1')
+    .update(
+      [
+        String(customerId || '').replace(/-/g, ''),
+        campaignId,
+        adGroupId,
+        assetGroupId,
+        adId,
+        assetResourceName,
+        assetUrl,
+      ]
+        .filter(Boolean)
+        .join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16)}`;
+
+const buildMetrics = (row) => {
+  const impressions = Number(row.metrics?.impressions ?? 0);
+  const clicks = Number(row.metrics?.clicks ?? 0);
+  const conversions = Number(row.metrics?.conversions ?? 0);
+  const cost = microsToCurrency(row.metrics?.cost_micros);
+  const ctr = Number.isFinite(Number(row.metrics?.ctr))
+    ? Number(row.metrics.ctr)
+    : impressions > 0
+      ? clicks / impressions
+      : 0;
+  const conversionRate = Number.isFinite(Number(row.metrics?.conversions_from_interactions_rate))
+    ? Number(row.metrics.conversions_from_interactions_rate)
+    : clicks > 0
+      ? conversions / clicks
+      : 0;
+
+  return { impressions, clicks, conversions, cost, ctr, conversionRate };
+};
+
+const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
+  const adId = String(row.ad_group_ad?.ad?.id ?? '');
+  const adGroupId = String(row.ad_group?.id ?? '');
+  const adType = normalizeGoogleAdType(row.ad_group_ad?.ad?.type);
+  const assetFieldType = getAssetFieldType(row.ad_group_ad_asset_view);
+  const assetResourceName =
+    row.asset?.resource_name ||
+    row.ad_group_ad_asset_view?.asset ||
+    '';
+  const assetId = String(row.asset?.id ?? '');
+  const campaignId = String(row.campaign?.id ?? '');
+  const assetUrl = row.asset?.image_asset?.full_size?.url || '';
+  const resolution = buildImageResolution(row.asset);
+
+  return {
+    id: buildGoogleLowPerformerId({
+      customerId,
+      campaignId,
+      adGroupId,
+      adId,
+      assetResourceName,
+      assetUrl,
+    }),
+    customerId: customerId.replace(/-/g, ''),
+    campaignId,
+    campaignName: row.campaign?.name || 'Unknown Campaign',
+    adGroupId,
+    adGroupName: row.ad_group?.name || 'Unknown Ad Group',
+    assetGroupId: '',
+    assetGroupName: '',
+    adId,
+    adType,
+    adResourceName: row.ad_group_ad?.resource_name || '',
+    assetId,
+    assetResourceName,
+    assetName: row.asset?.name || '',
+    assetUrl,
+    ...resolution,
+    targetType: 'AD_GROUP_AD',
+    associationResourceName: row.ad_group_ad?.resource_name || '',
+    assetFieldType,
+    googleAdsUrl: buildGoogleAdsAssetUrl({
+      customerId,
+      campaignId,
+      adGroupId,
+      assetId,
+    }),
+    targetName: [row.campaign?.name, row.ad_group?.name].filter(Boolean).join(' | '),
+    metrics: buildMetrics(row),
+    performanceLabel,
+    reason: 'GOOGLE_PERFORMANCE_LABEL_LOW',
+    supportedReplacement: Boolean(adId && adGroupId && SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)),
+    replacementSupportReason:
+      adId && adGroupId && SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)
+        ? null
+        : 'UNSUPPORTED_TARGET',
+    replacementStrategy: adType === 'IMAGE_AD' ? 'IMAGE_AD_RECREATE' : 'APP_AD_RECREATE',
+  };
+};
+
+const buildAssetGroupLowPerformerEntry = (row, customerId, performanceLabel) => {
+  const assetResourceName = row.asset?.resource_name || row.asset_group_asset?.asset || '';
+  const assetId = String(row.asset?.id ?? '');
+  const campaignId = String(row.campaign?.id ?? '');
+  const assetGroupId = String(row.asset_group?.id ?? '');
+  const assetFieldType = normalizeGoogleAssetFieldType(row.asset_group_asset?.field_type);
+  const assetUrl = row.asset?.image_asset?.full_size?.url || '';
+  const resolution = buildImageResolution(row.asset);
+
+  return {
+    id: buildGoogleLowPerformerId({
+      customerId,
+      campaignId,
+      assetGroupId,
+      assetResourceName,
+      assetUrl,
+    }),
+    customerId: customerId.replace(/-/g, ''),
+    campaignId,
+    campaignName: row.campaign?.name || 'Unknown Campaign',
+    adGroupId: '',
+    adGroupName: '',
+    assetGroupId,
+    assetGroupName: row.asset_group?.name || 'Unknown Asset Group',
+    adId: '',
+    adType: 'ASSET_GROUP_ASSET',
+    adResourceName: '',
+    assetId,
+    assetResourceName,
+    assetName: row.asset?.name || '',
+    assetUrl,
+    ...resolution,
+    targetType: 'ASSET_GROUP_ASSET',
+    associationResourceName: row.asset_group_asset?.resource_name || '',
+    assetFieldType,
+    googleAdsUrl: buildGoogleAdsAssetUrl({
+      customerId,
+      campaignId,
+      assetGroupId,
+      assetId,
+    }),
+    targetName: [row.campaign?.name, row.asset_group?.name].filter(Boolean).join(' | '),
+    metrics: buildMetrics(row),
+    performanceLabel,
+    reason: 'GOOGLE_PERFORMANCE_LABEL_LOW',
+    supportedReplacement: Boolean(assetGroupId && assetResourceName && row.asset_group_asset?.resource_name),
+    replacementSupportReason:
+      assetGroupId && assetResourceName && row.asset_group_asset?.resource_name
+        ? null
+        : 'UNSUPPORTED_TARGET',
+    replacementStrategy: 'ASSET_GROUP_ASSET_ASSOCIATION',
+  };
+};
+
+/**
+ * Fetch image assets that Google itself labels as LOW performance.
+ * Only returns targets that the current replacement executor can safely apply.
+ */
+export const getLowPerformingImageAssets = async (customerId, options = {}) => {
+  const customer = getClient(customerId);
+  const config = getCreativeLibraryConfig();
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
+  const queryLimit = Math.max(limit, Math.min(Math.max(limit * 5, 100), 500));
+  const campaignIds = normalizeCampaignIds(options);
+  const campaignFilter = buildCampaignFilter(campaignIds);
+  const allTimeDateFilter = getAllTimePerformanceDateFilter();
+  const lowLabel = String(config.googleLowPerformanceLabel || 'LOW').toUpperCase();
+
+  const adGroupAdResults = await customer.query(`
+    SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_ad.resource_name,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      ad_group_ad_asset_view.asset,
+      ad_group_ad_asset_view.field_type,
+      ad_group_ad_asset_view.performance_label,
+      asset.id,
+      asset.name,
+      asset.resource_name,
+      asset.image_asset.full_size.width_pixels,
+      asset.image_asset.full_size.height_pixels,
+      asset.image_asset.full_size.url,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      metrics.conversions_from_interactions_rate,
+      metrics.cost_micros
+    FROM ad_group_ad_asset_view
+    WHERE campaign.status = 'ENABLED'
+      AND ad_group.status = 'ENABLED'
+      AND ad_group_ad.status = 'ENABLED'
+      AND ad_group_ad.ad.type IN ('IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD')
+      AND asset.type = 'IMAGE'
+      AND ad_group_ad_asset_view.enabled = TRUE
+      AND ad_group_ad_asset_view.performance_label = '${lowLabel}'
+      ${allTimeDateFilter}
+      ${campaignFilter}
+    ORDER BY ad_group_ad_asset_view.performance_label ASC, metrics.impressions DESC
+    LIMIT ${queryLimit}
+  `);
+
+  const lowPerformers = [];
+  const seenKeys = new Set();
+  for (const row of adGroupAdResults) {
+    const performanceLabel = row.ad_group_ad_asset_view?.performance_label;
+    if (!isGoogleLowPerformanceLabel(performanceLabel, lowLabel)) continue;
+    if (!isImageAssetFieldType(getAssetFieldType(row.ad_group_ad_asset_view))) continue;
+
+    const key = [
+      row.ad_group_ad?.resource_name,
+      row.asset?.resource_name || row.ad_group_ad_asset_view?.asset,
+      getAssetFieldType(row.ad_group_ad_asset_view),
+    ].filter(Boolean).join('|');
+    if (key && seenKeys.has(key)) continue;
+    if (key) seenKeys.add(key);
+    const entry = {
+      ...buildLowPerformerEntry(row, customerId, performanceLabel),
+      performanceLabel: normalizeGooglePerformanceLabel(performanceLabel),
+    };
+    if (!entry.supportedReplacement) continue;
+    lowPerformers.push(entry);
+  }
+
+  try {
+    const assetGroupResults = await customer.query(`
+      SELECT
+        campaign.id,
+        campaign.name,
+        asset_group.id,
+        asset_group.name,
+        asset_group_asset.resource_name,
+        asset_group_asset.asset,
+        asset_group_asset.field_type,
+        asset_group_asset.performance_label,
+        asset_group_asset.status,
+        asset.id,
+        asset.name,
+        asset.resource_name,
+        asset.image_asset.full_size.width_pixels,
+        asset.image_asset.full_size.height_pixels,
+        asset.image_asset.full_size.url,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.ctr,
+        metrics.conversions,
+        metrics.conversions_from_interactions_rate,
+        metrics.cost_micros
+      FROM asset_group_asset
+      WHERE campaign.status = 'ENABLED'
+        AND asset_group.status = 'ENABLED'
+        AND asset_group_asset.status = 'ENABLED'
+        AND asset.type = 'IMAGE'
+        AND asset_group_asset.performance_label = '${lowLabel}'
+        ${allTimeDateFilter}
+        ${campaignFilter}
+      ORDER BY asset_group_asset.performance_label ASC, metrics.impressions DESC
+      LIMIT ${queryLimit}
+    `);
+
+    for (const row of assetGroupResults) {
+      const performanceLabel = row.asset_group_asset?.performance_label;
+      const assetFieldType = normalizeGoogleAssetFieldType(row.asset_group_asset?.field_type);
+      if (!isGoogleLowPerformanceLabel(performanceLabel, lowLabel)) continue;
+      if (!isImageAssetFieldType(assetFieldType)) continue;
+
+      const key = [
+        row.asset_group_asset?.resource_name,
+        row.asset?.resource_name || row.asset_group_asset?.asset,
+        assetFieldType,
+      ].filter(Boolean).join('|');
+      if (key && seenKeys.has(key)) continue;
+      if (key) seenKeys.add(key);
+
+      const entry = {
+        ...buildAssetGroupLowPerformerEntry(row, customerId, performanceLabel),
+        performanceLabel: normalizeGooglePerformanceLabel(performanceLabel),
+      };
+      if (!entry.supportedReplacement) continue;
+      lowPerformers.push(entry);
+    }
+  } catch (error) {
+    console.warn(`Skipping asset_group_asset low performers: ${error.message}`);
+  }
+
+  return lowPerformers.slice(0, limit);
 };
 
 /**
@@ -233,57 +642,326 @@ const buildAdEntry = (row, imageUrl) => ({
   platform: 'google',
 });
 
+const extractResourceNameFromMutateResponse = (response, resultKey) => {
+  const directResult = response?.results?.find((result) => result?.resource_name)?.resource_name;
+  if (directResult && !resultKey) return directResult;
+
+  const operationResponses = response?.mutate_operation_responses || response?.mutateOperationResponses || [];
+  for (const operationResponse of operationResponses) {
+    const result = operationResponse?.[resultKey] || operationResponse?.[resultKey?.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())];
+    if (result?.resource_name) return result.resource_name;
+    if (result?.resourceName) return result.resourceName;
+  }
+
+  if (resultKey) {
+    const result = response?.results?.find((item) => item?.[resultKey]);
+    if (result?.[resultKey]?.resource_name) return result[resultKey].resource_name;
+  }
+
+  return directResult || '';
+};
+
+const buildTempAssetResourceName = (customerId) => `customers/${customerId}/assets/-1`;
+
+const decodeImageDataUrl = (newImageDataUrl) => {
+  const match = String(newImageDataUrl || '').match(/^data:[^;]+;base64,(.+)$/);
+  if (!match) throw new Error('Invalid image data URL format.');
+  return Buffer.from(match[1], 'base64');
+};
+
+const clonePlain = (value) => {
+  if (value === undefined || value === null) return undefined;
+  return JSON.parse(JSON.stringify(value));
+};
+
+const compactObject = (value) => {
+  const entries = Object.entries(value)
+    .filter(([, entryValue]) => {
+      if (entryValue === undefined || entryValue === null) return false;
+      if (Array.isArray(entryValue)) return entryValue.length > 0;
+      if (typeof entryValue === 'object') return Object.keys(entryValue).length > 0;
+      return true;
+    });
+  return Object.fromEntries(entries);
+};
+
+const cloneTextAssets = (assets) =>
+  Array.isArray(assets)
+    ? assets
+      .map((asset) => compactObject({
+        text: asset?.text,
+        pinned_field: asset?.pinned_field,
+      }))
+      .filter((asset) => asset.text)
+    : [];
+
+const cloneAssetRefs = (assets) =>
+  Array.isArray(assets)
+    ? assets
+      .map((asset) => ({ asset: asset?.asset }))
+      .filter((asset) => asset.asset)
+    : [];
+
+const replaceAssetRef = (assets, oldAssetResourceName, newAssetResourceName) => {
+  const seen = new Set();
+  const replaced = { value: false };
+  const oldAsset = String(oldAssetResourceName || '');
+  const nextAssets = [];
+
+  for (const asset of cloneAssetRefs(assets)) {
+    if (asset.asset === oldAsset) {
+      replaced.value = true;
+      if (!seen.has(newAssetResourceName)) {
+        nextAssets.push({ asset: newAssetResourceName });
+        seen.add(newAssetResourceName);
+      }
+      continue;
+    }
+
+    if (!seen.has(asset.asset)) {
+      nextAssets.push(asset);
+      seen.add(asset.asset);
+    }
+  }
+
+  return {
+    replaced: replaced.value,
+    assets: nextAssets,
+  };
+};
+
+const buildReplacementAdName = (name) => {
+  const base = String(name || 'Creative Library replacement').trim() || 'Creative Library replacement';
+  const suffix = `replacement ${new Date().toISOString().slice(0, 10)}`;
+  return `${base} ${suffix}`.slice(0, 255);
+};
+
+const fetchAdForReplacement = async (customer, adGroupId, adId) => {
+  const rows = await customer.query(`
+    SELECT
+      ad_group_ad.resource_name,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.final_mobile_urls,
+      ad_group_ad.ad.final_app_urls,
+      ad_group_ad.ad.final_url_suffix,
+      ad_group_ad.ad.tracking_url_template,
+      ad_group_ad.ad.url_custom_parameters,
+      ad_group_ad.ad.app_ad.app_deep_link,
+      ad_group_ad.ad.app_ad.descriptions,
+      ad_group_ad.ad.app_ad.headlines,
+      ad_group_ad.ad.app_ad.html5_media_bundles,
+      ad_group_ad.ad.app_ad.images,
+      ad_group_ad.ad.app_ad.mandatory_ad_text,
+      ad_group_ad.ad.app_ad.youtube_videos,
+      ad_group_ad.ad.app_engagement_ad.descriptions,
+      ad_group_ad.ad.app_engagement_ad.headlines,
+      ad_group_ad.ad.app_engagement_ad.images,
+      ad_group_ad.ad.app_engagement_ad.videos
+    FROM ad_group_ad
+    WHERE ad_group.id = ${String(adGroupId).replace(/-/g, '')}
+      AND ad_group_ad.ad.id = ${String(adId).replace(/-/g, '')}
+    LIMIT 1
+  `);
+
+  if (!rows[0]?.ad_group_ad?.ad) {
+    throw new Error(`Google Ads ad ${adId} was not found in ad group ${adGroupId}.`);
+  }
+
+  return rows[0];
+};
+
+const buildCommonAdFields = (ad) => compactObject({
+  name: buildReplacementAdName(ad.name),
+  final_urls: clonePlain(ad.final_urls),
+  final_mobile_urls: clonePlain(ad.final_mobile_urls),
+  final_app_urls: clonePlain(ad.final_app_urls),
+  final_url_suffix: ad.final_url_suffix,
+  tracking_url_template: ad.tracking_url_template,
+  url_custom_parameters: clonePlain(ad.url_custom_parameters),
+});
+
+const buildRecreatedAppAd = (ad, oldAssetResourceName, newAssetResourceName) => {
+  const adType = normalizeGoogleAdType(ad.type);
+  if (adType === 'APP_AD') {
+    const appAd = ad.app_ad || {};
+    const replacementImages = replaceAssetRef(appAd.images, oldAssetResourceName, newAssetResourceName);
+    if (!replacementImages.replaced) throw new Error('Old image asset was not found in the App Ad image list.');
+    if (replacementImages.assets.length === 0) throw new Error('App Ad must keep at least one image asset.');
+
+    return {
+      ...buildCommonAdFields(ad),
+      app_ad: compactObject({
+        app_deep_link: appAd.app_deep_link,
+        descriptions: cloneTextAssets(appAd.descriptions),
+        headlines: cloneTextAssets(appAd.headlines),
+        html5_media_bundles: cloneAssetRefs(appAd.html5_media_bundles),
+        images: replacementImages.assets,
+        mandatory_ad_text: clonePlain(appAd.mandatory_ad_text),
+        youtube_videos: cloneAssetRefs(appAd.youtube_videos),
+      }),
+    };
+  }
+
+  if (adType === 'APP_ENGAGEMENT_AD') {
+    const appEngagementAd = ad.app_engagement_ad || {};
+    const replacementImages = replaceAssetRef(appEngagementAd.images, oldAssetResourceName, newAssetResourceName);
+    if (!replacementImages.replaced) throw new Error('Old image asset was not found in the App Engagement Ad image list.');
+    if (replacementImages.assets.length === 0) throw new Error('App Engagement Ad must keep at least one image asset.');
+
+    return {
+      ...buildCommonAdFields(ad),
+      app_engagement_ad: compactObject({
+        descriptions: cloneTextAssets(appEngagementAd.descriptions),
+        headlines: cloneTextAssets(appEngagementAd.headlines),
+        images: replacementImages.assets,
+        videos: cloneAssetRefs(appEngagementAd.videos),
+      }),
+    };
+  }
+
+  throw new Error(`Unsupported app ad type: ${adType || 'UNKNOWN'}.`);
+};
+
+const buildReplacementTarget = (adGroupIdOrOperation, oldAdId) => {
+  if (typeof adGroupIdOrOperation === 'object' && adGroupIdOrOperation !== null) {
+    return adGroupIdOrOperation;
+  }
+
+  return {
+    targetType: 'AD_GROUP_AD',
+    replacementStrategy: 'IMAGE_AD_RECREATE',
+    adType: 'IMAGE_AD',
+    adGroupId: adGroupIdOrOperation,
+    adId: oldAdId,
+  };
+};
+
+const runAtomicReplacementMutations = async (customer, mutations) => {
+  const response = await customer.mutateResources(mutations, { partial_failure: false });
+  return {
+    response,
+    assetResourceName: extractResourceNameFromMutateResponse(response, 'asset_result'),
+    newAdResourceName: extractResourceNameFromMutateResponse(response, 'ad_group_ad_result'),
+    newAssociationResourceName:
+      extractResourceNameFromMutateResponse(response, 'asset_group_asset_result') ||
+      extractResourceNameFromMutateResponse(response, 'ad_group_asset_result') ||
+      extractResourceNameFromMutateResponse(response, 'campaign_asset_result'),
+  };
+};
+
 /**
  * Replace an ad's creative:
- * 1. Upload new image as an asset
- * 2. Create a new ad in the same ad group
- * 3. Pause the old ad
+ * 1. Create a new immutable image Asset.
+ * 2. Associate it to the target that can safely use it.
+ * 3. Remove the old association or pause the old ad in the same atomic mutate.
  */
-export const replaceAdCreative = async (customerId, adGroupId, oldAdId, newImageDataUrl) => {
+export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdId, newImageDataUrl) => {
   const customer = getClient(customerId);
   const cleanCustomerId = customerId.replace(/-/g, '');
-
-  const match = newImageDataUrl.match(/^data:[^;]+;base64,(.+)$/);
-  if (!match) throw new Error('Invalid image data URL format.');
-  const imageData = Buffer.from(match[1], 'base64');
-
-  // 1. Create image asset
-  const assetResult = await customer.mutateAsync([{
+  const target = buildReplacementTarget(adGroupIdOrOperation, oldAdId);
+  const imageDataUrl = typeof adGroupIdOrOperation === 'object' ? oldAdId : newImageDataUrl;
+  const imageData = decodeImageDataUrl(imageDataUrl);
+  const tempAssetResourceName = buildTempAssetResourceName(cleanCustomerId);
+  const assetCreate = {
     entity: 'asset',
     operation: 'create',
     resource: {
-      name: `Optimized creative ${Date.now()}`,
+      resource_name: tempAssetResourceName,
+      name: `Creative Library asset ${Date.now()}`,
       type: 'IMAGE',
       image_asset: { data: imageData },
     },
-  }]);
+  };
 
-  const assetResourceName = assetResult?.results?.[0]?.resource_name;
-  if (!assetResourceName) throw new Error('Failed to create image asset in Google Ads.');
+  if (target.targetType === 'ASSET_GROUP_ASSET') {
+    if (!target.assetGroupId) throw new Error('assetGroupId is required for asset group replacements.');
+    if (!target.assetFieldType) throw new Error('assetFieldType is required for asset group replacements.');
+    if (!target.associationResourceName) throw new Error('associationResourceName is required to remove the old asset group association.');
 
-  // 2. Create new ad
-  const adResult = await customer.mutateAsync([{
-    entity: 'ad_group_ad',
-    operation: 'create',
-    resource: {
-      ad_group: `customers/${cleanCustomerId}/adGroups/${adGroupId}`,
-      ad: { image_ad: { image_asset: assetResourceName } },
-      status: 'ENABLED',
+    const replacement = await runAtomicReplacementMutations(customer, [
+      assetCreate,
+      {
+        entity: 'asset_group_asset',
+        operation: 'create',
+        resource: {
+          asset_group: `customers/${cleanCustomerId}/assetGroups/${target.assetGroupId}`,
+          asset: tempAssetResourceName,
+          field_type: normalizeGoogleAssetFieldType(target.assetFieldType),
+        },
+      },
+      {
+        entity: 'asset_group_asset',
+        operation: 'remove',
+        resource: target.associationResourceName,
+      },
+    ]);
+
+    return {
+      success: true,
+      replacementType: 'ASSET_GROUP_ASSET',
+      assetResourceName: replacement.assetResourceName,
+      newAssociationResourceName: replacement.newAssociationResourceName,
+      oldAssociationRemoved: true,
+    };
+  }
+
+  if (target.targetType !== 'AD_GROUP_AD') {
+    throw new Error(`Unsupported replacement target: ${target.targetType || 'UNKNOWN_TARGET'}.`);
+  }
+
+  if (!target.adGroupId || !target.adId) {
+    throw new Error('adGroupId and adId are required for ad replacements.');
+  }
+
+  const adType = normalizeGoogleAdType(target.adType);
+  const oldAdResourceName = target.adResourceName || `customers/${cleanCustomerId}/adGroupAds/${target.adGroupId}~${target.adId}`;
+  let newAd;
+
+  if (adType === 'IMAGE_AD') {
+    newAd = {
+      image_ad: {
+        image_asset: { asset: tempAssetResourceName },
+      },
+    };
+  } else if (adType === 'APP_AD' || adType === 'APP_ENGAGEMENT_AD') {
+    if (!target.oldAssetResourceName) {
+      throw new Error('oldAssetResourceName is required for App Ad image replacement.');
+    }
+    const existingAdRow = await fetchAdForReplacement(customer, target.adGroupId, target.adId);
+    newAd = buildRecreatedAppAd(existingAdRow.ad_group_ad.ad, target.oldAssetResourceName, tempAssetResourceName);
+  } else {
+    throw new Error(`Unsupported ad type for replacement: ${adType || 'UNKNOWN_AD_TYPE'}.`);
+  }
+
+  const replacement = await runAtomicReplacementMutations(customer, [
+    assetCreate,
+    {
+      entity: 'ad_group_ad',
+      operation: 'create',
+      resource: {
+        ad_group: `customers/${cleanCustomerId}/adGroups/${target.adGroupId}`,
+        ad: newAd,
+        status: 'ENABLED',
+      },
     },
-  }]);
-
-  const newAdResourceName = adResult?.results?.[0]?.resource_name;
-
-  // 3. Pause old ad
-  await customer.mutateAsync([{
-    entity: 'ad_group_ad',
-    operation: 'update',
-    resource: {
-      resource_name: `customers/${cleanCustomerId}/adGroupAds/${adGroupId}~${oldAdId}`,
-      status: 'PAUSED',
+    {
+      entity: 'ad_group_ad',
+      operation: 'update',
+      resource: {
+        resource_name: oldAdResourceName,
+        status: 'PAUSED',
+      },
     },
-    update_mask: { paths: ['status'] },
-  }]);
+  ]);
 
-  return { success: true, newAdResourceName, oldAdPaused: true };
+  return {
+    success: true,
+    replacementType: adType === 'IMAGE_AD' ? 'IMAGE_AD_RECREATE' : 'APP_AD_RECREATE',
+    assetResourceName: replacement.assetResourceName,
+    newAdResourceName: replacement.newAdResourceName,
+    oldAdPaused: true,
+  };
 };
