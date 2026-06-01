@@ -36,7 +36,9 @@ Build image:
 `docker build -t cabify-image-suite .`
 
 Run container:
-`docker run --rm -p 8080:8080 -e GEMINI_API_KEY=YOUR_GEMINI_API_KEY cabify-image-suite`
+`docker run --rm -p 8080:8080 cabify-image-suite`
+
+The Docker image copies `.env` and starts the server with `node --env-file=.env`, so the container receives the same runtime values as the local app. Treat the built image as secret-bearing.
 
 ## Deploy to Google Cloud Run
 
@@ -70,10 +72,15 @@ Run container:
      --allow-unauthenticated \
      --set-secrets GEMINI_API_KEY=gemini-api-key:latest
    ```
-   PowerShell script alternative:
+   PowerShell script alternative. The Docker image already includes `.env`; the script can also read `.env`, send non-secret values as Cloud Run environment variables, and bind secret values from Secret Manager:
    ```powershell
    .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE -SecretName "gemini-api-key"
    ```
+   To create/update the needed Secret Manager secrets from your local `.env` before deploying:
+   ```powershell
+   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE -CreateSecretsFromEnvFile
+   ```
+   Secrets are not copied into the Docker image. Cloud Run receives them at runtime through `--set-secrets`.
 5. Health check:
    ```bash
    curl "https://YOUR_SERVICE_URL/healthz"

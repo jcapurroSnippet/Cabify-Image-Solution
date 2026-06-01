@@ -11,15 +11,17 @@ RUN npm run build
 FROM node:20-slim AS runner
 
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    PORT=8080
 
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server ./server
+COPY .env ./.env
 
 USER node
 EXPOSE 8080
 
-CMD ["node", "server/index.js"]
+CMD ["node", "--env-file=.env", "server/index.js"]
