@@ -36,9 +36,9 @@ Build image:
 `docker build -t cabify-image-suite .`
 
 Run container:
-`docker run --rm -p 8080:8080 --env-file .env cabify-image-suite`
+`docker run --rm -p 8080:8080 cabify-image-suite`
 
-The Docker image does not copy `.env`. Runtime values are provided through Docker or Cloud Run environment variables.
+The Docker image does not include `.env`. Runtime values are configured on Cloud Run as environment variables.
 
 ## Deploy to Google Cloud Run
 
@@ -62,8 +62,7 @@ The Docker image does not copy `.env`. Runtime values are provided through Docke
    ```powershell
    .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE
    ```
-   The `.env` file is not uploaded to the Docker image.
-   If the image is built by a GitHub/Cloud Build trigger, sync the local `.env` values into the already deployed Cloud Run service:
+   If a GitHub/Cloud Build trigger already deployed the image, sync local `.env` into the Cloud Run service:
    ```powershell
    .\scripts\sync-cloud-run-env.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE
    ```
