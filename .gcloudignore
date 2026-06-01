@@ -9,5 +9,4 @@ coverage/
 *.log
 npm-debug.log*
 .env*
-!.env
 !.env.example

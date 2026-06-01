@@ -36,9 +36,9 @@ Build image:
 `docker build -t cabify-image-suite .`
 
 Run container:
-`docker run --rm -p 8080:8080 cabify-image-suite`
+`docker run --rm -p 8080:8080 --env-file .env cabify-image-suite`
 
-The Docker image copies `.env` and starts the server with `node --env-file=.env`, so the container receives the same runtime values as the local app. Treat the built image as secret-bearing.
+The Docker image does not copy `.env`. Runtime values are provided through Docker or Cloud Run environment variables.
 
 ## Deploy to Google Cloud Run
 
@@ -58,30 +58,16 @@ The Docker image copies `.env` and starts the server with `node --env-file=.env`
    ```bash
    gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --project "$PROJECT_ID"
    ```
-3. Create secret (one-time):
-   ```bash
-   gcloud secrets create gemini-api-key --replication-policy="automatic" --project "$PROJECT_ID"
-   echo -n "YOUR_GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=- --project "$PROJECT_ID"
-   ```
-4. Deploy:
-   ```bash
-   gcloud run deploy "$SERVICE" \
-     --source . \
-     --region "$REGION" \
-     --project "$PROJECT_ID" \
-     --allow-unauthenticated \
-     --set-secrets GEMINI_API_KEY=gemini-api-key:latest
-   ```
-   PowerShell script alternative. The Docker image already includes `.env`; the script can also read `.env`, send non-secret values as Cloud Run environment variables, and bind secret values from Secret Manager:
+3. Deploy from PowerShell. The script reads local `.env` and sends its values to Cloud Run with `--set-env-vars`:
    ```powershell
-   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE -SecretName "gemini-api-key"
+   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE
    ```
-   To create/update the needed Secret Manager secrets from your local `.env` before deploying:
+   The `.env` file is not uploaded to the Docker image.
+   If the image is built by a GitHub/Cloud Build trigger, sync the local `.env` values into the already deployed Cloud Run service:
    ```powershell
-   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE -CreateSecretsFromEnvFile
+   .\scripts\sync-cloud-run-env.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE
    ```
-   Secrets are not copied into the Docker image. Cloud Run receives them at runtime through `--set-secrets`.
-5. Health check:
+4. Health check:
    ```bash
    curl "https://YOUR_SERVICE_URL/healthz"
    ```

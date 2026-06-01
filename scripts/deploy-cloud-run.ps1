@@ -64,22 +64,22 @@ function Add-SecretVersion {
     [string]$Value
   )
 
-  $existing = & gcloud secrets describe $SecretName --project $ProjectId --format "value(name)" 2>$null
+  $existing = & gcloud.cmd secrets describe $SecretName --project $ProjectId --format "value(name)" 2>$null
   if (-not $existing) {
-    & gcloud secrets create $SecretName --replication-policy="automatic" --project $ProjectId | Out-Null
+    & gcloud.cmd secrets create $SecretName --replication-policy="automatic" --project $ProjectId | Out-Null
   }
 
   $tempFile = New-TemporaryFile
   try {
     [System.IO.File]::WriteAllText($tempFile.FullName, $Value, [System.Text.UTF8Encoding]::new($false))
-    & gcloud secrets versions add $SecretName --data-file=$tempFile.FullName --project $ProjectId | Out-Null
+    & gcloud.cmd secrets versions add $SecretName --data-file=$tempFile.FullName --project $ProjectId | Out-Null
   } finally {
     Remove-Item -LiteralPath $tempFile.FullName -Force -ErrorAction SilentlyContinue
   }
 }
 
 Write-Host "Using project: $ProjectId"
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --project $ProjectId
+gcloud.cmd services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --project $ProjectId
 
 $envValues = Read-DotEnvFile -Path $EnvFile
 $setEnvPairs = @()
@@ -95,12 +95,10 @@ foreach ($key in $envValues.Keys) {
     continue
   }
 
-  if ($secretEnvNames -contains $key) {
+  if ($CreateSecretsFromEnvFile -and $secretEnvNames -contains $key) {
     $cloudSecretName = if ($key -eq "GEMINI_API_KEY") { $SecretName } else { Convert-ToSecretName -Name $key }
-    if ($CreateSecretsFromEnvFile) {
-      Write-Host "Creating/updating Secret Manager secret for $key -> $cloudSecretName"
-      Add-SecretVersion -ProjectId $ProjectId -SecretName $cloudSecretName -Value $value
-    }
+    Write-Host "Creating/updating Secret Manager secret for $key -> $cloudSecretName"
+    Add-SecretVersion -ProjectId $ProjectId -SecretName $cloudSecretName -Value $value
     $setSecretPairs += "$key=${cloudSecretName}:latest"
   } else {
     $setEnvPairs += "$key=$value"
@@ -129,6 +127,6 @@ if ($allowUnauthenticatedFlag) {
 }
 
 Write-Host "Deploying service '$Service' in region '$Region'..."
-gcloud @deployArgs
+gcloud.cmd @deployArgs
 
 Write-Host "Deployment finished."
