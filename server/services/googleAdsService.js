@@ -57,13 +57,18 @@ const getClient = (customerId) => {
   if (!customerId) throw new Error('customerId is required.');
 
   const tokens = getOAuthTokens();
-  if (!tokens?.refresh_token && !process.env.GOOGLE_ADS_REFRESH_TOKEN) {
+  let refreshToken = tokens?.refresh_token || process.env.GOOGLE_ADS_REFRESH_TOKEN;
+  if (!refreshToken) {
     throw new Error('Missing OAuth refresh token. Set up OAuth or set GOOGLE_ADS_REFRESH_TOKEN.');
   }
   if (tokens?.scope && !String(tokens.scope).includes('https://www.googleapis.com/auth/adwords')) {
-    throw new Error(
-      'Saved Google OAuth token is missing the Google Ads scope. Run setup-oauth.js again to grant https://www.googleapis.com/auth/adwords.'
-    );
+    if (process.env.GOOGLE_ADS_REFRESH_TOKEN) {
+      refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN;
+    } else {
+      throw new Error(
+        'Saved Google OAuth token is missing the Google Ads scope. Run setup-oauth.js again to grant https://www.googleapis.com/auth/adwords.'
+      );
+    }
   }
 
   const client = new GoogleAdsApi({
@@ -74,7 +79,7 @@ const getClient = (customerId) => {
 
   return client.Customer({
     customer_id: customerId.replace(/-/g, ''),
-    refresh_token: tokens?.refresh_token || process.env.GOOGLE_ADS_REFRESH_TOKEN,
+    refresh_token: refreshToken,
     login_customer_id: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, ''),
   });
 };
