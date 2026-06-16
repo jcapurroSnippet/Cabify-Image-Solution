@@ -1,6 +1,21 @@
 import { Readable } from 'node:stream';
 import { getDriveClient } from './googleAuth.js';
 
+const getApiErrorDetails = (error) => {
+  const status = error?.response?.status || error?.code;
+  const statusText = error?.response?.statusText;
+  const responseData = error?.response?.data;
+  const apiMessage =
+    responseData?.error?.message ||
+    responseData?.error_description ||
+    responseData?.message ||
+    (typeof responseData === 'string' ? responseData : '');
+
+  return [status ? `status ${status}` : '', statusText, apiMessage || error?.message]
+    .filter(Boolean)
+    .join(' - ');
+};
+
 export const uploadBufferToDrive = async (buffer, fileName, mimeType = 'image/png', folderId) => {
   try {
     const drive = await getDriveClient();
@@ -30,7 +45,7 @@ export const uploadBufferToDrive = async (buffer, fileName, mimeType = 'image/pn
       mimeType: response.data.mimeType,
     };
   } catch (error) {
-    throw new Error(`Failed to upload file to Drive: ${error.message}`);
+    throw new Error(`Failed to upload file to Drive: ${getApiErrorDetails(error)}`);
   }
 };
 
@@ -45,7 +60,7 @@ export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
     const buffer = Buffer.from(base64Data, 'base64');
     return await uploadBufferToDrive(buffer, fileName, 'image/png', folderId);
   } catch (error) {
-    throw new Error(`Failed to upload image to Drive: ${error.message}`);
+    throw new Error(`Failed to upload image to Drive: ${getApiErrorDetails(error)}`);
   }
 };
 
@@ -69,7 +84,7 @@ export const makeFilePublic = async (fileId) => {
     // Construct the standard shared link
     return `https://drive.google.com/file/d/${fileId}/view`;
   } catch (error) {
-    throw new Error(`Failed to share file: ${error.message}`);
+    throw new Error(`Failed to share file: ${getApiErrorDetails(error)}`);
   }
 };
 
@@ -82,7 +97,7 @@ export const getShareableLink = async (fileId) => {
     // Always return the standard shareable format
     return `https://drive.google.com/file/d/${fileId}/view`;
   } catch (error) {
-    throw new Error(`Failed to generate shareable link: ${error.message}`);
+    throw new Error(`Failed to generate shareable link: ${getApiErrorDetails(error)}`);
   }
 };
 
@@ -133,6 +148,6 @@ export const findOrCreateDriveFolder = async (folderName, parentFolderId) => {
       created: true,
     };
   } catch (error) {
-    throw new Error(`Failed to find or create Drive folder: ${error.message}`);
+    throw new Error(`Failed to find or create Drive folder: ${getApiErrorDetails(error)}`);
   }
 };

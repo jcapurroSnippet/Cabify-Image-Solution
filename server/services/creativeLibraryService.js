@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import {
   CREATIVE_AUDIT_HEADERS,
   CREATIVE_AUDIT_SHEET,
@@ -12,6 +14,7 @@ import {
   classifyBackgroundColor,
   dataUrlToBuffer,
   detectCategoryFromName,
+  detectPlazasFromName,
   extractUrlFromFormula,
   getCellText,
   getCellUrl,
@@ -31,12 +34,46 @@ import { findOrCreateDriveFolder, makeFilePublic, uploadBufferToDrive } from './
 import { downloadImageAsDataUrl } from './batchProcessor.js';
 
 const DEFAULT_MAX_ROWS = Number(process.env.CREATIVE_LIBRARY_MAX_SCAN_ROWS || 500);
+export const CREATIVE_LIBRARY_SYNC_LOG_PATH =
+  process.env.CREATIVE_LIBRARY_SYNC_LOG_PATH ||
+  path.join(process.env.TMP || process.env.TEMP || 'C:\\tmp', 'cabify-creative-library-sync.log');
 
 const quoteSheetName = (sheetName) => `'${String(sheetName).replace(/'/g, "''")}'`;
 
 const buildRange = (sheetName, a1) => `${quoteSheetName(sheetName)}!${a1}`;
 
 const nowIso = () => new Date().toISOString();
+
+const getErrorLogDetails = (error) => ({
+  message: error?.message || String(error),
+  status: error?.response?.status || error?.code || null,
+  data: error?.response?.data || null,
+});
+
+export const writeCreativeLibrarySyncLog = (level, message, details = {}) => {
+  const payload = {
+    timestamp: nowIso(),
+    level,
+    message,
+    ...details,
+  };
+
+  const line = JSON.stringify(payload);
+  if (level === 'error') {
+    console.error(`[CREATIVE_LIBRARY] ${message}`, details);
+  } else {
+    console.log(`[CREATIVE_LIBRARY] ${message}`, details);
+  }
+
+  try {
+    mkdirSync(path.dirname(CREATIVE_LIBRARY_SYNC_LOG_PATH), { recursive: true });
+    appendFileSync(CREATIVE_LIBRARY_SYNC_LOG_PATH, `${line}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[CREATIVE_LIBRARY] Could not write sync log', error?.message || error);
+  }
+};
+
+const writeSyncLog = writeCreativeLibrarySyncLog;
 
 const rowToObject = (headers, values, rowNumber) => {
   const object = { __rowNumber: rowNumber };
@@ -97,7 +134,7 @@ const findHeaderRowIndex = (rowData) => {
     const score =
       texts.length +
       normalized.filter((text) =>
-        ['categoria', 'category', 'ciudad', 'copy', 'preview', 'image', 'imagen', '1:1', '9:16'].some((keyword) =>
+        ['campaign', 'campana', 'campaña', 'categoria', 'category', 'plaza', 'plazas', 'ciudad', 'copy', 'preview', 'image', 'imagen', '1:1', '9:16'].some((keyword) =>
           text.includes(keyword),
         ),
       ).length * 2;
@@ -123,11 +160,58 @@ const getSheetMetadata = async (sheets, spreadsheetId) => {
 const getSheetByTitle = (metadata, title) =>
   metadata.find((sheet) => sheet.properties?.title === title);
 
-const resolveSourceSheetName = async (sheets, spreadsheetId, sheetsUrl, providedSheetName) => {
-  if (providedSheetName) return providedSheetName;
+const normalizeSheetTitleForMatch = (value) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\|\s*/g, '|')
+    .replace(/\s+/g, ' ');
 
+const migrateRowsToHeaders = (values, targetHeaders) => {
+  if (!Array.isArray(values) || values.length <= 1) return [];
+
+  const sourceHeaders = values[0] || [];
+  const sourceIndexes = new Map();
+  sourceHeaders.forEach((header, index) => {
+    const normalized = normalizeHeader(header);
+    if (normalized && !sourceIndexes.has(normalized)) sourceIndexes.set(normalized, index);
+  });
+
+  return values.slice(1).map((row) =>
+    targetHeaders.map((header) => {
+      const sourceIndex = sourceIndexes.get(normalizeHeader(header));
+      return sourceIndex === undefined ? '' : row?.[sourceIndex] ?? '';
+    }),
+  );
+};
+
+const findSheetByNormalizedTitle = (metadata, title) => {
+  const target = normalizeSheetTitleForMatch(title);
+  if (!target) return null;
+  return metadata.find((sheet) => normalizeSheetTitleForMatch(sheet.properties?.title) === target) || null;
+};
+
+const resolveSourceSheetName = async (sheets, spreadsheetId, sheetsUrl, providedSheetName, config) => {
   const gid = extractSheetId(sheetsUrl);
   const metadata = await getSheetMetadata(sheets, spreadsheetId);
+
+  if (providedSheetName) {
+    const exactMatch = getSheetByTitle(metadata, providedSheetName);
+    if (exactMatch?.properties?.title) return exactMatch.properties.title;
+
+    const normalizedMatch = findSheetByNormalizedTitle(metadata, providedSheetName);
+    if (normalizedMatch?.properties?.title) return normalizedMatch.properties.title;
+
+    return providedSheetName;
+  }
+
+  for (const preferredTitle of config.sourceSheets || []) {
+    const match = findSheetByNormalizedTitle(metadata, preferredTitle);
+    if (match?.properties?.title) return match.properties.title;
+  }
+
   if (gid !== null) {
     const match = metadata.find((sheet) => sheet.properties?.sheetId === gid);
     if (match?.properties?.title) return match.properties.title;
@@ -170,7 +254,7 @@ const ensureSheetWithHeaders = async (sheets, spreadsheetId, sheetName, headers)
 
   const existing = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: buildRange(sheetName, `A1:${columnIndexToLetter(headers.length - 1)}1`),
+    range: buildRange(sheetName, 'A1:ZZ1'),
   });
 
   const currentHeaders = existing.data.values?.[0] || [];
@@ -179,11 +263,20 @@ const ensureSheetWithHeaders = async (sheets, spreadsheetId, sheetName, headers)
     headers.some((header, index) => currentHeaders[index] !== header);
 
   if (shouldWriteHeaders) {
+    const dataColumnCount = Math.max(headers.length, currentHeaders.length || headers.length);
+    const existingValues = currentHeaders.length > 0
+      ? await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: buildRange(sheetName, `A1:${columnIndexToLetter(dataColumnCount - 1)}`),
+          valueRenderOption: 'FORMULA',
+        })
+      : null;
+    const migratedRows = migrateRowsToHeaders(existingValues?.data?.values || [], headers);
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: buildRange(sheetName, `A1:${columnIndexToLetter(headers.length - 1)}1`),
-      valueInputOption: 'RAW',
-      requestBody: { values: [headers] },
+      range: buildRange(sheetName, `A1:${columnIndexToLetter(headers.length - 1)}${Math.max(1, migratedRows.length + 1)}`),
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [headers, ...migratedRows] },
     });
   }
 
@@ -277,6 +370,9 @@ const getCreativeConfigForSpreadsheet = async (sheets, spreadsheetId) => {
   return buildConfigFromCategoryRows(baseConfig, rows);
 };
 
+const getValidationPlazas = (config) =>
+  [...new Set((config.plazas || []).map((plaza) => String(plaza).trim().toUpperCase()).filter(Boolean))];
+
 export const getCreativeLibrarySheetConfig = async ({ sheetsUrl }) => {
   if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
     throw new Error('sheetsUrl is required.');
@@ -289,12 +385,24 @@ export const getCreativeLibrarySheetConfig = async ({ sheetsUrl }) => {
   return {
     spreadsheetId,
     categories: config.categories,
+    plazas: getValidationPlazas(config),
     categoryMapping: config.categoryMapping,
     config,
   };
 };
 
-const applyCategoryValidation = async (sheets, spreadsheetId, sourceSheetId, categoryColumnIndex, headerRowIndex, config) => {
+const applyListValidation = async ({
+  sheets,
+  spreadsheetId,
+  sheetId,
+  columnIndex,
+  headerRowIndex,
+  values,
+  inputMessage,
+  strict = true,
+}) => {
+  if (columnIndex === undefined || columnIndex === null || columnIndex < 0 || values.length === 0) return;
+
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
@@ -302,19 +410,19 @@ const applyCategoryValidation = async (sheets, spreadsheetId, sourceSheetId, cat
         {
           setDataValidation: {
             range: {
-              sheetId: sourceSheetId,
+              sheetId,
               startRowIndex: headerRowIndex + 1,
               endRowIndex: Math.max(headerRowIndex + 1000, headerRowIndex + 2),
-              startColumnIndex: categoryColumnIndex,
-              endColumnIndex: categoryColumnIndex + 1,
+              startColumnIndex: columnIndex,
+              endColumnIndex: columnIndex + 1,
             },
             rule: {
               condition: {
                 type: 'ONE_OF_LIST',
-                values: config.categories.map((category) => ({ userEnteredValue: category })),
+                values: values.map((value) => ({ userEnteredValue: value })),
               },
-              inputMessage: 'Select a creative category.',
-              strict: true,
+              inputMessage,
+              strict,
               showCustomUi: true,
             },
           },
@@ -323,6 +431,30 @@ const applyCategoryValidation = async (sheets, spreadsheetId, sourceSheetId, cat
     },
   });
 };
+
+const applyCategoryValidation = async (sheets, spreadsheetId, sheetId, categoryColumnIndex, headerRowIndex, config) =>
+  applyListValidation({
+    sheets,
+    spreadsheetId,
+    sheetId,
+    columnIndex: categoryColumnIndex,
+    headerRowIndex,
+    values: config.categories,
+    inputMessage: 'Select a creative category.',
+    strict: true,
+  });
+
+const applyPlazasValidation = async (sheets, spreadsheetId, sheetId, plazasColumnIndex, headerRowIndex, config) =>
+  applyListValidation({
+    sheets,
+    spreadsheetId,
+    sheetId,
+    columnIndex: plazasColumnIndex,
+    headerRowIndex,
+    values: getValidationPlazas(config),
+    inputMessage: 'Select a plaza. Use ALL for general creatives, or enter multiple codes separated by commas.',
+    strict: false,
+  });
 
 const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
   const librarySheetId = await ensureSheetWithHeaders(
@@ -343,23 +475,137 @@ const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
       0,
       config,
     );
+    await applyPlazasValidation(
+      sheets,
+      spreadsheetId,
+      librarySheetId,
+      CREATIVE_LIBRARY_HEADERS.indexOf('plazas'),
+      0,
+      config,
+    );
   }
 };
 
-const ensureSourceColumns = async (sheets, spreadsheetId, sourceSheet, headerRowIndex, headers, config) => {
-  const normalizedToIndex = new Map(headers.map((header, index) => [normalizeHeader(header), index]));
-  const nextHeaders = [...headers];
-  const added = [];
+const SOURCE_COLUMN_ALIASES = {
+  category: ['category', 'categoria', 'categoría'],
+  plazas: ['plazas', 'plaza'],
+};
 
-  for (const header of SOURCE_STATUS_COLUMNS) {
-    if (!normalizedToIndex.has(normalizeHeader(header))) {
-      normalizedToIndex.set(normalizeHeader(header), nextHeaders.length);
-      nextHeaders.push(header);
-      added.push(header);
+const setSourceColumnIndex = (normalizedToIndex, header, index) => {
+  const aliases = SOURCE_COLUMN_ALIASES[normalizeHeader(header)] || [header];
+  for (const alias of aliases) {
+    normalizedToIndex.set(normalizeHeader(alias), index);
+  }
+};
+
+const getSourceColumnIndex = (normalizedToIndex, header) => {
+  const aliases = SOURCE_COLUMN_ALIASES[normalizeHeader(header)] || [header];
+  for (const alias of aliases) {
+    const index = normalizedToIndex.get(normalizeHeader(alias));
+    if (index !== undefined) return index;
+  }
+  return undefined;
+};
+
+const buildSourceColumnIndex = (headers) => {
+  const normalizedToIndex = new Map();
+  headers.forEach((header, index) => {
+    const normalized = normalizeHeader(header);
+    if (normalized && !normalizedToIndex.has(normalized)) normalizedToIndex.set(normalized, index);
+
+    for (const [canonicalHeader, aliases] of Object.entries(SOURCE_COLUMN_ALIASES)) {
+      if (aliases.some((alias) => normalizeHeader(alias) === normalized)) {
+        setSourceColumnIndex(normalizedToIndex, canonicalHeader, index);
+      }
+    }
+  });
+  return normalizedToIndex;
+};
+
+const moveHeaderColumn = (headers, sourceIndex, destinationIndex) => {
+  const nextHeaders = [...headers];
+  const [header] = nextHeaders.splice(sourceIndex, 1);
+  const insertionIndex = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex;
+  nextHeaders.splice(insertionIndex, 0, header);
+  return nextHeaders;
+};
+
+const ensureSourceColumns = async (sheets, spreadsheetId, sourceSheet, headerRowIndex, headers, config) => {
+  const sheetId = sourceSheet.properties.sheetId;
+  let normalizedToIndex = buildSourceColumnIndex(headers);
+  let nextHeaders = [...headers];
+  const dimensionRequests = [];
+  let shouldWriteHeaders = false;
+
+  let categoryColumnIndex = getSourceColumnIndex(normalizedToIndex, 'category');
+  if (categoryColumnIndex === undefined) {
+    categoryColumnIndex = nextHeaders.length;
+    nextHeaders.push('category');
+    shouldWriteHeaders = true;
+    normalizedToIndex = buildSourceColumnIndex(nextHeaders);
+  }
+
+  let plazasColumnIndex = getSourceColumnIndex(normalizedToIndex, 'plazas');
+  const targetPlazasColumnIndex = categoryColumnIndex + 1;
+  if (plazasColumnIndex === undefined) {
+    plazasColumnIndex = targetPlazasColumnIndex;
+    if (targetPlazasColumnIndex < nextHeaders.length) {
+      dimensionRequests.push({
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension: 'COLUMNS',
+            startIndex: targetPlazasColumnIndex,
+            endIndex: targetPlazasColumnIndex + 1,
+          },
+          inheritFromBefore: true,
+        },
+      });
+      nextHeaders.splice(targetPlazasColumnIndex, 0, 'plazas');
+    } else {
+      nextHeaders.push('plazas');
+    }
+    shouldWriteHeaders = true;
+  } else {
+    if (nextHeaders[plazasColumnIndex] !== 'plazas') {
+      nextHeaders[plazasColumnIndex] = 'plazas';
+      shouldWriteHeaders = true;
+    }
+
+    if (plazasColumnIndex !== targetPlazasColumnIndex) {
+      dimensionRequests.push({
+        moveDimension: {
+          source: {
+            sheetId,
+            dimension: 'COLUMNS',
+            startIndex: plazasColumnIndex,
+            endIndex: plazasColumnIndex + 1,
+          },
+          destinationIndex: targetPlazasColumnIndex,
+        },
+      });
+      nextHeaders = moveHeaderColumn(nextHeaders, plazasColumnIndex, targetPlazasColumnIndex);
+      shouldWriteHeaders = true;
     }
   }
 
-  if (added.length > 0) {
+  normalizedToIndex = buildSourceColumnIndex(nextHeaders);
+
+  for (const header of SOURCE_STATUS_COLUMNS) {
+    if (getSourceColumnIndex(normalizedToIndex, header) !== undefined) continue;
+    nextHeaders.push(header);
+    shouldWriteHeaders = true;
+    normalizedToIndex = buildSourceColumnIndex(nextHeaders);
+  }
+
+  if (dimensionRequests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: dimensionRequests },
+    });
+  }
+
+  if (shouldWriteHeaders) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: buildRange(
@@ -371,12 +617,22 @@ const ensureSourceColumns = async (sheets, spreadsheetId, sourceSheet, headerRow
     });
   }
 
-  const categoryColumnIndex = normalizedToIndex.get('category');
+  normalizedToIndex = buildSourceColumnIndex(nextHeaders);
+  categoryColumnIndex = normalizedToIndex.get('category');
+  plazasColumnIndex = normalizedToIndex.get('plazas');
   await applyCategoryValidation(
     sheets,
     spreadsheetId,
-    sourceSheet.properties.sheetId,
+    sheetId,
     categoryColumnIndex,
+    headerRowIndex,
+    config,
+  );
+  await applyPlazasValidation(
+    sheets,
+    spreadsheetId,
+    sheetId,
+    plazasColumnIndex,
     headerRowIndex,
     config,
   );
@@ -414,9 +670,10 @@ const findOutputColumns = (headers) => {
 
 const readLibraryRows = async (sheets, spreadsheetId) => {
   try {
+    const lastColumn = columnIndexToLetter(CREATIVE_LIBRARY_HEADERS.length - 1);
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: buildRange(CREATIVE_LIBRARY_SHEET, 'A:Q'),
+      range: buildRange(CREATIVE_LIBRARY_SHEET, `A:${lastColumn}`),
       valueRenderOption: 'FORMULA',
     });
 
@@ -429,9 +686,10 @@ const readLibraryRows = async (sheets, spreadsheetId) => {
 const appendLibraryRows = async (sheets, spreadsheetId, rows) => {
   if (rows.length === 0) return;
 
+  const lastColumn = columnIndexToLetter(CREATIVE_LIBRARY_HEADERS.length - 1);
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: buildRange(CREATIVE_LIBRARY_SHEET, 'A:Q'),
+    range: buildRange(CREATIVE_LIBRARY_SHEET, `A:${lastColumn}`),
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
@@ -484,8 +742,31 @@ const buildSourceRowCategoryText = (cells, headers = [], sourceSheetName = '') =
   return parts.join(' | ');
 };
 
+const normalizeHeaderForMatch = (value) =>
+  normalizeHeader(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isCampaignHeader = (header) => {
+  const normalized = normalizeHeaderForMatch(header);
+  return normalized.includes('campaign') || normalized.includes('campana');
+};
+
+const buildSourceRowCampaignText = (cells, headers = []) => {
+  const parts = [];
+  cells.forEach((cell, index) => {
+    if (!isCampaignHeader(headers[index] || '')) return;
+    const text = getCellText(cell);
+    if (text) parts.push(text);
+  });
+  return parts.join(' | ');
+};
+
 const inferCategoryFromSourceRow = (cells, headers, sourceSheetName, config) =>
   detectCategoryFromName(buildSourceRowCategoryText(cells, headers, sourceSheetName), config).category;
+
+const inferPlazasFromSourceRow = (cells, headers, sourceSheetName, config) =>
+  detectPlazasFromName(buildSourceRowCampaignText(cells, headers), config).plazas;
 
 const resolveCreativeCategory = ({
   explicitCategory,
@@ -499,6 +780,20 @@ const resolveCreativeCategory = ({
   inferCategoryFromSourceRow(cells || [], headers || [], sourceSheetName, config) ||
   fallbackCategory ||
   null;
+
+const resolveCreativePlazas = ({
+  explicitPlazas,
+  cells,
+  headers,
+  sourceSheetName,
+  fallbackPlazas,
+  config,
+}) =>
+  detectPlazasFromName(explicitPlazas, config).plazas ||
+  String(explicitPlazas || '').trim() ||
+  inferPlazasFromSourceRow(cells || [], headers || [], sourceSheetName, config) ||
+  fallbackPlazas ||
+  '';
 
 const normalizeLibraryRowCategories = async (sheets, spreadsheetId, libraryRows, config) => {
   const categoryColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('category');
@@ -554,6 +849,68 @@ const normalizeLibraryRowCategories = async (sheets, spreadsheetId, libraryRows,
     updates.push({
       range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(categoryColumnIndex)}${row.__rowNumber}`),
       values: [[canonicalCategory]],
+    });
+  }
+
+  if (updates.length === 0) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates,
+    },
+  });
+};
+
+const normalizeLibraryRowPlazas = async (sheets, spreadsheetId, libraryRows, config) => {
+  const plazasColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('plazas');
+  if (plazasColumnIndex < 0) return;
+
+  const updates = [];
+  const sourceGridCache = new Map();
+  const sourceHeaderCache = new Map();
+
+  const getSourceContext = async (sourceTab) => {
+    if (!sourceTab) return { rowData: [], headers: [], headerRowIndex: -1 };
+    if (!sourceGridCache.has(sourceTab)) {
+      const rowData = await loadSourceGrid(sheets, spreadsheetId, sourceTab);
+      const headerRowIndex = findHeaderRowIndex(rowData);
+      const headers =
+        headerRowIndex >= 0
+          ? (rowData[headerRowIndex]?.values || []).map((cell) => getCellText(cell))
+          : [];
+      sourceGridCache.set(sourceTab, rowData);
+      sourceHeaderCache.set(sourceTab, { headers, headerRowIndex });
+    }
+
+    return {
+      rowData: sourceGridCache.get(sourceTab),
+      ...sourceHeaderCache.get(sourceTab),
+    };
+  };
+
+  for (const row of libraryRows) {
+    if (String(row.plazas || '').trim()) continue;
+
+    let inferredPlazas = '';
+    if (row.source_tab && row.source_row) {
+      try {
+        const { rowData, headers } = await getSourceContext(row.source_tab);
+        const sourceRowIndex = Number(row.source_row) - 1;
+        const sourceCells = rowData?.[sourceRowIndex]?.values || [];
+        inferredPlazas = inferPlazasFromSourceRow(sourceCells, headers, row.source_tab, config) || inferredPlazas;
+      } catch {
+        inferredPlazas = inferredPlazas || '';
+      }
+    }
+
+    if (!inferredPlazas) continue;
+
+    row.plazas = inferredPlazas;
+    updates.push({
+      range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(plazasColumnIndex)}${row.__rowNumber}`),
+      values: [[inferredPlazas]],
     });
   }
 
@@ -654,6 +1011,7 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
 
   const creatives = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, creatives, config);
+  await normalizeLibraryRowPlazas(sheets, spreadsheetId, creatives, config);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, creatives);
   const byCategory = {};
   const byStatus = {};
@@ -687,7 +1045,13 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   const spreadsheetId = extractSpreadsheetId(sheetsUrl.trim());
   const sheets = await getSheetsClient();
   const config = await getCreativeConfigForSpreadsheet(sheets, spreadsheetId);
-  const sourceSheetName = await resolveSourceSheetName(sheets, spreadsheetId, sheetsUrl, providedSheetName);
+  const sourceSheetName = await resolveSourceSheetName(sheets, spreadsheetId, sheetsUrl, providedSheetName, config);
+
+  writeSyncLog('info', 'Sync started', {
+    spreadsheetId,
+    sheetName: sourceSheetName,
+    providedSheetName: providedSheetName || null,
+  });
 
   await ensureLibraryAndAuditSheets(sheets, spreadsheetId, config);
 
@@ -719,9 +1083,11 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     throw new Error('No output columns found. Expected headers containing "1:1" or "9:16".');
   }
   const inferredCategory = detectCategoryFromName(sourceSheetName, config).category;
+  const inferredPlazas = '';
 
   const libraryRows = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, libraryRows, config);
+  await normalizeLibraryRowPlazas(sheets, spreadsheetId, libraryRows, config);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, libraryRows);
   const existing = getExistingLibraryIndexes(libraryRows);
   const categoryFolderCache = new Map();
@@ -729,6 +1095,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   const libraryRowsToAppend = [];
   const auditRows = [];
   const rowResults = [];
+  const failureDetails = [];
   const totals = {
     scannedRows: 0,
     acceptedCells: 0,
@@ -747,12 +1114,24 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     const cells = row?.values || [];
     const rowNumber = gridRowIndex + 1;
     const categoryRaw = getCellText(cells[columnIndexes.category]);
+    const plazasRaw =
+      columnIndexes.plazas !== undefined
+        ? getCellText(cells[columnIndexes.plazas])
+        : '';
     const category = resolveCreativeCategory({
       explicitCategory: categoryRaw,
       cells,
       headers,
       sourceSheetName,
       fallbackCategory: inferredCategory,
+      config,
+    });
+    const plazas = resolveCreativePlazas({
+      explicitPlazas: plazasRaw,
+      cells,
+      headers,
+      sourceSheetName,
+      fallbackPlazas: inferredPlazas,
       config,
     });
     const rowCounts = {
@@ -863,6 +1242,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           google_ads_asset_resource_name: '',
           replacement_operation_id: '',
           notes: '',
+          plazas,
         };
 
         libraryRowsToAppend.push(libraryRow);
@@ -890,13 +1270,39 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       } catch (error) {
         rowCounts.storageFailed += 1;
         totals.storageFailed += 1;
+        const failure = {
+          sheetName: sourceSheetName,
+          rowNumber,
+          sourceCell,
+          category,
+          plazas,
+          resizedImageUrl,
+          error: error.message,
+          details: getErrorLogDetails(error),
+        };
+        failureDetails.push(failure);
         notes.push(`${sourceCell}: ${error.message}`);
+        writeSyncLog('error', 'Storage failed', {
+          sheet: sourceSheetName,
+          rowNumber,
+          sourceCell,
+          category,
+          plazas,
+          resizedImageUrl,
+          error: error.message,
+        });
       }
     }
 
     if (!rowHasOutput) continue;
     totals.scannedRows += 1;
     const summary = buildRowSummary(rowCounts, [...new Set(creativeIds)], notes);
+    if (plazas && columnIndexes.plazas !== undefined && plazasRaw !== plazas) {
+      sourceUpdates.push({
+        range: buildRange(sourceSheetName, `${columnIndexToLetter(columnIndexes.plazas)}${rowNumber}`),
+        values: [[plazas]],
+      });
+    }
 
     if (summary) {
       sourceUpdates.push(
@@ -937,11 +1343,20 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     });
   }
 
+  writeSyncLog('info', 'Sync completed', {
+    spreadsheetId,
+    sheetName: sourceSheetName,
+    totals,
+    failureCount: failureDetails.length,
+  });
+
   return {
     spreadsheetId,
     sheetName: sourceSheetName,
     totals,
     rows: rowResults,
+    failureDetails,
+    debugLogPath: CREATIVE_LIBRARY_SYNC_LOG_PATH,
   };
 };
 

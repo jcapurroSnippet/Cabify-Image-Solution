@@ -9,9 +9,11 @@ import { getAccounts as getGoogleAccounts, getCampaigns as getGoogleCampaigns, g
 import { getAccounts as getMetaAccounts, getCampaigns as getMetaCampaigns, getWorstPerformers as getMetaWorstPerformers, replaceAdCreative as replaceMetaAdCreative } from './services/metaAdsService.js';
 import { downloadAdImage } from './services/adImageDownloader.js';
 import {
+  CREATIVE_LIBRARY_SYNC_LOG_PATH,
   getCreativeLibrarySheetConfig,
   listCreativeLibrary,
   syncAcceptedCreatives,
+  writeCreativeLibrarySyncLog,
 } from './services/creativeLibraryService.js';
 import { getCreativeLibraryConfig } from './services/creativeLibraryConfig.js';
 import {
@@ -362,8 +364,16 @@ app.post('/api/creative-library/sync', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
+    writeCreativeLibrarySyncLog('error', 'Sync failed', {
+      error: error?.message || String(error),
+      stack: error?.stack || null,
+    });
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to sync accepted creatives.'),
+      debugLogPath: CREATIVE_LIBRARY_SYNC_LOG_PATH,
+      details: {
+        message: error?.message || String(error),
+      },
     });
   }
 });
@@ -532,6 +542,12 @@ app.post('/api/ads/replace-creative', async (request, response) => {
 
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to replace ad creative.'),
+      metaAdsTrace: error?.metaAdsTrace || undefined,
+      details: {
+        message: error?.message || String(error),
+        status: error?.response?.status || error?.code || null,
+        data: error?.response?.data || null,
+      },
     });
   }
 });
@@ -630,10 +646,19 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       throw new RequestValidationError('confirm must be true.');
     }
 
+    const normalizedCampaignIds = normalizeOptionalStringList(campaignIds ?? campaignId);
+    console.log('[GOOGLE_REPLACEMENT] Execute request', {
+      accountId: String(accountId).trim(),
+      campaignIds: normalizedCampaignIds,
+      limit: Number(limit) || 10,
+      selectedOperationCount: Array.isArray(selectedOperationIds) ? selectedOperationIds.length : null,
+      selectedLowPerformerCount: Array.isArray(selectedLowPerformerIds) ? selectedLowPerformerIds.length : null,
+    });
+
     const result = await executeGoogleReplacements({
       sheetsUrl: String(sheetsUrl).trim(),
       accountId: String(accountId).trim(),
-      campaignIds: normalizeOptionalStringList(campaignIds ?? campaignId),
+      campaignIds: normalizedCampaignIds,
       limit: Number(limit) || 10,
       confirm,
       selectedOperationIds,
@@ -641,11 +666,23 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       lowPerformerCategories,
     });
 
+    console.log('[GOOGLE_REPLACEMENT] Execute response', {
+      accountId: String(accountId).trim(),
+      summary: result.summary,
+    });
+
     return response.status(200).json(result);
   } catch (error) {
     if (error instanceof RequestValidationError) {
       return response.status(400).json({ error: error.message });
     }
+
+    console.error('[GOOGLE_REPLACEMENT] Execute request failed', {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      status: error?.response?.status || error?.code || null,
+      data: error?.response?.data || null,
+    });
 
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to execute Google Ads replacements.'),

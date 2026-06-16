@@ -12,6 +12,7 @@ export interface CreativeLibraryItem {
   creative_id: string;
   status: string;
   category: string;
+  plazas: string;
   source_tab: string;
   source_row: string;
   source_cell: string;
@@ -38,6 +39,21 @@ export interface SyncResponse {
   spreadsheetId: string;
   sheetName: string;
   totals: Record<string, number>;
+  debugLogPath?: string;
+  failureDetails?: Array<{
+    sheetName: string;
+    rowNumber: number;
+    sourceCell: string;
+    category: string;
+    plazas?: string;
+    resizedImageUrl?: string;
+    error: string;
+    details?: {
+      message?: string;
+      status?: string | number | null;
+      data?: unknown;
+    };
+  }>;
   rows: Array<{
     rowNumber: number;
     status: string;
@@ -71,6 +87,7 @@ export interface LowPerformer {
   replacementStrategy?: string;
   googleAdsUrl: string;
   detectedCategory?: string | null;
+  detectedPlazas?: string | null;
   categorySource?: string;
   categoryWarning?: string | null;
   matchedCategories?: string[];
@@ -104,6 +121,7 @@ export interface ReplacementOperation {
   associationResourceName?: string;
   reason: string;
   detectedCategory: string | null;
+  detectedPlazas?: string | null;
   categorySource?: string;
   supportedReplacement: boolean;
   oldAssetUrl: string;
@@ -114,6 +132,7 @@ export interface ReplacementOperation {
   creative: {
     creative_id: string;
     category: string;
+    plazas?: string;
     drive_url: string;
     created_at: string;
   } | null;

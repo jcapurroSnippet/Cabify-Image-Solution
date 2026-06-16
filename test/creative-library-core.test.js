@@ -4,6 +4,7 @@ import {
   canTransitionCreativeStatus,
   classifyBackgroundColor,
   detectCategoryFromName,
+  detectPlazasFromName,
   isGoogleLowPerformanceLabel,
   isImageAssetFieldType,
   normalizeGoogleAdType,
@@ -11,7 +12,11 @@ import {
   normalizeGooglePerformanceLabel,
   selectCreativeForCategory,
 } from '../server/services/creativeLibraryCore.js';
-import { getCreativeLibraryConfig } from '../server/services/creativeLibraryConfig.js';
+import {
+  CREATIVE_LIBRARY_HEADERS,
+  SOURCE_STATUS_COLUMNS,
+  getCreativeLibraryConfig,
+} from '../server/services/creativeLibraryConfig.js';
 
 const config = getCreativeLibraryConfig();
 
@@ -34,6 +39,42 @@ test('detects category from mapped ad group text', () => {
   assert.equal(result.category, 'Alianzas');
   assert.deepEqual(result.matched, ['Alianzas']);
   assert.equal(result.warning, null);
+});
+
+test('keeps plazas next to category in creative sheet headers', () => {
+  assert.equal(CREATIVE_LIBRARY_HEADERS.indexOf('plazas'), CREATIVE_LIBRARY_HEADERS.indexOf('category') + 1);
+  assert.equal(SOURCE_STATUS_COLUMNS.includes('plazas'), true);
+});
+
+test('uses Riders AR as the default creative source sheet', () => {
+  assert.deepEqual(config.sourceSheets, ['Riders | AR']);
+});
+
+test('detects beneficios ad set text as promo category', () => {
+  const result = detectCategoryFromName('AR | Beneficios | BUE', config);
+  assert.equal(result.category, 'Promo');
+  assert.deepEqual(result.matched, ['Promo']);
+  assert.equal(result.warning, null);
+});
+
+test('detects plaza codes from campaign text', () => {
+  const result = detectPlazasFromName('AR | BUE | Partner | Always On', config);
+  assert.equal(result.plazas, 'BUE');
+  assert.deepEqual(result.matched, ['BUE']);
+  assert.equal(result.warning, null);
+});
+
+test('detects multiple Uruguay plaza codes from campaign text', () => {
+  const result = detectPlazasFromName('UY | MVD | CAN | MAL | Promo', config);
+  assert.equal(result.plazas, 'MVD, CAN, MAL');
+  assert.deepEqual(result.matched, ['MVD', 'CAN', 'MAL']);
+});
+
+test('does not infer free-form city names as plazas', () => {
+  const result = detectPlazasFromName('AR | Partner | Buenos Aires', config);
+  assert.equal(result.plazas, '');
+  assert.deepEqual(result.matched, []);
+  assert.equal(result.warning, 'PLAZAS_NOT_FOUND');
 });
 
 test('uses Google performance label LOW for low performer detection', () => {
@@ -63,13 +104,27 @@ test('normalizes Google numeric ad types used by low performer rows', () => {
 
 test('selects an available creative by category and avoids reserved ids', () => {
   const creatives = [
-    { creative_id: 'a', category: 'promo', status: 'used', created_at: '2026-01-01T00:00:00Z' },
-    { creative_id: 'b', category: 'promo', status: 'available', created_at: '2026-01-02T00:00:00Z' },
-    { creative_id: 'c', category: 'promo', status: 'available', created_at: '2026-01-03T00:00:00Z' },
+    { creative_id: 'a', category: 'promo', plazas: 'CBA', status: 'used', created_at: '2026-01-01T00:00:00Z' },
+    { creative_id: 'b', category: 'promo', plazas: 'CBA', status: 'available', created_at: '2026-01-02T00:00:00Z' },
+    { creative_id: 'c', category: 'promo', plazas: 'BUE', status: 'available', created_at: '2026-01-03T00:00:00Z' },
+    { creative_id: 'd', category: 'promo', plazas: 'ALL', status: 'available', created_at: '2026-01-04T00:00:00Z' },
   ];
 
   assert.equal(selectCreativeForCategory(creatives, 'Promo')?.creative_id, 'b');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(['b']))?.creative_id, 'c');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'c');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'd');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL')?.creative_id, 'd');
+});
+
+test('prefers exact plaza creatives before ALL fallback', () => {
+  const creatives = [
+    { creative_id: 'all', category: 'promo', plazas: 'ALL', status: 'available', created_at: '2026-01-01T00:00:00Z' },
+    { creative_id: 'exact', category: 'promo', plazas: 'BUE', status: 'available', created_at: '2026-01-02T00:00:00Z' },
+  ];
+
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'exact');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'all');
 });
 
 test('allows only expected creative status transitions', () => {

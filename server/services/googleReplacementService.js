@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 import {
   detectCategoryFromName,
+  detectPlazasFromName,
   normalizeCategory,
   selectCreativeForCategory,
 } from './creativeLibraryCore.js';
@@ -28,9 +29,12 @@ const buildOperationId = (parts) =>
     .slice(0, 16)}`;
 
 const buildTargetCategoryName = (asset) =>
-  [asset.assetGroupName, asset.adGroupName, asset.campaignName, asset.assetName]
+  [asset.adGroupName, asset.assetGroupName]
     .filter(Boolean)
     .join(' | ');
+
+const buildTargetPlazasName = (asset) =>
+  asset.campaignName || '';
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
   const rawIds = Array.isArray(campaignIds)
@@ -72,6 +76,8 @@ const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) =
   };
 };
 
+const buildPlazasMatch = (asset, config) => detectPlazasFromName(buildTargetPlazasName(asset), config);
+
 const getConfigForReplacement = async (sheetsUrl) => {
   if (!sheetsUrl) return getCreativeLibraryConfig();
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
@@ -87,12 +93,14 @@ export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignId
 
   return assets.map((asset) => {
     const categoryMatch = buildCategoryMatch(asset, config);
+    const plazasMatch = buildPlazasMatch(asset, config);
     return {
       ...asset,
       detectedCategory: categoryMatch.category,
       categorySource: categoryMatch.source,
       categoryWarning: categoryMatch.warning,
       matchedCategories: categoryMatch.matched,
+      detectedPlazas: plazasMatch.plazas || null,
     };
   });
 };
@@ -128,6 +136,7 @@ export const buildGoogleReplacementPlan = async ({
 
   for (const asset of lowPerformers) {
     const categoryMatch = buildCategoryMatch(asset, config, selectedCategories);
+    const plazasMatch = buildPlazasMatch(asset, config);
     const baseOperation = {
       id: '',
       status: 'skipped',
@@ -153,6 +162,7 @@ export const buildGoogleReplacementPlan = async ({
       reason: asset.reason,
       metrics: asset.metrics,
       detectedCategory: categoryMatch.category,
+      detectedPlazas: plazasMatch.plazas || null,
       categorySource: categoryMatch.source,
       categoryWarning: categoryMatch.warning,
       matchedCategories: categoryMatch.matched,
@@ -181,6 +191,7 @@ export const buildGoogleReplacementPlan = async ({
       categoryMatch.category,
       config.selectionStrategy,
       reservedCreativeIds,
+      plazasMatch.plazas,
     );
 
     if (!creative) {
@@ -195,6 +206,7 @@ export const buildGoogleReplacementPlan = async ({
       creative: {
         creative_id: creative.creative_id,
         category: creative.category,
+        plazas: creative.plazas || '',
         drive_url: creative.drive_url,
         created_at: creative.created_at,
       },
@@ -239,6 +251,40 @@ const getLowPerformersWithLimit = async ({
   }
 
   return assets.slice(0, maxResults);
+};
+
+const getExecutionErrorDetails = (error) => ({
+  name: error?.name || null,
+  message: error?.message || String(error),
+  code: error?.code || null,
+  status: error?.status || error?.response?.status || null,
+  details: error?.details || null,
+  errors: error?.errors || error?.failure?.errors || error?.response?.data?.errors || null,
+  response: error?.response?.data || null,
+  googleAdsTrace: error?.googleAdsTrace || [],
+  metaAdsTrace: error?.metaAdsTrace || [],
+});
+
+const logReplacementFailure = ({ operation, creativeId, executionError }) => {
+  console.error('[GOOGLE_REPLACEMENT] Replacement failed', {
+    operationId: operation.id,
+    creativeId,
+    campaignName: operation.campaignName,
+    adGroupName: operation.adGroupName,
+    assetGroupName: operation.assetGroupName || null,
+    targetType: operation.targetType || null,
+    adType: operation.adType || null,
+    assetFieldType: operation.assetFieldType || null,
+    oldAssetResourceName: operation.oldAssetResourceName || null,
+    associationResourceName: operation.associationResourceName || null,
+    message: executionError.message,
+    code: executionError.code,
+    status: executionError.status,
+    errors: executionError.errors,
+    details: executionError.details,
+    response: executionError.response,
+    googleAdsTrace: executionError.googleAdsTrace,
+  });
 };
 
 export const executeGoogleReplacements = async ({
@@ -307,9 +353,14 @@ export const executeGoogleReplacements = async ({
         operation,
         imageDataUrl,
       );
+      const replacementResourceName =
+        replacement.assetResourceName ||
+        replacement.newAdResourceName ||
+        replacement.updatedAdResourceName ||
+        '';
 
       await markCreativeUsed(spreadsheetId, creativeId, {
-        googleAdsAssetResourceName: replacement.assetResourceName || replacement.newAdResourceName || '',
+        googleAdsAssetResourceName: replacementResourceName,
         operationId: operation.id,
         notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
       });
@@ -324,7 +375,7 @@ export const executeGoogleReplacements = async ({
           ad_group_id: operation.adGroupId,
           asset_group_id: operation.assetGroupId || '',
           old_asset_resource_name: operation.oldAssetResourceName,
-          new_asset_resource_name: replacement.assetResourceName || replacement.newAdResourceName || '',
+          new_asset_resource_name: replacementResourceName,
           status: 'success',
           message: 'Replacement completed.',
           payload_json: { operation, replacement },
@@ -337,6 +388,8 @@ export const executeGoogleReplacements = async ({
         replacement,
       });
     } catch (error) {
+      const executionError = getExecutionErrorDetails(error);
+      logReplacementFailure({ operation, creativeId, executionError });
       await releaseCreativeReservation(spreadsheetId, creativeId, error.message);
       await appendAuditLog(spreadsheetId, [
         {
@@ -351,7 +404,7 @@ export const executeGoogleReplacements = async ({
           new_asset_resource_name: '',
           status: 'failed',
           message: error.message,
-          payload_json: { operation },
+          payload_json: { operation, executionError },
         },
       ]);
 
@@ -359,21 +412,32 @@ export const executeGoogleReplacements = async ({
         ...operation,
         executionStatus: 'failed',
         executionMessage: error.message,
+        executionError,
+        googleAdsTrace: executionError.googleAdsTrace,
+        metaAdsTrace: executionError.metaAdsTrace,
       });
     }
   }
+
+  const summary = {
+    attempted: results.filter((result) => result.executionStatus === 'success' || result.executionStatus === 'failed').length,
+    success: results.filter((result) => result.executionStatus === 'success').length,
+    failed: results.filter((result) => result.executionStatus === 'failed').length,
+    skipped: results.filter((result) => result.executionStatus === 'skipped').length,
+  };
+
+  console.log('[GOOGLE_REPLACEMENT] Execute completed', {
+    accountId,
+    campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),
+    summary,
+  });
 
   return {
     dryRun: false,
     accountId,
     campaignId: plan.campaignIds?.length === 1 ? plan.campaignIds[0] : '',
     campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),
-    summary: {
-      attempted: results.filter((result) => result.executionStatus === 'success' || result.executionStatus === 'failed').length,
-      success: results.filter((result) => result.executionStatus === 'success').length,
-      failed: results.filter((result) => result.executionStatus === 'failed').length,
-      skipped: results.filter((result) => result.executionStatus === 'skipped').length,
-    },
+    summary,
     results,
   };
 };

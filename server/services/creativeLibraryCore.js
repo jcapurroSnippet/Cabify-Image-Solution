@@ -143,6 +143,70 @@ export const sanitizeFileName = (value) => {
   return clean || 'creative';
 };
 
+const normalizeComparableText = (value) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const normalizePlazaCode = (value) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+
+const getConfiguredPlazas = (config = {}) =>
+  (Array.isArray(config.plazas) ? config.plazas : [])
+    .map(normalizePlazaCode)
+    .filter(Boolean);
+
+export const normalizePlazas = (value) => {
+  const seen = new Set();
+  const plazas = [];
+
+  for (const token of String(value ?? '').match(/[a-z0-9]+/gi) || []) {
+    const plaza = normalizePlazaCode(token);
+    if (!plaza || seen.has(plaza)) continue;
+    seen.add(plaza);
+    plazas.push(plaza);
+  }
+
+  return plazas.join(', ');
+};
+
+const inferPlazaCodes = (name, config) => {
+  const configuredPlazas = getConfiguredPlazas(config);
+  const allowed = new Set(configuredPlazas);
+  const seen = new Set();
+  const plazas = [];
+
+  for (const token of String(name || '').match(/[a-z0-9]+/gi) || []) {
+    const plaza = normalizePlazaCode(token);
+    if (!allowed.has(plaza) || seen.has(plaza)) continue;
+    seen.add(plaza);
+    plazas.push(plaza);
+  }
+
+  return plazas;
+};
+
+export const detectPlazasFromName = (name, config = {}) => {
+  const text = String(name || '').trim();
+  if (!text) {
+    return { plazas: '', matched: [], warning: null };
+  }
+
+  const matched = inferPlazaCodes(text, config);
+  return {
+    plazas: matched.join(', '),
+    matched,
+    warning: matched.length === 0 ? 'PLAZAS_NOT_FOUND' : null,
+  };
+};
+
 export const detectCategoryFromName = (name, config) => {
   const text = String(name || '').toLowerCase();
   if (!text.trim()) {
@@ -282,14 +346,41 @@ const IMAGE_ASSET_FIELD_TYPES = new Set([
 export const isImageAssetFieldType = (fieldType) =>
   IMAGE_ASSET_FIELD_TYPES.has(normalizeGoogleAssetFieldType(fieldType));
 
-export const selectCreativeForCategory = (creatives, category, strategy = 'oldest_first', reservedIds = new Set()) => {
+const plazasToSet = (value) =>
+  new Set(
+    normalizePlazas(value)
+      .split(',')
+      .map(normalizeComparableText)
+      .filter(Boolean),
+  );
+
+export const selectCreativeForCategory = (
+  creatives,
+  category,
+  strategy = 'oldest_first',
+  reservedIds = new Set(),
+  plazas = '',
+) => {
   const normalizedCategory = String(category || '').toLowerCase();
-  const available = creatives.filter(
+  const candidates = creatives.filter(
     (creative) =>
       String(creative.category || '').toLowerCase() === normalizedCategory &&
       creative.status === 'available' &&
       !reservedIds.has(creative.creative_id),
   );
+  const requestedPlazas = plazasToSet(plazas);
+  const wantsAll = requestedPlazas.has('all');
+  let available = candidates;
+  if (requestedPlazas.size > 0) {
+    const exactMatches = wantsAll
+      ? []
+      : candidates.filter((creative) => {
+          const creativePlazas = plazasToSet(creative.plazas);
+          return [...creativePlazas].some((plaza) => requestedPlazas.has(plaza));
+        });
+    const allMatches = candidates.filter((creative) => plazasToSet(creative.plazas).has('all'));
+    available = exactMatches.length > 0 ? exactMatches : allMatches.length > 0 ? allMatches : candidates;
+  }
 
   if (available.length === 0) return null;
 

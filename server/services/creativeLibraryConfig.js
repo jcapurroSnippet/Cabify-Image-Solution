@@ -4,6 +4,31 @@ export const DEFAULT_CATEGORIES = [
   'Alianzas',
 ];
 
+export const DEFAULT_PLAZAS = [
+  'ALL',
+  'BUE',
+  'ATE',
+  'CBA',
+  'CPZ',
+  'RCU',
+  'MDZ',
+  'ROS',
+  'CTE',
+  'RES',
+  'LUJ',
+  'TUC',
+  'NQN',
+  'BRC',
+  'MVD',
+  'CAN',
+  'MAL',
+  'MDQ',
+];
+
+export const DEFAULT_SOURCE_SHEETS = [
+  'Riders | AR',
+];
+
 export const CREATIVE_LIBRARY_SHEET = 'creative_library';
 export const CREATIVE_AUDIT_SHEET = 'creative_audit_log';
 export const CREATIVE_CATEGORIES_SHEET = 'creative_categories';
@@ -17,6 +42,7 @@ export const CREATIVE_CATEGORIES_HEADERS = [
 
 export const SOURCE_STATUS_COLUMNS = [
   'category',
+  'plazas',
   'storage_status',
   'creative_ids',
   'google_ads_status',
@@ -27,6 +53,7 @@ export const CREATIVE_LIBRARY_HEADERS = [
   'creative_id',
   'status',
   'category',
+  'plazas',
   'source_sheet_id',
   'source_tab',
   'source_row',
@@ -87,6 +114,8 @@ const parseNumberEnv = (key, fallback) => {
 
 export const getCreativeLibraryConfig = () => ({
   categories: parseListEnv('CREATIVE_LIBRARY_CATEGORIES', DEFAULT_CATEGORIES),
+  plazas: parseListEnv('CREATIVE_LIBRARY_PLAZAS', DEFAULT_PLAZAS),
+  sourceSheets: parseListEnv('CREATIVE_LIBRARY_SOURCE_SHEETS', DEFAULT_SOURCE_SHEETS),
   acceptedColor: process.env.CREATIVE_ACCEPTED_COLOR || '#00ff00',
   rejectedColor: process.env.CREATIVE_REJECTED_COLOR || '#ff0000',
   colorTolerance: parseNumberEnv('CREATIVE_COLOR_TOLERANCE', 170),
@@ -100,7 +129,7 @@ export const getCreativeLibraryConfig = () => ({
   maxDownloadSizeBytes: parseNumberEnv('CREATIVE_LIBRARY_MAX_IMAGE_BYTES', 50 * 1024 * 1024),
   categoryMapping: parseJsonEnv('CREATIVE_CATEGORY_MAPPING', {
     generic: ['generic', 'general', 'always on', 'always-on', 'alwayson', 'brand', 'marca'],
-    promo: ['promo', 'promos', 'promocion', 'promoción', 'promotion', 'discount', 'descuento', 'offer', 'oferta'],
+    promo: ['promo', 'promos', 'promocion', 'promoción', 'promotion', 'discount', 'descuento', 'offer', 'oferta', 'beneficio', 'beneficios'],
     alianzas: ['alianza', 'alianzas', 'partner', 'partners', 'partnership', 'aliado', 'aliados', 'co-brand', 'cobrand', 'cobranding'],
   }),
   googleLowPerformanceLabel: process.env.GOOGLE_LOW_PERFORMANCE_LABEL || 'LOW',

@@ -209,11 +209,20 @@ export default function CreativeLibraryTab() {
   const handleSync = () => {
     if (!validateSheet()) return;
     void runAction('sync', async () => {
-      const result = await syncCreativeLibrary(sheetsUrl.trim(), sheetName.trim() || undefined);
-      const nextLibrary = await fetchCreativeLibrary(sheetsUrl.trim());
-      setSyncResult(result);
-      setLibrary(nextLibrary);
-      setCategoryOptions(nextLibrary.categories?.length ? nextLibrary.categories : DEFAULT_CATEGORY_OPTIONS);
+      try {
+        const result = await syncCreativeLibrary(sheetsUrl.trim(), sheetName.trim() || undefined);
+        console.info('[Creative Library] Sync result', result);
+        if (result.failureDetails?.length) {
+          console.error('[Creative Library] Sync failures', result.failureDetails);
+        }
+        const nextLibrary = await fetchCreativeLibrary(sheetsUrl.trim());
+        setSyncResult(result);
+        setLibrary(nextLibrary);
+        setCategoryOptions(nextLibrary.categories?.length ? nextLibrary.categories : DEFAULT_CATEGORY_OPTIONS);
+      } catch (err) {
+        console.error('[Creative Library] Sync failed', err);
+        throw err;
+      }
     });
   };
 
@@ -373,6 +382,18 @@ export default function CreativeLibraryTab() {
     ? plan.operations.filter((operation) => selectedOperationIds.has(operation.id) && operation.supportedReplacement).length
     : 0;
   const selectedLowPerformerCount = lowPerformers.filter((asset) => selectedLowPerformerIds.has(asset.id)).length;
+  const getLowPerformerCategoryValue = (asset: LowPerformer) =>
+    lowPerformerCategories[asset.id] || asset.detectedCategory || '';
+  const getLowPerformerCategoryOptions = (asset: LowPerformer) => {
+    const detectedCategory = String(asset.detectedCategory || '').trim();
+    const hasDetectedOption = categoryOptions.some(
+      (category) => String(category).toLowerCase() === detectedCategory.toLowerCase(),
+    );
+
+    return detectedCategory && !hasDetectedOption
+      ? [detectedCategory, ...categoryOptions]
+      : categoryOptions;
+  };
 
   const isBusy = busyAction !== null;
 
@@ -440,13 +461,40 @@ export default function CreativeLibraryTab() {
         )}
 
         {syncResult && (
-          <div className="grid gap-2 sm:grid-cols-4">
-            {['stored', 'alreadyStored', 'missingCategory', 'storageFailed'].map((key) => (
-              <div key={key} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase text-slate-400">{key}</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{syncResult.totals[key] || 0}</p>
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-4">
+              {['stored', 'alreadyStored', 'missingCategory', 'storageFailed'].map((key) => (
+                <div key={key} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
+                  <p className="text-xs uppercase text-slate-400">{key}</p>
+                  <p className="mt-1 text-2xl font-semibold text-white">{syncResult.totals[key] || 0}</p>
+                </div>
+              ))}
+            </div>
+
+            {syncResult.debugLogPath && (
+              <p className="text-xs text-slate-500">Sync log: {syncResult.debugLogPath}</p>
+            )}
+
+            {syncResult.failureDetails?.length ? (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0 space-y-2">
+                    <p className="font-medium">Storage failures</p>
+                    {syncResult.failureDetails.slice(0, 8).map((failure) => (
+                      <p key={`${failure.rowNumber}-${failure.sourceCell}`} className="break-words text-red-100/90">
+                        Row {failure.rowNumber} ({failure.sourceCell}): {failure.error}
+                      </p>
+                    ))}
+                    {syncResult.failureDetails.length > 8 && (
+                      <p className="text-red-100/70">
+                        {syncResult.failureDetails.length - 8} more failures in the sync log.
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
-            ))}
+            ) : null}
           </div>
         )}
       </section>
@@ -654,6 +702,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Asset</th>
                     <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Plazas</th>
                     <th className="px-3 py-2">Creative</th>
                   </tr>
                 </thead>
@@ -716,6 +765,12 @@ export default function CreativeLibraryTab() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-slate-300">{formatCategoryLabel(operation.detectedCategory)}</td>
+                      <td className="px-3 py-2 text-slate-300">
+                        <p>{operation.detectedPlazas || '-'}</p>
+                        {operation.creative?.plazas && (
+                          <p className="text-xs text-slate-500">Creative: {operation.creative.plazas}</p>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-slate-300">{operation.creative?.creative_id || '-'}</td>
                     </tr>
                   ))}
@@ -732,6 +787,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Campaign</th>
                     <th className="px-3 py-2">Ad group</th>
                     <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Plazas</th>
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Asset</th>
                   </tr>
@@ -762,16 +818,17 @@ export default function CreativeLibraryTab() {
                       <td className="px-3 py-2 text-slate-300">{asset.adGroupName || asset.assetGroupName}</td>
                       <td className="px-3 py-2">
                         <select
-                          value={lowPerformerCategories[asset.id] ?? asset.detectedCategory ?? ''}
+                          value={getLowPerformerCategoryValue(asset)}
                           onChange={(event) => updateLowPerformerCategory(asset.id, event.target.value)}
                           className="w-36 rounded-md border border-slate-700/80 bg-slate-900/70 px-2 py-1 text-xs text-white outline-none focus:border-cyan-300/70"
                         >
-                          <option value="">Auto detect</option>
-                          {categoryOptions.map((category) => (
+                          {!getLowPerformerCategoryValue(asset) && <option value="">No category detected</option>}
+                          {getLowPerformerCategoryOptions(asset).map((category) => (
                             <option key={category} value={category}>{formatCategoryLabel(category)}</option>
                           ))}
                         </select>
                       </td>
+                      <td className="px-3 py-2 text-slate-300">{asset.detectedPlazas || '-'}</td>
                       <td className="px-3 py-2 text-slate-300">{asset.imageResolution || '-'}</td>
                       <td className="px-3 py-2">
                         {asset.googleAdsUrl ? (

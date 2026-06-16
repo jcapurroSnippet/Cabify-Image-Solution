@@ -58,6 +58,29 @@ const graphPost = async (endpoint, data = {}) => {
   return response.data;
 };
 
+const getMetaErrorDetails = (error) => ({
+  message: error?.message || String(error),
+  status: error?.response?.status || error?.code || null,
+  statusText: error?.response?.statusText || null,
+  data: error?.response?.data || null,
+});
+
+const pushMetaTrace = (trace, step, status, details = {}) => {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    step,
+    status,
+    ...details,
+  };
+  trace.push(entry);
+  return entry;
+};
+
+const throwWithMetaTrace = (error, trace) => {
+  error.metaAdsTrace = trace;
+  throw error;
+};
+
 /**
  * Fetch all active campaigns for an ad account.
  */
@@ -181,6 +204,8 @@ const extractCPA = (insightData) => {
  * Replace an ad's creative with a new image.
  */
 export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
+  const metaAdsTrace = [];
+
   if (!adAccountId) {
     throw new Error('adAccountId is required.');
   }
@@ -191,24 +216,56 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
   }
 
   const imageBuffer = Buffer.from(match[2], 'base64');
+  pushMetaTrace(metaAdsTrace, 'validate_input', 'success', {
+    adAccountId,
+    adId,
+    mimeType: match[1],
+    imageBytes: imageBuffer.length,
+  });
 
   // 1. Upload image to ad account
+  const fileName = `optimized_${Date.now()}.png`;
   const form = new FormData();
-  form.append('filename', `optimized_${Date.now()}.png`);
+  form.append('filename', fileName);
   form.append('file', imageBuffer, {
-    filename: `optimized_${Date.now()}.png`,
+    filename: fileName,
     contentType: match[1],
   });
 
-  const uploadResponse = await graphPost(`/${adAccountId}/adimages`, form);
+  let uploadResponse;
+  try {
+    pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'started', {
+      endpoint: `/${adAccountId}/adimages`,
+      fileName,
+    });
+    uploadResponse = await graphPost(`/${adAccountId}/adimages`, form);
+  } catch (error) {
+    pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
 
   const imageHash = Object.values(uploadResponse?.images || {})[0]?.hash;
   if (!imageHash) {
-    throw new Error('Failed to upload image to Meta.');
+    const error = new Error('Failed to upload image to Meta.');
+    pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'error', {
+      message: error.message,
+      response: uploadResponse,
+    });
+    throwWithMetaTrace(error, metaAdsTrace);
   }
+  pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'success', {
+    imageHash,
+    responseImageKeys: Object.keys(uploadResponse?.images || {}),
+  });
 
   // 2. Create new ad creative
-  const creativeResponse = await graphPost(`/${adAccountId}/adcreatives`, {
+  let creativeResponse;
+  try {
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'started', {
+      endpoint: `/${adAccountId}/adcreatives`,
+      pageIdConfigured: Boolean(process.env.META_PAGE_ID),
+    });
+    creativeResponse = await graphPost(`/${adAccountId}/adcreatives`, {
     name: `Optimized Creative ${Date.now()}`,
     object_story_spec: {
       page_id: process.env.META_PAGE_ID,
@@ -217,21 +274,47 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
         link: 'https://www.cabify.com',
       },
     },
-  });
+    });
+  } catch (error) {
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
 
   const newCreativeId = creativeResponse?.id;
   if (!newCreativeId) {
-    throw new Error('Failed to create ad creative in Meta.');
+    const error = new Error('Failed to create ad creative in Meta.');
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'error', {
+      message: error.message,
+      response: creativeResponse,
+    });
+    throwWithMetaTrace(error, metaAdsTrace);
   }
+  pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'success', {
+    newCreativeId,
+  });
 
   // 3. Update ad to use new creative
-  await graphPost(`/${adId}`, {
-    creative: { creative_id: newCreativeId },
+  try {
+    pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'started', {
+      endpoint: `/${adId}`,
+      newCreativeId,
+    });
+    await graphPost(`/${adId}`, {
+      creative: { creative_id: newCreativeId },
+    });
+  } catch (error) {
+    pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
+  pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'success', {
+    adId,
+    newCreativeId,
   });
 
   return {
     success: true,
     newCreativeId,
     imageHash,
+    metaAdsTrace,
   };
 };
