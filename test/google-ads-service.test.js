@@ -62,12 +62,12 @@ test('updates app engagement ads by replacing the image list on the same ad', ()
     mutations.map((mutation) => `${mutation.entity}:${mutation.operation}`),
     ['asset:create', 'ad:update'],
   );
-  assert.equal(mutations[1].resource.resourceName, 'customers/123/ads/789');
+  assert.equal(mutations[1].resource.resource_name, 'customers/123/ads/789');
   assert.deepEqual(mutations[1].resource.app_engagement_ad.images, [
     { asset: 'customers/123/assets/-1' },
     { asset: 'customers/123/assets/222' },
   ]);
-  assert.equal('resource_name' in mutations[1].resource, false);
+  assert.equal('resourceName' in mutations[1].resource, false);
 });
 
 test('does not build pause operations for app engagement ads', () => {

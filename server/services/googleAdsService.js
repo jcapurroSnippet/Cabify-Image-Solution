@@ -926,7 +926,7 @@ export const buildAppEngagementAdImageUpdateMutations = ({
       entity: 'ad',
       operation: 'update',
       resource: {
-        resourceName: buildAdResourceName(cleanCustomerId, adId),
+        resource_name: buildAdResourceName(cleanCustomerId, adId),
         app_engagement_ad: {
           images: replacementImages.assets,
         },
