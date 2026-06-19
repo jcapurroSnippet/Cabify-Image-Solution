@@ -5,6 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 import {
+  APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE,
+  APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON,
   isGoogleLowPerformanceLabel,
   isImageAssetFieldType,
   normalizeGoogleAdType,
@@ -15,14 +17,14 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
-const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
+const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD']);
 
 const normalizeCustomerId = (value) => String(value || '').replace(/\D/g, '');
 
 const getAdGroupAdReplacementStrategy = (adType) => {
   const normalized = normalizeGoogleAdType(adType);
   if (normalized === 'IMAGE_AD') return 'IMAGE_AD_UPDATE';
-  if (normalized === 'APP_ENGAGEMENT_AD') return 'APP_ENGAGEMENT_AD_CLONE_REPLACE';
+  if (normalized === 'APP_ENGAGEMENT_AD') return 'MANUAL_ONLY';
   if (normalized === 'APP_AD') return 'APP_AD_CLONE_REPLACE';
   return 'UNSUPPORTED_TARGET';
 };
@@ -256,6 +258,12 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
   const campaignId = String(row.campaign?.id ?? '');
   const assetUrl = row.asset?.image_asset?.full_size?.url || '';
   const resolution = buildImageResolution(row.asset);
+  const hasReplacementTarget = Boolean(adId && adGroupId);
+  const isAppEngagementAd = adType === 'APP_ENGAGEMENT_AD';
+  const supportedReplacement = Boolean(
+    hasReplacementTarget &&
+    SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)
+  );
 
   return {
     id: buildGoogleLowPerformerId({
@@ -294,14 +302,21 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
     metrics: buildMetrics(row),
     performanceLabel,
     reason: 'GOOGLE_PERFORMANCE_LABEL_LOW',
-    supportedReplacement: Boolean(adId && adGroupId && SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)),
+    supportedReplacement,
     replacementSupportReason:
-      adId && adGroupId && SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)
+      isAppEngagementAd
+        ? APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON
+        : supportedReplacement
         ? null
         : 'UNSUPPORTED_TARGET',
+    replacementSupportMessage: isAppEngagementAd ? APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE : null,
     replacementStrategy: getAdGroupAdReplacementStrategy(adType),
   };
 };
+
+const shouldIncludeAdGroupLowPerformerEntry = (entry) =>
+  entry.supportedReplacement ||
+  entry.replacementSupportReason === APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON;
 
 const buildAssetGroupLowPerformerEntry = (row, customerId, performanceLabel) => {
   const assetResourceName = row.asset?.resource_name || row.asset_group_asset?.asset || '';
@@ -359,7 +374,7 @@ const buildAssetGroupLowPerformerEntry = (row, customerId, performanceLabel) => 
 
 /**
  * Fetch image assets that Google itself labels as LOW performance.
- * Only returns targets that the current replacement executor can safely apply.
+ * Includes executable targets and manual-only targets that should be visible in dry-run.
  */
 export const getLowPerformingImageAssets = async (customerId, options = {}) => {
   const customer = getClient(customerId);
@@ -428,7 +443,7 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
       ...buildLowPerformerEntry(row, customerId, performanceLabel),
       performanceLabel: normalizeGooglePerformanceLabel(performanceLabel),
     };
-    if (!entry.supportedReplacement) continue;
+    if (!shouldIncludeAdGroupLowPerformerEntry(entry)) continue;
     lowPerformers.push(entry);
   }
 
@@ -862,6 +877,10 @@ export const buildAppAdCloneReplacementMutations = ({
   oldAdResourceName,
   clonedAd,
 }) => {
+  if (normalizeGoogleAdType(adType) === 'APP_ENGAGEMENT_AD') {
+    throw new Error(APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE);
+  }
+
   const createReplacementAd = {
     entity: 'ad_group_ad',
     operation: 'create',
@@ -871,21 +890,6 @@ export const buildAppAdCloneReplacementMutations = ({
       status: 'ENABLED',
     },
   };
-
-  if (normalizeGoogleAdType(adType) === 'APP_ENGAGEMENT_AD') {
-    return [
-      assetCreate,
-      {
-        entity: 'ad_group_ad',
-        operation: 'update',
-        resource: {
-          resource_name: oldAdResourceName,
-          status: 'PAUSED',
-        },
-      },
-      createReplacementAd,
-    ];
-  }
 
   return [
     assetCreate,
@@ -968,18 +972,34 @@ const runTracedAtomicReplacementMutations = async (customer, mutations, trace, s
  */
 export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdId, newImageDataUrl) => {
   const googleAdsTrace = [];
-  const customer = getClient(customerId);
   const cleanCustomerId = customerId.replace(/-/g, '');
   const target = buildReplacementTarget(adGroupIdOrOperation, oldAdId);
   const imageDataUrl = typeof adGroupIdOrOperation === 'object' ? oldAdId : newImageDataUrl;
+  const targetType = String(target.targetType || '').toUpperCase();
+  const adType = normalizeGoogleAdType(target.adType);
+
+  if (targetType === 'AD_GROUP_AD' && adType === 'APP_ENGAGEMENT_AD') {
+    pushGoogleAdsTrace(googleAdsTrace, 'validate_input', 'blocked', {
+      customerId: cleanCustomerId,
+      targetType,
+      adGroupId: target.adGroupId || null,
+      adId: target.adId || null,
+      adType,
+      blockedReason: APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON,
+    });
+    throwWithGoogleAdsTrace(new Error(APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE), googleAdsTrace);
+  }
+
   const imageData = decodeImageDataUrl(imageDataUrl);
   pushGoogleAdsTrace(googleAdsTrace, 'validate_input', 'success', {
     customerId: cleanCustomerId,
-    targetType: target.targetType || null,
+    targetType: targetType || null,
     adGroupId: target.adGroupId || null,
     adId: target.adId || null,
+    adType: adType || null,
     imageBytes: imageData.length,
   });
+  const customer = getClient(customerId);
   const tempAssetResourceName = buildTempAssetResourceName(cleanCustomerId);
   const assetCreate = {
     entity: 'asset',
@@ -992,7 +1012,7 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     },
   };
 
-  if (target.targetType === 'ASSET_GROUP_ASSET') {
+  if (targetType === 'ASSET_GROUP_ASSET') {
     if (!target.assetGroupId) throwWithGoogleAdsTrace(new Error('assetGroupId is required for asset group replacements.'), googleAdsTrace);
     if (!target.assetFieldType) throwWithGoogleAdsTrace(new Error('assetFieldType is required for asset group replacements.'), googleAdsTrace);
     if (!target.associationResourceName) throwWithGoogleAdsTrace(new Error('associationResourceName is required to remove the old asset group association.'), googleAdsTrace);
@@ -1025,7 +1045,7 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     };
   }
 
-  if (target.targetType !== 'AD_GROUP_AD') {
+  if (targetType !== 'AD_GROUP_AD') {
     throwWithGoogleAdsTrace(new Error(`Unsupported replacement target: ${target.targetType || 'UNKNOWN_TARGET'}.`), googleAdsTrace);
   }
 
@@ -1033,7 +1053,6 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     throwWithGoogleAdsTrace(new Error('adGroupId and adId are required for ad replacements.'), googleAdsTrace);
   }
 
-  const adType = normalizeGoogleAdType(target.adType);
   const oldAdResourceName = target.adResourceName || `customers/${cleanCustomerId}/adGroupAds/${target.adGroupId}~${target.adId}`;
 
   if (adType === 'IMAGE_AD') {
@@ -1065,7 +1084,7 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     };
   }
 
-  if (adType === 'APP_AD' || adType === 'APP_ENGAGEMENT_AD') {
+  if (adType === 'APP_AD') {
     if (!target.oldAssetResourceName) {
       throwWithGoogleAdsTrace(new Error('oldAssetResourceName is required for App Ad image replacement.'), googleAdsTrace);
     }
@@ -1100,9 +1119,7 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       customer,
       appReplacementMutations,
       googleAdsTrace,
-      adType === 'APP_ENGAGEMENT_AD'
-        ? 'upload_asset_pause_and_clone_replace_app_engagement_ad'
-        : 'upload_asset_and_clone_replace_app_ad',
+      'upload_asset_and_clone_replace_app_ad',
     );
 
     return {
@@ -1111,12 +1128,8 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       assetResourceName: replacement.assetResourceName,
       newAdResourceName: replacement.newAdResourceName,
       oldAdResourceName,
-      oldAdRemoved: adType !== 'APP_ENGAGEMENT_AD',
-      oldAdPaused: adType === 'APP_ENGAGEMENT_AD',
-      clonedAssetCount:
-        clonedAd.app_ad?.images?.length ||
-        clonedAd.app_engagement_ad?.images?.length ||
-        0,
+      oldAdRemoved: true,
+      clonedAssetCount: clonedAd.app_ad?.images?.length || 0,
       googleAdsTrace,
     };
   }

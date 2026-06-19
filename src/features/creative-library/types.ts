@@ -96,6 +96,8 @@ export interface LowPerformer {
   performanceLabel?: string;
   reason: string;
   supportedReplacement: boolean;
+  replacementSupportReason?: string | null;
+  replacementSupportMessage?: string | null;
   metrics: {
     impressions: number;
     clicks: number;
@@ -127,6 +129,7 @@ export interface ReplacementOperation {
   executableInMode?: boolean;
   executionPolicy?: string;
   blockedReason?: string | null;
+  blockedMessage?: string | null;
   associationResourceName?: string;
   reason: string;
   detectedCategory: string | null;

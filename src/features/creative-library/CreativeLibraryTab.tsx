@@ -311,7 +311,7 @@ export default function CreativeLibraryTab() {
     const requiresNewAdPermission = selectedNewAdOperations.length > 0;
     const confirmed = window.confirm(
       requiresNewAdPermission
-        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. Existing App Engagement ads will be paused before the replacement is created. Continue?`
+        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. This changes the ad ID. Continue?`
         : `Execute ${selectedIds.length} selected Google Ads replacement${selectedIds.length === 1 ? '' : 's'} now?`,
     );
     if (!confirmed) return;
@@ -751,13 +751,13 @@ export default function CreativeLibraryTab() {
                       <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1 rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-200">
                           {operation.status === 'planned' && operation.executableInMode ? <CheckCircle className="h-3 w-3 text-green-400" /> : <AlertCircle className="h-3 w-3 text-amber-100" />}
-                          {operation.executableInMode ? operation.status : operation.blockedReason || operation.message}
+                          {operation.executableInMode ? operation.status : operation.blockedMessage || operation.blockedReason || operation.message}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-slate-300">
                         {operation.executionPolicy === 'same_ad_update' && 'Same ad'}
                         {operation.executionPolicy === 'clone_replace' && 'Clone'}
-                        {operation.executionPolicy === 'pause_and_clone_replace' && 'Pause + create'}
+                        {operation.executionPolicy === 'manual_only' && 'Manual only'}
                         {operation.executionPolicy === 'asset_group_reassociation' && 'Asset group'}
                         {!operation.executionPolicy || operation.executionPolicy === 'unsupported' ? '-' : ''}
                       </td>

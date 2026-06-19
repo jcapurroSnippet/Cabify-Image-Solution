@@ -163,7 +163,7 @@ test('blocks clone-only app ads in strict same-ad mode', () => {
   assert.equal(capability.blockedReason, 'REQUIRES_NEW_AD');
 });
 
-test('allows clone-only app ads when clone mode is explicit', () => {
+test('blocks app engagement ads even when clone mode is explicit', () => {
   const capability = describeGoogleReplacementCapability({
     supportedReplacement: true,
     targetType: 'AD_GROUP_AD',
@@ -172,9 +172,14 @@ test('allows clone-only app ads when clone mode is explicit', () => {
   }, 'allow_google_required_clone');
 
   assert.equal(capability.canPreserveAdId, false);
-  assert.equal(capability.requiresNewAd, true);
-  assert.equal(capability.executableInMode, true);
-  assert.equal(capability.executionPolicy, 'pause_and_clone_replace');
+  assert.equal(capability.requiresNewAd, false);
+  assert.equal(capability.executableInMode, false);
+  assert.equal(capability.executionPolicy, 'manual_only');
+  assert.equal(capability.blockedReason, 'APP_ENGAGEMENT_AD_NOT_REPLACEABLE_BY_API');
+  assert.equal(
+    capability.blockedMessage,
+    'APP_ENGAGEMENT_AD cannot be replaced automatically by Google Ads API. Replace manually in Google Ads.',
+  );
 });
 
 test('marks asset group replacements as preserving the container, not an ad id', () => {
@@ -196,9 +201,11 @@ test('requires explicit permission only when selected operations create a new ad
     { id: 'same', requiresNewAd: false, executionPolicy: 'same_ad_update' },
     { id: 'asset-group', requiresNewAd: false, executionPolicy: 'asset_group_reassociation' },
     { id: 'clone', requiresNewAd: true, executionPolicy: 'clone_replace' },
+    { id: 'manual', requiresNewAd: false, executionPolicy: 'manual_only' },
   ];
 
   assert.equal(requiresNewAdCreationPermission(operations, new Set(['same', 'asset-group'])), false);
+  assert.equal(requiresNewAdCreationPermission(operations, new Set(['manual'])), false);
   assert.equal(requiresNewAdCreationPermission(operations, new Set(['clone'])), true);
   assert.equal(requiresNewAdCreationPermission(operations), true);
 });

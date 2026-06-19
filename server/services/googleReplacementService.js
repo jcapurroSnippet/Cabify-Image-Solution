@@ -173,6 +173,7 @@ export const buildGoogleReplacementPlan = async ({
       matchedCategories: categoryMatch.matched,
       supportedReplacement: asset.supportedReplacement,
       supportReason: asset.replacementSupportReason,
+      supportMessage: asset.replacementSupportMessage,
       creative: null,
       message: '',
     };
@@ -186,6 +187,18 @@ export const buildGoogleReplacementPlan = async ({
       asset.assetResourceName,
       asset.assetUrl,
     ]);
+
+    if (replacementCapability.executionPolicy === 'manual_only') {
+      operations.push({
+        ...baseOperation,
+        ...replacementCapability,
+        message:
+          replacementCapability.blockedMessage ||
+          replacementCapability.blockedReason ||
+          'UNSUPPORTED_TARGET',
+      });
+      continue;
+    }
 
     if (!categoryMatch.category) {
       operations.push({
@@ -227,7 +240,9 @@ export const buildGoogleReplacementPlan = async ({
       },
       message: replacementCapability.executableInMode
         ? 'READY'
-        : replacementCapability.blockedReason || 'UNSUPPORTED_TARGET',
+        : replacementCapability.blockedMessage ||
+          replacementCapability.blockedReason ||
+          'UNSUPPORTED_TARGET',
     });
   }
 
@@ -244,6 +259,7 @@ export const buildGoogleReplacementPlan = async ({
       executable: operations.filter((operation) => operation.status === 'planned' && operation.executableInMode).length,
       sameAdUpdates: operations.filter((operation) => operation.executionPolicy === 'same_ad_update').length,
       cloneReplacements: operations.filter((operation) => operation.executionPolicy === 'clone_replace').length,
+      manualOnly: operations.filter((operation) => operation.executionPolicy === 'manual_only').length,
       assetGroupReassociations: operations.filter((operation) => operation.executionPolicy === 'asset_group_reassociation').length,
       skipped: operations.filter((operation) => operation.status === 'skipped').length,
     },
@@ -366,7 +382,11 @@ export const executeGoogleReplacements = async ({
       results.push({
         ...operation,
         executionStatus: 'skipped',
-        executionMessage: operation.blockedReason || operation.message || 'UNSUPPORTED_TARGET',
+        executionMessage:
+          operation.blockedMessage ||
+          operation.blockedReason ||
+          operation.message ||
+          'UNSUPPORTED_TARGET',
       });
       continue;
     }

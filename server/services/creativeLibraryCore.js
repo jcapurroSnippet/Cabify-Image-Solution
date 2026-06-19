@@ -351,6 +351,10 @@ export const GOOGLE_REPLACEMENT_MODES = {
   ALLOW_GOOGLE_REQUIRED_CLONE: 'allow_google_required_clone',
 };
 
+export const APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON = 'APP_ENGAGEMENT_AD_NOT_REPLACEABLE_BY_API';
+export const APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE =
+  'APP_ENGAGEMENT_AD cannot be replaced automatically by Google Ads API. Replace manually in Google Ads.';
+
 export const normalizeGoogleReplacementMode = (mode) =>
   mode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
     ? GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
@@ -362,6 +366,20 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   const adType = normalizeGoogleAdType(target.adType);
   const replacementStrategy = String(target.replacementStrategy || '').toUpperCase();
   const supportedReplacement = target.supportedReplacement !== false;
+
+  if (targetType === 'AD_GROUP_AD' && adType === 'APP_ENGAGEMENT_AD') {
+    return {
+      replacementMode,
+      canPreserveAdId: false,
+      canPreserveServingContainer: false,
+      requiresNewAd: false,
+      executableInMode: false,
+      executionPolicy: 'manual_only',
+      blockedReason: APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON,
+      blockedMessage: APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE,
+    };
+  }
+
   const isSameAdImageUpdate =
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
@@ -385,16 +403,16 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   const executionPolicy = canPreserveAdId
     ? 'same_ad_update'
     : requiresNewAd
-      ? adType === 'APP_ENGAGEMENT_AD'
-        ? 'pause_and_clone_replace'
-        : 'clone_replace'
+      ? 'clone_replace'
       : isAssetGroupAssociation
         ? 'asset_group_reassociation'
         : 'unsupported';
   let blockedReason = null;
+  let blockedMessage = null;
 
   if (!supportedReplacement) {
     blockedReason = target.replacementSupportReason || target.supportReason || 'UNSUPPORTED_TARGET';
+    blockedMessage = target.replacementSupportMessage || target.supportMessage || null;
   } else if (!executableInMode && requiresNewAd) {
     blockedReason = 'REQUIRES_NEW_AD';
   } else if (!executableInMode && isAssetGroupAssociation) {
@@ -411,6 +429,7 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
     executableInMode,
     executionPolicy,
     blockedReason,
+    blockedMessage,
   };
 };
 
