@@ -3,6 +3,8 @@ import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 import {
   detectCategoryFromName,
   detectPlazasFromName,
+  describeGoogleReplacementCapability,
+  normalizeGoogleReplacementMode,
   normalizeCategory,
   selectCreativeForCategory,
 } from './creativeLibraryCore.js';
@@ -113,10 +115,12 @@ export const buildGoogleReplacementPlan = async ({
   limit = 20,
   selectedLowPerformerIds,
   lowPerformerCategories,
+  replacementMode,
 }) => {
   if (!sheetsUrl) throw new Error('sheetsUrl is required.');
   if (!accountId) throw new Error('accountId is required.');
 
+  const effectiveReplacementMode = normalizeGoogleReplacementMode(replacementMode);
   const config = await getConfigForReplacement(sheetsUrl);
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const selectedCategories = normalizeLowPerformerCategories(lowPerformerCategories, config);
@@ -171,6 +175,7 @@ export const buildGoogleReplacementPlan = async ({
       creative: null,
       message: '',
     };
+    const replacementCapability = describeGoogleReplacementCapability(baseOperation, effectiveReplacementMode);
     baseOperation.id = asset.id || buildOperationId([
       accountId.replace(/-/g, ''),
       asset.campaignId,
@@ -182,7 +187,11 @@ export const buildGoogleReplacementPlan = async ({
     ]);
 
     if (!categoryMatch.category) {
-      operations.push({ ...baseOperation, message: 'CATEGORY_NOT_FOUND' });
+      operations.push({
+        ...baseOperation,
+        ...replacementCapability,
+        message: 'CATEGORY_NOT_FOUND',
+      });
       continue;
     }
 
@@ -195,13 +204,18 @@ export const buildGoogleReplacementPlan = async ({
     );
 
     if (!creative) {
-      operations.push({ ...baseOperation, message: 'NO_AVAILABLE_CREATIVE' });
+      operations.push({
+        ...baseOperation,
+        ...replacementCapability,
+        message: 'NO_AVAILABLE_CREATIVE',
+      });
       continue;
     }
 
     reservedCreativeIds.add(creative.creative_id);
     operations.push({
       ...baseOperation,
+      ...replacementCapability,
       status: 'planned',
       creative: {
         creative_id: creative.creative_id,
@@ -210,12 +224,15 @@ export const buildGoogleReplacementPlan = async ({
         drive_url: creative.drive_url,
         created_at: creative.created_at,
       },
-      message: asset.supportedReplacement ? 'READY' : 'UNSUPPORTED_TARGET',
+      message: replacementCapability.executableInMode
+        ? 'READY'
+        : replacementCapability.blockedReason || 'UNSUPPORTED_TARGET',
     });
   }
 
   return {
     dryRun: true,
+    replacementMode: effectiveReplacementMode,
     accountId,
     campaignId: selectedCampaignIds.length === 1 ? selectedCampaignIds[0] : '',
     campaignIds: selectedCampaignIds,
@@ -223,7 +240,10 @@ export const buildGoogleReplacementPlan = async ({
     summary: {
       lowPerformers: lowPerformers.length,
       planned: operations.filter((operation) => operation.status === 'planned').length,
-      executable: operations.filter((operation) => operation.status === 'planned' && operation.supportedReplacement).length,
+      executable: operations.filter((operation) => operation.status === 'planned' && operation.executableInMode).length,
+      sameAdUpdates: operations.filter((operation) => operation.executionPolicy === 'same_ad_update').length,
+      cloneReplacements: operations.filter((operation) => operation.executionPolicy === 'clone_replace').length,
+      assetGroupReassociations: operations.filter((operation) => operation.executionPolicy === 'asset_group_reassociation').length,
       skipped: operations.filter((operation) => operation.status === 'skipped').length,
     },
     operations,
@@ -297,6 +317,7 @@ export const executeGoogleReplacements = async ({
   selectedOperationIds,
   selectedLowPerformerIds,
   lowPerformerCategories,
+  replacementMode,
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -319,6 +340,7 @@ export const executeGoogleReplacements = async ({
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
+    replacementMode,
   });
   const results = [];
 
@@ -333,8 +355,12 @@ export const executeGoogleReplacements = async ({
       continue;
     }
 
-    if (!operation.supportedReplacement) {
-      results.push({ ...operation, executionStatus: 'skipped', executionMessage: 'UNSUPPORTED_TARGET' });
+    if (!operation.executableInMode) {
+      results.push({
+        ...operation,
+        executionStatus: 'skipped',
+        executionMessage: operation.blockedReason || operation.message || 'UNSUPPORTED_TARGET',
+      });
       continue;
     }
 
@@ -434,6 +460,7 @@ export const executeGoogleReplacements = async ({
 
   return {
     dryRun: false,
+    replacementMode: plan.replacementMode,
     accountId,
     campaignId: plan.campaignIds?.length === 1 ? plan.campaignIds[0] : '',
     campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),

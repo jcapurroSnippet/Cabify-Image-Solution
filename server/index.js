@@ -592,6 +592,7 @@ app.post('/api/ads/google/replacement-plan', async (request, response) => {
       limit,
       selectedLowPerformerIds,
       lowPerformerCategories,
+      replacementMode,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -608,6 +609,7 @@ app.post('/api/ads/google/replacement-plan', async (request, response) => {
       limit: Number(limit) || 20,
       selectedLowPerformerIds,
       lowPerformerCategories,
+      replacementMode,
     });
 
     return response.status(200).json(plan);
@@ -634,6 +636,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       selectedOperationIds,
       selectedLowPerformerIds,
       lowPerformerCategories,
+      replacementMode,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -653,6 +656,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       limit: Number(limit) || 10,
       selectedOperationCount: Array.isArray(selectedOperationIds) ? selectedOperationIds.length : null,
       selectedLowPerformerCount: Array.isArray(selectedLowPerformerIds) ? selectedLowPerformerIds.length : null,
+      replacementMode: replacementMode || null,
     });
 
     const result = await executeGoogleReplacements({
@@ -664,6 +668,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       selectedOperationIds,
       selectedLowPerformerIds,
       lowPerformerCategories,
+      replacementMode,
     });
 
     console.log('[GOOGLE_REPLACEMENT] Execute response', {

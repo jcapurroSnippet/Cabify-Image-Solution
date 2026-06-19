@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canTransitionCreativeStatus,
+  describeGoogleReplacementCapability,
   classifyBackgroundColor,
   detectCategoryFromName,
   detectPlazasFromName,
@@ -131,4 +132,60 @@ test('allows only expected creative status transitions', () => {
   assert.equal(canTransitionCreativeStatus('available', 'reserved'), true);
   assert.equal(canTransitionCreativeStatus('reserved', 'used'), true);
   assert.equal(canTransitionCreativeStatus('used', 'available'), false);
+});
+
+test('classifies image ads as same-ad replacements in strict mode', () => {
+  const capability = describeGoogleReplacementCapability({
+    supportedReplacement: true,
+    targetType: 'AD_GROUP_AD',
+    adType: 'IMAGE_AD',
+    replacementStrategy: 'IMAGE_AD_UPDATE',
+  }, 'strict_same_ad');
+
+  assert.equal(capability.canPreserveAdId, true);
+  assert.equal(capability.requiresNewAd, false);
+  assert.equal(capability.executableInMode, true);
+  assert.equal(capability.executionPolicy, 'same_ad_update');
+});
+
+test('blocks clone-only app ads in strict same-ad mode', () => {
+  const capability = describeGoogleReplacementCapability({
+    supportedReplacement: true,
+    targetType: 'AD_GROUP_AD',
+    adType: 'APP_AD',
+    replacementStrategy: 'APP_AD_CLONE_REPLACE',
+  }, 'strict_same_ad');
+
+  assert.equal(capability.canPreserveAdId, false);
+  assert.equal(capability.requiresNewAd, true);
+  assert.equal(capability.executableInMode, false);
+  assert.equal(capability.blockedReason, 'REQUIRES_NEW_AD');
+});
+
+test('allows clone-only app ads when clone mode is explicit', () => {
+  const capability = describeGoogleReplacementCapability({
+    supportedReplacement: true,
+    targetType: 'AD_GROUP_AD',
+    adType: 'APP_ENGAGEMENT_AD',
+    replacementStrategy: 'APP_ENGAGEMENT_AD_CLONE_REPLACE',
+  }, 'allow_google_required_clone');
+
+  assert.equal(capability.canPreserveAdId, false);
+  assert.equal(capability.requiresNewAd, true);
+  assert.equal(capability.executableInMode, true);
+  assert.equal(capability.executionPolicy, 'clone_replace');
+});
+
+test('marks asset group replacements as preserving the container, not an ad id', () => {
+  const capability = describeGoogleReplacementCapability({
+    supportedReplacement: true,
+    targetType: 'ASSET_GROUP_ASSET',
+    adType: 'ASSET_GROUP_ASSET',
+    replacementStrategy: 'ASSET_GROUP_ASSET_ASSOCIATION',
+  }, 'strict_same_ad');
+
+  assert.equal(capability.canPreserveAdId, false);
+  assert.equal(capability.canPreserveServingContainer, true);
+  assert.equal(capability.executableInMode, false);
+  assert.equal(capability.blockedReason, 'NO_AD_ID_FOR_ASSET_GROUP_ASSET');
 });

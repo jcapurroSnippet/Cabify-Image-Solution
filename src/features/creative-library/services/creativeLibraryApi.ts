@@ -5,6 +5,7 @@ import type {
   ExecutionResponse,
   LowPerformer,
   ReplacementPlanResponse,
+  ReplacementMode,
   SyncResponse,
 } from '../types';
 
@@ -157,6 +158,7 @@ export const buildReplacementPlan = async (
   limit: number,
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
+  replacementMode?: ReplacementMode,
 ): Promise<ReplacementPlanResponse> =>
   postJson<ReplacementPlanResponse>('/api/ads/google/replacement-plan', {
     sheetsUrl,
@@ -165,6 +167,7 @@ export const buildReplacementPlan = async (
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
+    replacementMode,
   });
 
 export const executeReplacements = async (
@@ -175,6 +178,7 @@ export const executeReplacements = async (
   selectedOperationIds: string[],
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
+  replacementMode?: ReplacementMode,
 ): Promise<ExecutionResponse> =>
   postJson<ExecutionResponse>('/api/ads/google/execute-replacements', {
     sheetsUrl,
@@ -184,5 +188,6 @@ export const executeReplacements = async (
     selectedOperationIds,
     selectedLowPerformerIds,
     lowPerformerCategories,
+    replacementMode,
     confirm: true,
   });

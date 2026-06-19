@@ -19,6 +19,7 @@ import type {
   CreativeLibraryResponse,
   ExecutionResponse,
   LowPerformer,
+  ReplacementMode,
   ReplacementPlanResponse,
   SyncResponse,
 } from './types';
@@ -69,6 +70,7 @@ export default function CreativeLibraryTab() {
   const [campaignSearch, setCampaignSearch] = useState('');
   const [isCampaignMenuOpen, setIsCampaignMenuOpen] = useState(false);
   const [limit, setLimit] = useState(10);
+  const [replacementMode, setReplacementMode] = useState<ReplacementMode>('strict_same_ad');
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResponse | null>(null);
@@ -137,7 +139,7 @@ export default function CreativeLibraryTab() {
     setPlan(null);
     setExecution(null);
     setSelectedOperationIds(new Set());
-  }, [accountId, campaignIds, limit]);
+  }, [accountId, campaignIds, limit, replacementMode]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -284,12 +286,13 @@ export default function CreativeLibraryTab() {
         limit,
         selectedLowIds,
         selectedCategories,
+        replacementMode,
       );
       setPlan(nextPlan);
       setSelectedOperationIds(
         new Set(
           nextPlan.operations
-            .filter((operation) => operation.status === 'planned' && operation.supportedReplacement)
+            .filter((operation) => operation.status === 'planned' && operation.executableInMode)
             .map((operation) => operation.id),
         ),
       );
@@ -317,6 +320,7 @@ export default function CreativeLibraryTab() {
         selectedIds,
         selectedLowIds,
         selectedCategories,
+        replacementMode,
       );
       setExecution(result);
       setLibrary(await fetchCreativeLibrary(sheetsUrl.trim()));
@@ -379,7 +383,7 @@ export default function CreativeLibraryTab() {
   };
 
   const selectedExecutableCount = plan
-    ? plan.operations.filter((operation) => selectedOperationIds.has(operation.id) && operation.supportedReplacement).length
+    ? plan.operations.filter((operation) => selectedOperationIds.has(operation.id) && operation.executableInMode).length
     : 0;
   const selectedLowPerformerCount = lowPerformers.filter((asset) => selectedLowPerformerIds.has(asset.id)).length;
   const getLowPerformerCategoryValue = (asset: LowPerformer) =>
@@ -612,6 +616,17 @@ export default function CreativeLibraryTab() {
               className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
             />
           </label>
+          <label className="space-y-1 lg:col-span-3">
+            <span className="text-xs font-medium uppercase text-slate-400">Replacement mode</span>
+            <select
+              value={replacementMode}
+              onChange={(event) => setReplacementMode(event.target.value as ReplacementMode)}
+              className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
+            >
+              <option value="strict_same_ad">Same ad only</option>
+              <option value="allow_google_required_clone">Allow Google-required clone/reassociation</option>
+            </select>
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -698,6 +713,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Strategy</th>
                     <th className="px-3 py-2">Campaign</th>
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Asset</th>
@@ -713,7 +729,7 @@ export default function CreativeLibraryTab() {
                         <button
                           type="button"
                           onClick={() => toggleOperation(operation.id)}
-                          disabled={operation.status !== 'planned' || !operation.supportedReplacement}
+                          disabled={operation.status !== 'planned' || !operation.executableInMode}
                           aria-pressed={selectedOperationIds.has(operation.id)}
                           className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/40 text-slate-200 disabled:cursor-not-allowed disabled:opacity-35"
                         >
@@ -740,9 +756,15 @@ export default function CreativeLibraryTab() {
                       </td>
                       <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1 rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-200">
-                          {operation.status === 'planned' ? <CheckCircle className="h-3 w-3 text-green-400" /> : <AlertCircle className="h-3 w-3 text-amber-100" />}
-                          {operation.supportedReplacement ? operation.status : operation.message}
+                          {operation.status === 'planned' && operation.executableInMode ? <CheckCircle className="h-3 w-3 text-green-400" /> : <AlertCircle className="h-3 w-3 text-amber-100" />}
+                          {operation.executableInMode ? operation.status : operation.blockedReason || operation.message}
                         </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-300">
+                        {operation.executionPolicy === 'same_ad_update' && 'Same ad'}
+                        {operation.executionPolicy === 'clone_replace' && 'Clone'}
+                        {operation.executionPolicy === 'asset_group_reassociation' && 'Asset group'}
+                        {!operation.executionPolicy || operation.executionPolicy === 'unsupported' ? '-' : ''}
                       </td>
                       <td className="px-3 py-2 text-slate-200">
                         <p>{operation.campaignName}</p>

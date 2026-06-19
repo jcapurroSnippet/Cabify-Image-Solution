@@ -346,6 +346,72 @@ const IMAGE_ASSET_FIELD_TYPES = new Set([
 export const isImageAssetFieldType = (fieldType) =>
   IMAGE_ASSET_FIELD_TYPES.has(normalizeGoogleAssetFieldType(fieldType));
 
+export const GOOGLE_REPLACEMENT_MODES = {
+  STRICT_SAME_AD: 'strict_same_ad',
+  ALLOW_GOOGLE_REQUIRED_CLONE: 'allow_google_required_clone',
+};
+
+export const normalizeGoogleReplacementMode = (mode) =>
+  mode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
+    ? GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
+    : GOOGLE_REPLACEMENT_MODES.STRICT_SAME_AD;
+
+export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_REPLACEMENT_MODES.STRICT_SAME_AD) => {
+  const replacementMode = normalizeGoogleReplacementMode(mode);
+  const targetType = String(target.targetType || '').toUpperCase();
+  const adType = normalizeGoogleAdType(target.adType);
+  const replacementStrategy = String(target.replacementStrategy || '').toUpperCase();
+  const supportedReplacement = target.supportedReplacement !== false;
+  const isSameAdImageUpdate =
+    supportedReplacement &&
+    targetType === 'AD_GROUP_AD' &&
+    adType === 'IMAGE_AD' &&
+    (!replacementStrategy || replacementStrategy === 'IMAGE_AD_UPDATE');
+  const isAssetGroupAssociation =
+    supportedReplacement &&
+    targetType === 'ASSET_GROUP_ASSET' &&
+    (!replacementStrategy || replacementStrategy === 'ASSET_GROUP_ASSET_ASSOCIATION');
+  const requiresNewAd =
+    supportedReplacement &&
+    targetType === 'AD_GROUP_AD' &&
+    (adType === 'APP_AD' || adType === 'APP_ENGAGEMENT_AD' || replacementStrategy.includes('CLONE_REPLACE'));
+  const canPreserveAdId = isSameAdImageUpdate;
+  const canPreserveServingContainer = canPreserveAdId || isAssetGroupAssociation;
+  const executableInMode =
+    supportedReplacement &&
+    (canPreserveAdId ||
+      (replacementMode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE &&
+        (requiresNewAd || isAssetGroupAssociation)));
+  const executionPolicy = canPreserveAdId
+    ? 'same_ad_update'
+    : requiresNewAd
+      ? 'clone_replace'
+      : isAssetGroupAssociation
+        ? 'asset_group_reassociation'
+        : 'unsupported';
+  let blockedReason = null;
+
+  if (!supportedReplacement) {
+    blockedReason = target.replacementSupportReason || target.supportReason || 'UNSUPPORTED_TARGET';
+  } else if (!executableInMode && requiresNewAd) {
+    blockedReason = 'REQUIRES_NEW_AD';
+  } else if (!executableInMode && isAssetGroupAssociation) {
+    blockedReason = 'NO_AD_ID_FOR_ASSET_GROUP_ASSET';
+  } else if (!executableInMode) {
+    blockedReason = 'UNSUPPORTED_SAME_AD_REPLACEMENT';
+  }
+
+  return {
+    replacementMode,
+    canPreserveAdId,
+    canPreserveServingContainer,
+    requiresNewAd,
+    executableInMode,
+    executionPolicy,
+    blockedReason,
+  };
+};
+
 const plazasToSet = (value) =>
   new Set(
     normalizePlazas(value)

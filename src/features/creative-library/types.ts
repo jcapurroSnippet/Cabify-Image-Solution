@@ -28,6 +28,8 @@ export interface CreativeLibrarySummary {
   byStatus: Record<string, number>;
 }
 
+export type ReplacementMode = 'strict_same_ad' | 'allow_google_required_clone';
+
 export interface CreativeLibraryResponse {
   spreadsheetId: string;
   categories?: string[];
@@ -118,6 +120,13 @@ export interface ReplacementOperation {
   targetType?: string;
   assetFieldType?: string;
   replacementStrategy?: string;
+  replacementMode?: ReplacementMode;
+  canPreserveAdId?: boolean;
+  canPreserveServingContainer?: boolean;
+  requiresNewAd?: boolean;
+  executableInMode?: boolean;
+  executionPolicy?: string;
+  blockedReason?: string | null;
   associationResourceName?: string;
   reason: string;
   detectedCategory: string | null;
@@ -141,6 +150,7 @@ export interface ReplacementOperation {
 
 export interface ReplacementPlanResponse {
   dryRun: boolean;
+  replacementMode?: ReplacementMode;
   summary: Record<string, number>;
   operations: ReplacementOperation[];
   librarySummary?: CreativeLibrarySummary;
@@ -148,6 +158,7 @@ export interface ReplacementPlanResponse {
 
 export interface ExecutionResponse {
   dryRun: boolean;
+  replacementMode?: ReplacementMode;
   summary: Record<string, number>;
   results: ReplacementOperation[];
 }
