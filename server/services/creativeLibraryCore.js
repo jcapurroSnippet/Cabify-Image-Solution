@@ -385,7 +385,9 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   const executionPolicy = canPreserveAdId
     ? 'same_ad_update'
     : requiresNewAd
-      ? 'clone_replace'
+      ? adType === 'APP_ENGAGEMENT_AD'
+        ? 'pause_and_clone_replace'
+        : 'clone_replace'
       : isAssetGroupAssociation
         ? 'asset_group_reassociation'
         : 'unsupported';

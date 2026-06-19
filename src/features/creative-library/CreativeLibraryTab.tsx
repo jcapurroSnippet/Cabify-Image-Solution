@@ -311,7 +311,7 @@ export default function CreativeLibraryTab() {
     const requiresNewAdPermission = selectedNewAdOperations.length > 0;
     const confirmed = window.confirm(
       requiresNewAdPermission
-        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. This will change the ad ID for those items. Continue?`
+        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. Existing App Engagement ads will be paused before the replacement is created. Continue?`
         : `Execute ${selectedIds.length} selected Google Ads replacement${selectedIds.length === 1 ? '' : 's'} now?`,
     );
     if (!confirmed) return;
@@ -757,6 +757,7 @@ export default function CreativeLibraryTab() {
                       <td className="px-3 py-2 text-slate-300">
                         {operation.executionPolicy === 'same_ad_update' && 'Same ad'}
                         {operation.executionPolicy === 'clone_replace' && 'Clone'}
+                        {operation.executionPolicy === 'pause_and_clone_replace' && 'Pause + create'}
                         {operation.executionPolicy === 'asset_group_reassociation' && 'Asset group'}
                         {!operation.executionPolicy || operation.executionPolicy === 'unsupported' ? '-' : ''}
                       </td>

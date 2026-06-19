@@ -854,16 +854,60 @@ const buildReplacementTarget = (adGroupIdOrOperation, oldAdId) => {
   };
 };
 
+export const buildAppAdCloneReplacementMutations = ({
+  adType,
+  assetCreate,
+  cleanCustomerId,
+  target,
+  oldAdResourceName,
+  clonedAd,
+}) => {
+  const createReplacementAd = {
+    entity: 'ad_group_ad',
+    operation: 'create',
+    resource: {
+      ad_group: `customers/${cleanCustomerId}/adGroups/${target.adGroupId}`,
+      ad: clonedAd,
+      status: 'ENABLED',
+    },
+  };
+
+  if (normalizeGoogleAdType(adType) === 'APP_ENGAGEMENT_AD') {
+    return [
+      assetCreate,
+      {
+        entity: 'ad_group_ad',
+        operation: 'update',
+        resource: {
+          resource_name: oldAdResourceName,
+          status: 'PAUSED',
+        },
+      },
+      createReplacementAd,
+    ];
+  }
+
+  return [
+    assetCreate,
+    {
+      entity: 'ad_group_ad',
+      operation: 'remove',
+      resource: oldAdResourceName,
+    },
+    createReplacementAd,
+  ];
+};
+
 const runAtomicReplacementMutations = async (customer, mutations) => {
   const response = await customer.mutateResources(mutations, { partial_failure: false });
-  const adGroupAdHasRemoveAndCreate =
-    mutations.some((mutation) => mutation.entity === 'ad_group_ad' && mutation.operation === 'remove') &&
+  const adGroupAdHasReplacementCreate =
+    mutations.some((mutation) => mutation.entity === 'ad_group_ad' && mutation.operation !== 'create') &&
     mutations.some((mutation) => mutation.entity === 'ad_group_ad' && mutation.operation === 'create');
   return {
     response,
     assetResourceName: extractResourceNameFromMutateResponse(response, 'asset_result'),
     newAdResourceName: extractResourceNameFromMutateResponse(response, 'ad_group_ad_result', {
-      preferLast: adGroupAdHasRemoveAndCreate,
+      preferLast: adGroupAdHasReplacementCreate,
     }),
     newAssociationResourceName:
       extractResourceNameFromMutateResponse(response, 'asset_group_asset_result') ||
@@ -1044,23 +1088,22 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       tempAssetResourceName,
     );
 
-    const replacement = await runTracedAtomicReplacementMutations(customer, [
+    const appReplacementMutations = buildAppAdCloneReplacementMutations({
+      adType,
       assetCreate,
-      {
-        entity: 'ad_group_ad',
-        operation: 'remove',
-        resource: oldAdResourceName,
-      },
-      {
-        entity: 'ad_group_ad',
-        operation: 'create',
-        resource: {
-          ad_group: `customers/${cleanCustomerId}/adGroups/${target.adGroupId}`,
-          ad: clonedAd,
-          status: 'ENABLED',
-        },
-      },
-    ], googleAdsTrace, 'upload_asset_and_clone_replace_app_ad');
+      cleanCustomerId,
+      target,
+      oldAdResourceName,
+      clonedAd,
+    });
+    const replacement = await runTracedAtomicReplacementMutations(
+      customer,
+      appReplacementMutations,
+      googleAdsTrace,
+      adType === 'APP_ENGAGEMENT_AD'
+        ? 'upload_asset_pause_and_clone_replace_app_engagement_ad'
+        : 'upload_asset_and_clone_replace_app_ad',
+    );
 
     return {
       success: true,
@@ -1068,7 +1111,8 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       assetResourceName: replacement.assetResourceName,
       newAdResourceName: replacement.newAdResourceName,
       oldAdResourceName,
-      oldAdRemoved: true,
+      oldAdRemoved: adType !== 'APP_ENGAGEMENT_AD',
+      oldAdPaused: adType === 'APP_ENGAGEMENT_AD',
       clonedAssetCount:
         clonedAd.app_ad?.images?.length ||
         clonedAd.app_engagement_ad?.images?.length ||

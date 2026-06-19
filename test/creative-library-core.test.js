@@ -174,7 +174,7 @@ test('allows clone-only app ads when clone mode is explicit', () => {
   assert.equal(capability.canPreserveAdId, false);
   assert.equal(capability.requiresNewAd, true);
   assert.equal(capability.executableInMode, true);
-  assert.equal(capability.executionPolicy, 'clone_replace');
+  assert.equal(capability.executionPolicy, 'pause_and_clone_replace');
 });
 
 test('marks asset group replacements as preserving the container, not an ad id', () => {
