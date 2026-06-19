@@ -6,6 +6,7 @@ import {
   describeGoogleReplacementCapability,
   normalizeGoogleReplacementMode,
   normalizeCategory,
+  requiresNewAdCreationPermission,
   selectCreativeForCategory,
 } from './creativeLibraryCore.js';
 import {
@@ -318,6 +319,7 @@ export const executeGoogleReplacements = async ({
   selectedLowPerformerIds,
   lowPerformerCategories,
   replacementMode,
+  allowNewAdCreation = false,
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -342,6 +344,11 @@ export const executeGoogleReplacements = async ({
     lowPerformerCategories,
     replacementMode,
   });
+  const needsNewAdCreationPermission = requiresNewAdCreationPermission(plan.operations, selectedIds);
+  if (needsNewAdCreationPermission && allowNewAdCreation !== true) {
+    throw new Error('New ad creation permission is required for the selected replacements.');
+  }
+
   const results = [];
 
   for (const operation of plan.operations) {

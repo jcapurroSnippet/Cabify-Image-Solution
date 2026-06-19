@@ -11,6 +11,7 @@ import {
   normalizeGoogleAdType,
   normalizeGoogleAssetFieldType,
   normalizeGooglePerformanceLabel,
+  requiresNewAdCreationPermission,
   selectCreativeForCategory,
 } from '../server/services/creativeLibraryCore.js';
 import {
@@ -188,4 +189,16 @@ test('marks asset group replacements as preserving the container, not an ad id',
   assert.equal(capability.canPreserveServingContainer, true);
   assert.equal(capability.executableInMode, false);
   assert.equal(capability.blockedReason, 'NO_AD_ID_FOR_ASSET_GROUP_ASSET');
+});
+
+test('requires explicit permission only when selected operations create a new ad', () => {
+  const operations = [
+    { id: 'same', requiresNewAd: false, executionPolicy: 'same_ad_update' },
+    { id: 'asset-group', requiresNewAd: false, executionPolicy: 'asset_group_reassociation' },
+    { id: 'clone', requiresNewAd: true, executionPolicy: 'clone_replace' },
+  ];
+
+  assert.equal(requiresNewAdCreationPermission(operations, new Set(['same', 'asset-group'])), false);
+  assert.equal(requiresNewAdCreationPermission(operations, new Set(['clone'])), true);
+  assert.equal(requiresNewAdCreationPermission(operations), true);
 });

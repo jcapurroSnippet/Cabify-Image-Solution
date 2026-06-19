@@ -637,6 +637,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
+      allowNewAdCreation,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -657,6 +658,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       selectedOperationCount: Array.isArray(selectedOperationIds) ? selectedOperationIds.length : null,
       selectedLowPerformerCount: Array.isArray(selectedLowPerformerIds) ? selectedLowPerformerIds.length : null,
       replacementMode: replacementMode || null,
+      allowNewAdCreation: allowNewAdCreation === true,
     });
 
     const result = await executeGoogleReplacements({
@@ -669,6 +671,7 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
+      allowNewAdCreation,
     });
 
     console.log('[GOOGLE_REPLACEMENT] Execute response', {

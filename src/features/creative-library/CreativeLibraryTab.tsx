@@ -19,7 +19,6 @@ import type {
   CreativeLibraryResponse,
   ExecutionResponse,
   LowPerformer,
-  ReplacementMode,
   ReplacementPlanResponse,
   SyncResponse,
 } from './types';
@@ -70,7 +69,6 @@ export default function CreativeLibraryTab() {
   const [campaignSearch, setCampaignSearch] = useState('');
   const [isCampaignMenuOpen, setIsCampaignMenuOpen] = useState(false);
   const [limit, setLimit] = useState(10);
-  const [replacementMode, setReplacementMode] = useState<ReplacementMode>('strict_same_ad');
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResponse | null>(null);
@@ -139,7 +137,7 @@ export default function CreativeLibraryTab() {
     setPlan(null);
     setExecution(null);
     setSelectedOperationIds(new Set());
-  }, [accountId, campaignIds, limit, replacementMode]);
+  }, [accountId, campaignIds, limit]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -286,7 +284,6 @@ export default function CreativeLibraryTab() {
         limit,
         selectedLowIds,
         selectedCategories,
-        replacementMode,
       );
       setPlan(nextPlan);
       setSelectedOperationIds(
@@ -308,7 +305,15 @@ export default function CreativeLibraryTab() {
       setError('Select at least one replacement before executing.');
       return;
     }
-    const confirmed = window.confirm(`Execute ${selectedIds.length} selected Google Ads replacement${selectedIds.length === 1 ? '' : 's'} now?`);
+    const selectedNewAdOperations = plan?.operations.filter(
+      (operation) => selectedOperationIds.has(operation.id) && operation.requiresNewAd,
+    ) || [];
+    const requiresNewAdPermission = selectedNewAdOperations.length > 0;
+    const confirmed = window.confirm(
+      requiresNewAdPermission
+        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. This will change the ad ID for those items. Continue?`
+        : `Execute ${selectedIds.length} selected Google Ads replacement${selectedIds.length === 1 ? '' : 's'} now?`,
+    );
     if (!confirmed) return;
 
     void runAction('execute', async () => {
@@ -320,7 +325,7 @@ export default function CreativeLibraryTab() {
         selectedIds,
         selectedLowIds,
         selectedCategories,
-        replacementMode,
+        requiresNewAdPermission,
       );
       setExecution(result);
       setLibrary(await fetchCreativeLibrary(sheetsUrl.trim()));
@@ -615,17 +620,6 @@ export default function CreativeLibraryTab() {
               onChange={(event) => setLimit(Number(event.target.value))}
               className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
             />
-          </label>
-          <label className="space-y-1 lg:col-span-3">
-            <span className="text-xs font-medium uppercase text-slate-400">Replacement mode</span>
-            <select
-              value={replacementMode}
-              onChange={(event) => setReplacementMode(event.target.value as ReplacementMode)}
-              className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
-            >
-              <option value="strict_same_ad">Same ad only</option>
-              <option value="allow_google_required_clone">Allow Google-required clone/reassociation</option>
-            </select>
           </label>
         </div>
 

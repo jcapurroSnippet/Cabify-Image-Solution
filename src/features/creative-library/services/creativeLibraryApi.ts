@@ -5,11 +5,12 @@ import type {
   ExecutionResponse,
   LowPerformer,
   ReplacementPlanResponse,
-  ReplacementMode,
   SyncResponse,
 } from '../types';
 
 export type LowPerformerCategories = Record<string, string>;
+
+const GOOGLE_REQUIRED_REPLACEMENT_MODE = 'allow_google_required_clone';
 
 const parseErrorMessage = async (response: Response, url: string): Promise<string> => {
   try {
@@ -158,7 +159,6 @@ export const buildReplacementPlan = async (
   limit: number,
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
-  replacementMode?: ReplacementMode,
 ): Promise<ReplacementPlanResponse> =>
   postJson<ReplacementPlanResponse>('/api/ads/google/replacement-plan', {
     sheetsUrl,
@@ -167,7 +167,7 @@ export const buildReplacementPlan = async (
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
-    replacementMode,
+    replacementMode: GOOGLE_REQUIRED_REPLACEMENT_MODE,
   });
 
 export const executeReplacements = async (
@@ -178,7 +178,7 @@ export const executeReplacements = async (
   selectedOperationIds: string[],
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
-  replacementMode?: ReplacementMode,
+  allowNewAdCreation = false,
 ): Promise<ExecutionResponse> =>
   postJson<ExecutionResponse>('/api/ads/google/execute-replacements', {
     sheetsUrl,
@@ -188,6 +188,7 @@ export const executeReplacements = async (
     selectedOperationIds,
     selectedLowPerformerIds,
     lowPerformerCategories,
-    replacementMode,
+    replacementMode: GOOGLE_REQUIRED_REPLACEMENT_MODE,
+    allowNewAdCreation,
     confirm: true,
   });

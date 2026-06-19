@@ -412,6 +412,19 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   };
 };
 
+export const requiresNewAdCreationPermission = (operations = [], selectedOperationIds = null) => {
+  const selectedIds = selectedOperationIds instanceof Set
+    ? selectedOperationIds
+    : Array.isArray(selectedOperationIds)
+      ? new Set(selectedOperationIds.map((id) => String(id)))
+      : null;
+
+  return operations.some((operation) => {
+    if (selectedIds && !selectedIds.has(String(operation.id))) return false;
+    return operation.requiresNewAd === true;
+  });
+};
+
 const plazasToSet = (value) =>
   new Set(
     normalizePlazas(value)
