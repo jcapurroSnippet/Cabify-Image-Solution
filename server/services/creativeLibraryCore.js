@@ -351,10 +351,6 @@ export const GOOGLE_REPLACEMENT_MODES = {
   ALLOW_GOOGLE_REQUIRED_CLONE: 'allow_google_required_clone',
 };
 
-export const APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON = 'APP_ENGAGEMENT_AD_NOT_REPLACEABLE_BY_API';
-export const APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE =
-  'APP_ENGAGEMENT_AD cannot be replaced automatically by Google Ads API. Replace manually in Google Ads.';
-
 export const normalizeGoogleReplacementMode = (mode) =>
   mode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
     ? GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE
@@ -367,24 +363,18 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   const replacementStrategy = String(target.replacementStrategy || '').toUpperCase();
   const supportedReplacement = target.supportedReplacement !== false;
 
-  if (targetType === 'AD_GROUP_AD' && adType === 'APP_ENGAGEMENT_AD') {
-    return {
-      replacementMode,
-      canPreserveAdId: false,
-      canPreserveServingContainer: false,
-      requiresNewAd: false,
-      executableInMode: false,
-      executionPolicy: 'manual_only',
-      blockedReason: APP_ENGAGEMENT_AD_NOT_REPLACEABLE_REASON,
-      blockedMessage: APP_ENGAGEMENT_AD_NOT_REPLACEABLE_MESSAGE,
-    };
-  }
-
   const isSameAdImageUpdate =
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
     adType === 'IMAGE_AD' &&
     (!replacementStrategy || replacementStrategy === 'IMAGE_AD_UPDATE');
+  const isAppEngagementAdImageUpdate =
+    supportedReplacement &&
+    targetType === 'AD_GROUP_AD' &&
+    adType === 'APP_ENGAGEMENT_AD' &&
+    (!replacementStrategy ||
+      replacementStrategy === 'APP_ENGAGEMENT_AD_UPDATE' ||
+      replacementStrategy === 'APP_ENGAGEMENT_AD_CLONE_REPLACE');
   const isAssetGroupAssociation =
     supportedReplacement &&
     targetType === 'ASSET_GROUP_ASSET' &&
@@ -392,8 +382,8 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   const requiresNewAd =
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
-    (adType === 'APP_AD' || adType === 'APP_ENGAGEMENT_AD' || replacementStrategy.includes('CLONE_REPLACE'));
-  const canPreserveAdId = isSameAdImageUpdate;
+    (adType === 'APP_AD' || (adType !== 'APP_ENGAGEMENT_AD' && replacementStrategy.includes('CLONE_REPLACE')));
+  const canPreserveAdId = isSameAdImageUpdate || isAppEngagementAdImageUpdate;
   const canPreserveServingContainer = canPreserveAdId || isAssetGroupAssociation;
   const executableInMode =
     supportedReplacement &&

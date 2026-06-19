@@ -163,23 +163,20 @@ test('blocks clone-only app ads in strict same-ad mode', () => {
   assert.equal(capability.blockedReason, 'REQUIRES_NEW_AD');
 });
 
-test('blocks app engagement ads even when clone mode is explicit', () => {
+test('classifies app engagement ads as same-ad image-list updates', () => {
   const capability = describeGoogleReplacementCapability({
     supportedReplacement: true,
     targetType: 'AD_GROUP_AD',
     adType: 'APP_ENGAGEMENT_AD',
-    replacementStrategy: 'APP_ENGAGEMENT_AD_CLONE_REPLACE',
+    replacementStrategy: 'APP_ENGAGEMENT_AD_UPDATE',
   }, 'allow_google_required_clone');
 
-  assert.equal(capability.canPreserveAdId, false);
+  assert.equal(capability.canPreserveAdId, true);
   assert.equal(capability.requiresNewAd, false);
-  assert.equal(capability.executableInMode, false);
-  assert.equal(capability.executionPolicy, 'manual_only');
-  assert.equal(capability.blockedReason, 'APP_ENGAGEMENT_AD_NOT_REPLACEABLE_BY_API');
-  assert.equal(
-    capability.blockedMessage,
-    'APP_ENGAGEMENT_AD cannot be replaced automatically by Google Ads API. Replace manually in Google Ads.',
-  );
+  assert.equal(capability.executableInMode, true);
+  assert.equal(capability.executionPolicy, 'same_ad_update');
+  assert.equal(capability.blockedReason, null);
+  assert.equal(capability.blockedMessage, null);
 });
 
 test('marks asset group replacements as preserving the container, not an ad id', () => {
