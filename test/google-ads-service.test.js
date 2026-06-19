@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertAppEngagementAdImageUpdate,
   buildAppAdCloneReplacementMutations,
   buildAppEngagementAdImageUpdateMutations,
 } from '../server/services/googleAdsService.js';
@@ -99,5 +100,38 @@ test('does not build pause operations for app engagement ads', () => {
   assert.equal(
     mutations.some((mutation) => mutation.operation === 'remove'),
     false,
+  );
+});
+
+test('verifies app engagement ads reference the created image asset after update', () => {
+  const imageAssets = assertAppEngagementAdImageUpdate({
+    ad: {
+      app_engagement_ad: {
+        images: [
+          { asset: 'customers/123/assets/222' },
+          { asset: 'customers/123/assets/333' },
+        ],
+      },
+    },
+    expectedAssetResourceName: 'customers/123/assets/333',
+  });
+
+  assert.deepEqual(imageAssets, [
+    'customers/123/assets/222',
+    'customers/123/assets/333',
+  ]);
+});
+
+test('rejects successful app engagement mutates that do not persist the new image asset', () => {
+  assert.throws(
+    () => assertAppEngagementAdImageUpdate({
+      ad: {
+        app_engagement_ad: {
+          images: [{ asset: 'customers/123/assets/222' }],
+        },
+      },
+      expectedAssetResourceName: 'customers/123/assets/333',
+    }),
+    /Google Ads accepted the App Engagement Ad update but the ad does not reference the new image asset/,
   );
 });
