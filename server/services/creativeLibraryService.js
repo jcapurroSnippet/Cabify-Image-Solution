@@ -488,7 +488,19 @@ const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
 
 const SOURCE_COLUMN_ALIASES = {
   category: ['category', 'categoria', 'categoría'],
-  plazas: ['plazas', 'plaza'],
+  plazas: [
+    'plazas',
+    'plaza',
+    'ciudad',
+    'city',
+    'cities',
+    'mercado',
+    'market',
+    'markets',
+    'geo',
+    'geografia',
+    'region',
+  ],
 };
 
 const setSourceColumnIndex = (normalizedToIndex, header, index) => {
@@ -507,7 +519,7 @@ const getSourceColumnIndex = (normalizedToIndex, header) => {
   return undefined;
 };
 
-const buildSourceColumnIndex = (headers) => {
+export const buildSourceColumnIndex = (headers) => {
   const normalizedToIndex = new Map();
   headers.forEach((header, index) => {
     const normalized = normalizeHeader(header);
@@ -752,6 +764,11 @@ const isCampaignHeader = (header) => {
   return normalized.includes('campaign') || normalized.includes('campana');
 };
 
+const isPlazasHeader = (header) => {
+  const normalized = normalizeHeaderForMatch(header);
+  return SOURCE_COLUMN_ALIASES.plazas.some((alias) => normalizeHeaderForMatch(alias) === normalized);
+};
+
 const buildSourceRowCampaignText = (cells, headers = []) => {
   const parts = [];
   cells.forEach((cell, index) => {
@@ -762,11 +779,29 @@ const buildSourceRowCampaignText = (cells, headers = []) => {
   return parts.join(' | ');
 };
 
+const buildSourceRowPlazasText = (cells, headers = []) => {
+  const parts = [];
+  cells.forEach((cell, index) => {
+    if (!isPlazasHeader(headers[index] || '')) return;
+    const text = getCellText(cell);
+    if (text) parts.push(text);
+  });
+  return parts.join(' | ');
+};
+
 const inferCategoryFromSourceRow = (cells, headers, sourceSheetName, config) =>
   detectCategoryFromName(buildSourceRowCategoryText(cells, headers, sourceSheetName), config).category;
 
 const inferPlazasFromSourceRow = (cells, headers, sourceSheetName, config) =>
-  detectPlazasFromName(buildSourceRowCampaignText(cells, headers), config).plazas;
+  detectPlazasFromName(
+    [
+      buildSourceRowPlazasText(cells, headers),
+      buildSourceRowCampaignText(cells, headers),
+    ]
+      .filter(Boolean)
+      .join(' | '),
+    config,
+  ).plazas;
 
 const resolveCreativeCategory = ({
   explicitCategory,
@@ -781,7 +816,7 @@ const resolveCreativeCategory = ({
   fallbackCategory ||
   null;
 
-const resolveCreativePlazas = ({
+export const resolveCreativePlazas = ({
   explicitPlazas,
   cells,
   headers,

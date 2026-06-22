@@ -30,6 +30,13 @@ export interface CreativeLibrarySummary {
 
 export type ReplacementMode = 'strict_same_ad' | 'allow_google_required_clone';
 
+export interface AdsTraceEntry {
+  timestamp?: string;
+  step?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
 export interface CreativeLibraryResponse {
   spreadsheetId: string;
   categories?: string[];
@@ -163,5 +170,6 @@ export interface ExecutionResponse {
   dryRun: boolean;
   replacementMode?: ReplacementMode;
   summary: Record<string, number>;
+  googleAdsTrace?: AdsTraceEntry[];
   results: ReplacementOperation[];
 }

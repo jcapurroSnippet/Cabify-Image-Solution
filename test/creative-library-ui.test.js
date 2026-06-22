@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  buildNewAdPermissionMessage,
+  describeReplacementChange,
+  describeReplacementStatus,
+  summarizeReplacementSelection,
+} from '../src/features/creative-library/replacementUi.js';
+
+const operation = (overrides = {}) => ({
+  id: overrides.id || 'op-1',
+  status: 'planned',
+  executableInMode: true,
+  executionPolicy: 'same_ad_update',
+  requiresNewAd: false,
+  creative: { creative_id: 'creative-1' },
+  ...overrides,
+});
+
+test('summarizes selected replacements in user-facing terms', () => {
+  const selectedIds = new Set(['same', 'new-ad', 'manual']);
+  const summary = summarizeReplacementSelection([
+    operation({ id: 'same' }),
+    operation({ id: 'new-ad', requiresNewAd: true, executionPolicy: 'clone_replace' }),
+    operation({ id: 'manual', executableInMode: false, executionPolicy: 'manual_only' }),
+    operation({ id: 'not-selected' }),
+  ], selectedIds);
+
+  assert.deepEqual(summary, {
+    selected: 3,
+    ready: 1,
+    needsNewAd: 1,
+    manual: 1,
+    blocked: 0,
+  });
+});
+
+test('describes replacement changes without technical strategy labels', () => {
+  assert.equal(describeReplacementChange(operation()).label, 'Updates current ad');
+  assert.equal(
+    describeReplacementChange(operation({ requiresNewAd: true, executionPolicy: 'clone_replace' })).label,
+    'Creates new ad',
+  );
+  assert.equal(
+    describeReplacementChange(operation({ executableInMode: false, executionPolicy: 'manual_only' })).label,
+    'Replace in Google',
+  );
+});
+
+test('describes replacement status in operational language', () => {
+  assert.equal(describeReplacementStatus(operation()).label, 'Ready');
+  assert.equal(
+    describeReplacementStatus(operation({ requiresNewAd: true, executionPolicy: 'clone_replace' })).label,
+    'Needs approval',
+  );
+  assert.equal(
+    describeReplacementStatus(operation({ executableInMode: false, executionPolicy: 'manual_only' })).label,
+    'Manual change',
+  );
+});
+
+test('builds new ad permission copy without dry-run language', () => {
+  const message = buildNewAdPermissionMessage(2, 5);
+
+  assert.match(message, /Google needs to create a new ad for 2 replacements/);
+  assert.match(message, /Continue and replace/);
+  assert.doesNotMatch(message.toLowerCase(), /dry run/);
+});

@@ -302,6 +302,13 @@ const getExecutionErrorDetails = (error) => ({
   metaAdsTrace: error?.metaAdsTrace || [],
 });
 
+export const collectExecutionGoogleAdsTrace = (results = []) =>
+  results.flatMap((result) => [
+    ...(result.googleAdsTrace || []),
+    ...(result.executionError?.googleAdsTrace || []),
+    ...(result.replacement?.googleAdsTrace || []),
+  ]);
+
 const logReplacementFailure = ({ operation, creativeId, executionError }) => {
   console.error('[GOOGLE_REPLACEMENT] Replacement failed', {
     operationId: operation.id,
@@ -492,6 +499,7 @@ export const executeGoogleReplacements = async ({
     campaignId: plan.campaignIds?.length === 1 ? plan.campaignIds[0] : '',
     campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),
     summary,
+    googleAdsTrace: collectExecutionGoogleAdsTrace(results),
     results,
   };
 };

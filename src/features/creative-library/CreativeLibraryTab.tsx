@@ -10,7 +10,6 @@ import {
   Play,
   RefreshCw,
   Search,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 import type {
@@ -31,6 +30,13 @@ import {
   fetchLowPerformers,
   syncCreativeLibrary,
 } from './services/creativeLibraryApi';
+import {
+  buildNewAdPermissionMessage,
+  buildReplacementCompletedItems,
+  describeReplacementChange,
+  describeReplacementStatus,
+  summarizeReplacementSelection,
+} from './replacementUi.js';
 
 type BusyAction = 'sync' | 'list' | 'low' | 'plan' | 'execute' | 'accounts' | 'campaigns' | null;
 
@@ -267,16 +273,16 @@ export default function CreativeLibraryTab() {
         }),
     );
 
-  const handlePlan = () => {
+  const handleReplaceSelected = () => {
     if (!validateSheet() || !validateAds()) return;
     const selectedLowIds = lowPerformers.length > 0 ? [...selectedLowPerformerIds] : undefined;
     const selectedCategories = lowPerformers.length > 0 ? getSelectedLowPerformerCategories() : undefined;
-    if (lowPerformers.length > 0 && selectedLowIds?.length === 0) {
-      setError('Select at least one low performer before building the dry run.');
+    if (lowPerformers.length === 0 || selectedLowIds?.length === 0) {
+      setError('Select at least one low performer before replacing creatives.');
       return;
     }
 
-    void runAction('plan', async () => {
+    void runAction('execute', async () => {
       const nextPlan = await buildReplacementPlan(
         sheetsUrl.trim(),
         accountId,
@@ -285,38 +291,27 @@ export default function CreativeLibraryTab() {
         selectedLowIds,
         selectedCategories,
       );
-      setPlan(nextPlan);
-      setSelectedOperationIds(
-        new Set(
-          nextPlan.operations
-            .filter((operation) => operation.status === 'planned' && operation.executableInMode)
-            .map((operation) => operation.id),
-        ),
+      const executableOperations = nextPlan.operations.filter(
+        (operation) => operation.status === 'planned' && operation.executableInMode,
       );
-    });
-  };
+      const selectedIds = executableOperations.map((operation) => operation.id);
+      setPlan(nextPlan);
+      setSelectedOperationIds(new Set(selectedIds));
 
-  const handleExecute = () => {
-    if (!validateSheet() || !validateAds()) return;
-    const selectedIds = [...selectedOperationIds];
-    const selectedLowIds = lowPerformers.length > 0 ? [...selectedLowPerformerIds] : undefined;
-    const selectedCategories = lowPerformers.length > 0 ? getSelectedLowPerformerCategories() : undefined;
-    if (selectedIds.length === 0) {
-      setError('Select at least one replacement before executing.');
-      return;
-    }
-    const selectedNewAdOperations = plan?.operations.filter(
-      (operation) => selectedOperationIds.has(operation.id) && operation.requiresNewAd,
-    ) || [];
-    const requiresNewAdPermission = selectedNewAdOperations.length > 0;
-    const confirmed = window.confirm(
-      requiresNewAdPermission
-        ? `Google Ads requires creating a new ad for ${selectedNewAdOperations.length} selected replacement${selectedNewAdOperations.length === 1 ? '' : 's'}. This changes the ad ID. Continue?`
-        : `Execute ${selectedIds.length} selected Google Ads replacement${selectedIds.length === 1 ? '' : 's'} now?`,
-    );
-    if (!confirmed) return;
+      if (selectedIds.length === 0) {
+        setExecution(null);
+        throw new Error('No replacements are ready. Review the table for missing creatives or manual changes.');
+      }
 
-    void runAction('execute', async () => {
+      const selectedNewAdOperations = executableOperations.filter((operation) => operation.requiresNewAd);
+      const requiresNewAdPermission = selectedNewAdOperations.length > 0;
+      if (
+        requiresNewAdPermission &&
+        !window.confirm(buildNewAdPermissionMessage(selectedNewAdOperations.length, selectedIds.length))
+      ) {
+        return;
+      }
+
       const result = await executeReplacements(
         sheetsUrl.trim(),
         accountId,
@@ -327,7 +322,19 @@ export default function CreativeLibraryTab() {
         selectedCategories,
         requiresNewAdPermission,
       );
+      console.info('[Creative Library] Google execution result', result);
+      if (result.googleAdsTrace?.length) {
+        console.table(result.googleAdsTrace);
+      }
       setExecution(result);
+      setPlan({
+        dryRun: result.dryRun,
+        replacementMode: result.replacementMode,
+        summary: result.summary,
+        operations: result.results,
+        librarySummary: nextPlan.librarySummary,
+      });
+      setSelectedOperationIds(new Set(result.results.map((operation) => operation.id)));
       setLibrary(await fetchCreativeLibrary(sheetsUrl.trim()));
     });
   };
@@ -387,10 +394,10 @@ export default function CreativeLibraryTab() {
     setSelectedLowPerformerIds(new Set());
   };
 
-  const selectedExecutableCount = plan
-    ? plan.operations.filter((operation) => selectedOperationIds.has(operation.id) && operation.executableInMode).length
-    : 0;
   const selectedLowPerformerCount = lowPerformers.filter((asset) => selectedLowPerformerIds.has(asset.id)).length;
+  const replacementSelectionSummary = plan
+    ? summarizeReplacementSelection(plan.operations, selectedOperationIds)
+    : null;
   const getLowPerformerCategoryValue = (asset: LowPerformer) =>
     lowPerformerCategories[asset.id] || asset.detectedCategory || '';
   const getLowPerformerCategoryOptions = (asset: LowPerformer) => {
@@ -405,6 +412,12 @@ export default function CreativeLibraryTab() {
   };
 
   const isBusy = busyAction !== null;
+  const getReplacementToneClass = (tone: string) => {
+    if (tone === 'ready') return 'border-green-400/30 bg-green-400/10 text-green-100';
+    if (tone === 'approval') return 'border-amber-300/30 bg-amber-300/10 text-amber-100';
+    if (tone === 'error') return 'border-red-400/30 bg-red-400/10 text-red-100';
+    return 'border-slate-600/40 bg-slate-900/40 text-slate-200';
+  };
 
   return (
     <div className="space-y-4">
@@ -635,23 +648,18 @@ export default function CreativeLibraryTab() {
           </button>
           <button
             type="button"
-            onClick={handlePlan}
-            disabled={isBusy || (lowPerformers.length > 0 && selectedLowPerformerCount === 0)}
+            onClick={handleReplaceSelected}
+            disabled={isBusy || lowPerformers.length === 0 || selectedLowPerformerCount === 0}
             className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
-            {busyAction === 'plan' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            Dry run{lowPerformers.length > 0 ? ` selected (${selectedLowPerformerCount})` : ''}
-          </button>
-          <button
-            type="button"
-            onClick={handleExecute}
-            disabled={isBusy || !plan || selectedExecutableCount === 0}
-            className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 hover:border-slate-500 disabled:cursor-not-allowed disabled:text-slate-500"
-          >
             {busyAction === 'execute' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            Execute selected{selectedExecutableCount > 0 ? ` (${selectedExecutableCount})` : ''}
+            Replace selected{selectedLowPerformerCount > 0 ? ` (${selectedLowPerformerCount})` : ''}
           </button>
         </div>
+
+        <p className="text-xs text-slate-500">
+          Replacements use available creatives from the library. If Google needs a new ad, you will be asked before anything runs.
+        </p>
       </section>
 
       {library && (
@@ -676,9 +684,10 @@ export default function CreativeLibraryTab() {
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="text-sm font-medium uppercase text-slate-400">Google Ads</h3>
             {lowPerformers.length > 0 && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{lowPerformers.length} low performers</span>}
-            {lowPerformers.length > 0 && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{selectedLowPerformerCount} selected for dry run</span>}
-            {plan && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{plan.summary.executable || 0} executable</span>}
-            {plan && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{selectedExecutableCount} selected</span>}
+            {lowPerformers.length > 0 && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{selectedLowPerformerCount} selected for replacement</span>}
+            {replacementSelectionSummary && <span className="rounded-md bg-green-400/10 px-2 py-1 text-xs text-green-100">{replacementSelectionSummary.ready} ready</span>}
+            {replacementSelectionSummary && <span className="rounded-md bg-amber-300/10 px-2 py-1 text-xs text-amber-100">{replacementSelectionSummary.needsNewAd} need approval</span>}
+            {replacementSelectionSummary && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{replacementSelectionSummary.manual} manual</span>}
             {!plan && lowPerformers.length > 0 && (
               <div className="ml-auto flex gap-2">
                 <button
@@ -707,90 +716,94 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
                     <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2">Strategy</th>
-                    <th className="px-3 py-2">Campaign</th>
+                    <th className="px-3 py-2">Change</th>
+                    <th className="px-3 py-2">Location</th>
                     <th className="px-3 py-2">Resolution</th>
                     <th className="px-3 py-2">Asset</th>
                     <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2">Plazas</th>
+                    <th className="px-3 py-2">Plaza</th>
                     <th className="px-3 py-2">Creative</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/60">
-                  {plan.operations.slice(0, 20).map((operation) => (
-                    <tr key={operation.id}>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => toggleOperation(operation.id)}
-                          disabled={operation.status !== 'planned' || !operation.executableInMode}
-                          aria-pressed={selectedOperationIds.has(operation.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/40 text-slate-200 disabled:cursor-not-allowed disabled:opacity-35"
-                        >
-                          {selectedOperationIds.has(operation.id) && <Check className="h-4 w-4 text-green-400" />}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
-                            {operation.oldAssetUrl ? (
-                              <img src={getPreviewSrc(operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
-                            )}
-                          </div>
-                          <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
-                            {operation.creative?.drive_url ? (
-                              <img src={getPreviewSrc(operation.creative.drive_url)} alt="Replacement creative" className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No match</div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-200">
-                          {operation.status === 'planned' && operation.executableInMode ? <CheckCircle className="h-3 w-3 text-green-400" /> : <AlertCircle className="h-3 w-3 text-amber-100" />}
-                          {operation.executableInMode ? operation.status : operation.blockedMessage || operation.blockedReason || operation.message}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-slate-300">
-                        {operation.executionPolicy === 'same_ad_update' && 'Same ad'}
-                        {operation.executionPolicy === 'clone_replace' && 'Clone'}
-                        {operation.executionPolicy === 'manual_only' && 'Manual only'}
-                        {operation.executionPolicy === 'asset_group_reassociation' && 'Asset group'}
-                        {!operation.executionPolicy || operation.executionPolicy === 'unsupported' ? '-' : ''}
-                      </td>
-                      <td className="px-3 py-2 text-slate-200">
-                        <p>{operation.campaignName}</p>
-                        <p className="text-xs text-slate-500">{operation.adGroupName || operation.assetGroupName}</p>
-                      </td>
-                      <td className="px-3 py-2 text-slate-300">{operation.oldImageResolution || '-'}</td>
-                      <td className="px-3 py-2">
-                        {operation.googleAdsUrl ? (
-                          <a
-                            href={operation.googleAdsUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded-md border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300/70 hover:text-cyan-100"
+                  {plan.operations.slice(0, 20).map((operation) => {
+                    const status = describeReplacementStatus(operation);
+                    const change = describeReplacementChange(operation);
+
+                    return (
+                      <tr key={operation.id}>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleOperation(operation.id)}
+                            disabled={operation.status !== 'planned' || !operation.executableInMode}
+                            aria-pressed={selectedOperationIds.has(operation.id)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/40 text-slate-200 disabled:cursor-not-allowed disabled:opacity-35"
                           >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Open
-                          </a>
-                        ) : (
-                          <span className="text-slate-500">-</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-slate-300">{formatCategoryLabel(operation.detectedCategory)}</td>
-                      <td className="px-3 py-2 text-slate-300">
-                        <p>{operation.detectedPlazas || '-'}</p>
-                        {operation.creative?.plazas && (
-                          <p className="text-xs text-slate-500">Creative: {operation.creative.plazas}</p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-slate-300">{operation.creative?.creative_id || '-'}</td>
-                    </tr>
-                  ))}
+                            {selectedOperationIds.has(operation.id) && <Check className="h-4 w-4 text-green-400" />}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              {operation.oldAssetUrl ? (
+                                <img src={getPreviewSrc(operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
+                              )}
+                            </div>
+                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              {operation.creative?.drive_url ? (
+                                <img src={getPreviewSrc(operation.creative.drive_url)} alt="Replacement creative" className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No match</div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex max-w-48 items-center gap-1 rounded-md border px-2 py-1 text-xs ${getReplacementToneClass(status.tone)}`} title={status.description}>
+                            {status.tone === 'ready' ? <CheckCircle className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+                            <span className="truncate">{status.label}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="max-w-48">
+                            <p className="text-slate-200">{change.label}</p>
+                            <p className="text-xs text-slate-500">{change.description}</p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-200">
+                          <p>{operation.campaignName}</p>
+                          <p className="text-xs text-slate-500">{operation.adGroupName || operation.assetGroupName}</p>
+                        </td>
+                        <td className="px-3 py-2 text-slate-300">{operation.oldImageResolution || '-'}</td>
+                        <td className="px-3 py-2">
+                          {operation.googleAdsUrl ? (
+                            <a
+                              href={operation.googleAdsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300/70 hover:text-cyan-100"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              Open
+                            </a>
+                          ) : (
+                            <span className="text-slate-500">-</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-300">{formatCategoryLabel(operation.detectedCategory)}</td>
+                        <td className="px-3 py-2 text-slate-300">
+                          <p>{operation.detectedPlazas || '-'}</p>
+                          {operation.creative?.plazas && (
+                            <p className="text-xs text-slate-500">Creative: {operation.creative.plazas}</p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-300">{operation.creative?.creative_id || '-'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -872,12 +885,18 @@ export default function CreativeLibraryTab() {
       )}
 
       {execution && (
-        <section className="panel-surface">
+        <section className="panel-surface space-y-4">
+          <div>
+            <h3 className="text-sm font-medium uppercase text-slate-400">Replacement completed</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Review the rows above for any item that still needs attention.
+            </p>
+          </div>
           <div className="grid gap-2 sm:grid-cols-4">
-            {['success', 'failed', 'skipped', 'attempted'].map((key) => (
-              <div key={key} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase text-slate-400">{key}</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{execution.summary[key] || 0}</p>
+            {buildReplacementCompletedItems(execution.summary).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
+                <p className="text-xs uppercase text-slate-400">{label}</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
               </div>
             ))}
           </div>
