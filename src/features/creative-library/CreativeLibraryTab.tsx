@@ -36,6 +36,7 @@ import {
   describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
+  summarizeCreativeLibraryPlazas,
   summarizeReplacementSelection,
 } from './replacementUi.js';
 
@@ -166,6 +167,16 @@ export default function CreativeLibraryTab() {
 
   const availableCount = useMemo(
     () => library?.creatives.filter((creative) => creative.status === 'available').length || 0,
+    [library],
+  );
+  const libraryPlazasByCategory = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.keys(library?.summary.byCategory || {}).map((category) => [
+          category,
+          summarizeCreativeLibraryPlazas(library?.creatives || [], category),
+        ]),
+      ),
     [library],
   );
   const selectedCampaignCount = campaignIds.length;
@@ -682,12 +693,31 @@ export default function CreativeLibraryTab() {
             <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{availableCount} available</span>
           </div>
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            {Object.entries(library.summary.byCategory).map(([category, counts]) => (
-              <div key={category} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
-                <p className="text-sm font-semibold text-white">{formatCategoryLabel(category)}</p>
-                <p className="mt-1 text-xs text-slate-400">{counts.available || 0} available / {counts.total || 0} total</p>
-              </div>
-            ))}
+            {Object.entries(library.summary.byCategory).map(([category, counts]) => {
+              const plazas = libraryPlazasByCategory[category] || [];
+
+              return (
+                <div key={category} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
+                  <p className="text-sm font-semibold text-white">{formatCategoryLabel(category)}</p>
+                  <p className="mt-1 text-xs text-slate-400">{counts.available || 0} available / {counts.total || 0} total</p>
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {plazas.length > 0 ? (
+                      plazas.map((plaza) => (
+                        <span
+                          key={plaza.plaza}
+                          className="rounded-md border border-slate-700/70 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200"
+                          title={`${plaza.count} available ${formatCategoryLabel(category)} creative${plaza.count === 1 ? '' : 's'}`}
+                        >
+                          {plaza.plaza} {plaza.count}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No available plazas</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

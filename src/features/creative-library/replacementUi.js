@@ -1,6 +1,33 @@
 const isExecutable = (operation) =>
   operation?.status === 'planned' && operation?.executableInMode !== false && Boolean(operation?.creative);
 
+const parsePlazas = (value) =>
+  (String(value || '').match(/[a-z0-9]+/gi) || [])
+    .map((plaza) => plaza.trim().toUpperCase())
+    .filter(Boolean);
+
+export const summarizeCreativeLibraryPlazas = (creatives = [], category) => {
+  const normalizedCategory = String(category || '').trim().toLowerCase();
+  const plazaCounts = new Map();
+
+  for (const creative of creatives) {
+    if (String(creative?.category || '').trim().toLowerCase() !== normalizedCategory) continue;
+    if (String(creative?.status || '').trim().toLowerCase() !== 'available') continue;
+
+    for (const plaza of parsePlazas(creative.plazas)) {
+      plazaCounts.set(plaza, (plazaCounts.get(plaza) || 0) + 1);
+    }
+  }
+
+  return [...plazaCounts.entries()]
+    .map(([plaza, count]) => ({ plaza, count }))
+    .sort((left, right) => {
+      if (left.plaza === 'ALL') return -1;
+      if (right.plaza === 'ALL') return 1;
+      return left.plaza.localeCompare(right.plaza);
+    });
+};
+
 export const describeGoogleAdType = (target = {}) => {
   const adType = String(target.adType || '').toUpperCase();
   const targetType = String(target.targetType || '').toUpperCase();

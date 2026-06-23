@@ -5,6 +5,7 @@ import {
   describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
+  summarizeCreativeLibraryPlazas,
   summarizeReplacementSelection,
 } from '../src/features/creative-library/replacementUi.js';
 
@@ -94,4 +95,20 @@ test('describes Google Ads target types plainly', () => {
     label: 'App install ad',
     description: 'Needs a manual change in Google Ads.',
   });
+});
+
+test('summarizes available creative plazas by category', () => {
+  const creatives = [
+    { creative_id: 'all-1', category: 'Promo', plazas: 'ALL', status: 'available' },
+    { creative_id: 'bue-1', category: 'promo', plazas: 'BUE', status: 'available' },
+    { creative_id: 'bue-2', category: 'Promo', plazas: 'BUE, MVD', status: 'available' },
+    { creative_id: 'used-1', category: 'Promo', plazas: 'CBA', status: 'used' },
+    { creative_id: 'generic-1', category: 'Generic', plazas: 'CAN', status: 'available' },
+  ];
+
+  assert.deepEqual(summarizeCreativeLibraryPlazas(creatives, 'promo'), [
+    { plaza: 'ALL', count: 1 },
+    { plaza: 'BUE', count: 2 },
+    { plaza: 'MVD', count: 1 },
+  ]);
 });
