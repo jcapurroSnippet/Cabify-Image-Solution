@@ -477,6 +477,7 @@ export const selectCreativeForCategory = (
   );
   const requestedPlazas = plazasToSet(plazas);
   const wantsAll = requestedPlazas.has('all');
+  const allMatches = candidates.filter((creative) => plazasToSet(creative.plazas).has('all'));
   let available = candidates;
   if (requestedPlazas.size > 0) {
     const exactMatches = wantsAll
@@ -485,8 +486,9 @@ export const selectCreativeForCategory = (
           const creativePlazas = plazasToSet(creative.plazas);
           return [...creativePlazas].some((plaza) => requestedPlazas.has(plaza));
         });
-    const allMatches = candidates.filter((creative) => plazasToSet(creative.plazas).has('all'));
     available = exactMatches.length > 0 ? exactMatches : allMatches.length > 0 ? allMatches : candidates;
+  } else if (allMatches.length > 0) {
+    available = allMatches;
   }
 
   if (available.length === 0) return null;

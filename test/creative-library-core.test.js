@@ -117,8 +117,8 @@ test('selects an available creative by category and avoids reserved ids', () => 
     { creative_id: 'd', category: 'promo', plazas: 'ALL', status: 'available', created_at: '2026-01-04T00:00:00Z' },
   ];
 
-  assert.equal(selectCreativeForCategory(creatives, 'Promo')?.creative_id, 'b');
-  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(['b']))?.creative_id, 'c');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo')?.creative_id, 'd');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(['d']))?.creative_id, 'b');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'c');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'd');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL')?.creative_id, 'd');
@@ -132,6 +132,16 @@ test('prefers exact plaza creatives before ALL fallback', () => {
 
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'exact');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'all');
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'CBA')?.creative_id, 'all');
+});
+
+test('prefers ALL creatives when target plaza is not detected', () => {
+  const creatives = [
+    { creative_id: 'bue', category: 'promo', plazas: 'BUE', status: 'available', created_at: '2026-01-01T00:00:00Z' },
+    { creative_id: 'all', category: 'promo', plazas: 'ALL', status: 'available', created_at: '2026-01-02T00:00:00Z' },
+  ];
+
+  assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), '')?.creative_id, 'all');
 });
 
 test('selects creatives by required aspect ratio', () => {
