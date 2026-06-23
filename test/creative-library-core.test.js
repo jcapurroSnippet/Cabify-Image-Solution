@@ -48,6 +48,11 @@ test('keeps plazas next to category in creative sheet headers', () => {
   assert.equal(SOURCE_STATUS_COLUMNS.includes('plazas'), true);
 });
 
+test('keeps image metadata next to drive url in creative sheet headers', () => {
+  assert.equal(CREATIVE_LIBRARY_HEADERS.indexOf('aspect_ratio'), CREATIVE_LIBRARY_HEADERS.indexOf('drive_url') + 1);
+  assert.equal(CREATIVE_LIBRARY_HEADERS.indexOf('image_resolution'), CREATIVE_LIBRARY_HEADERS.indexOf('aspect_ratio') + 1);
+});
+
 test('uses Riders AR as the default creative source sheet', () => {
   assert.deepEqual(config.sourceSheets, ['Riders | AR']);
 });
@@ -127,6 +132,23 @@ test('prefers exact plaza creatives before ALL fallback', () => {
 
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'exact');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'all');
+});
+
+test('selects creatives by required aspect ratio', () => {
+  const creatives = [
+    { creative_id: 'square', category: 'promo', plazas: 'ALL', status: 'available', aspect_ratio: '1:1', created_at: '2026-01-01T00:00:00Z' },
+    { creative_id: 'portrait', category: 'promo', plazas: 'ALL', status: 'available', aspect_ratio: '9:16', created_at: '2026-01-02T00:00:00Z' },
+    { creative_id: 'landscape', category: 'promo', plazas: 'ALL', status: 'available', aspect_ratio: '1.91:1', created_at: '2026-01-03T00:00:00Z' },
+  ];
+
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE', '1.91:1')?.creative_id,
+    'landscape',
+  );
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(['landscape']), 'BUE', '1.91:1'),
+    null,
+  );
 });
 
 test('allows only expected creative status transitions', () => {

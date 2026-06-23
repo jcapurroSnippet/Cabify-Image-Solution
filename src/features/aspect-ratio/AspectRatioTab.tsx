@@ -51,15 +51,25 @@ const INITIAL_BATCH_STATE: BatchState = {
   error: null,
 };
 
-const SUPPORTED_RATIOS: AspectRatio[] = [AspectRatio.RATIO_1_1, AspectRatio.RATIO_9_16];
+const SUPPORTED_RATIOS: AspectRatio[] = [
+  AspectRatio.RATIO_1_1,
+  AspectRatio.RATIO_9_16,
+  AspectRatio.RATIO_1_91_1,
+];
 const BATCH_STATUS_POLL_MS = 15000;
 const countCompletedRows = (results: BatchState['results']): number =>
   Object.values(results).filter((row) => row.status === 'completed' || row.status === 'skipped')
     .length;
+const countBatchLinks = (links?: BatchState['results'][number]['links']): number =>
+  Object.values(links || {}).reduce((total, ratioLinks) => total + ratioLinks.length, 0);
 
 const getAspectClass = (ratio: AspectRatio): string => {
   if (ratio === AspectRatio.RATIO_9_16) {
     return 'aspect-[9/16]';
+  }
+
+  if (ratio === AspectRatio.RATIO_1_91_1) {
+    return 'aspect-[1200/628]';
   }
 
   if (ratio === AspectRatio.RATIO_16_9) {
@@ -509,7 +519,7 @@ export default function AspectRatioTab() {
                             <div className="flex gap-1">
                               <span className="text-green-300">✓</span>
                               <span className="text-slate-300">
-                                {typedResult.links['1:1'].length + typedResult.links['9:16'].length} images uploaded
+                                {countBatchLinks(typedResult.links)} images uploaded
                               </span>
                             </div>
                           ) : (
@@ -589,7 +599,7 @@ export default function AspectRatioTab() {
               <Ratio className="h-5 w-5 text-slate-400" />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {SUPPORTED_RATIOS.map((ratio) => (
                 <button
                   key={ratio}

@@ -11,6 +11,7 @@ const BRAND_LOCK =
 const CARD_REFERENCE_FOLDERS = {
   '1:1': '1-1',
   '9:16': '9-16',
+  '1.91:1': '1-91-1',
 };
 
 const CARD_COPY_EXTRACTION_SCHEMA = {
@@ -202,6 +203,24 @@ ${buildReferenceStyleSection(referenceLabel, hasRefs)}
 - Button: yellow pill, left-aligned, below text. Match the reference style only.`;
   }
 
+  if (ratio === '1.91:1') {
+    return `${shared}
+
+**CARD DIMENSIONS - 1.91:1 (non-negotiable):**
+- Canvas: wide Google marketing image, equivalent to 1200x628.
+- Card width: about 48-54% of canvas width. It must feel like a compact marketing card, not a full-width banner.
+- Card height: about 34-40% of canvas height.
+- Card position: lower-left or lower-center, with at least 4% canvas margin from left and bottom edges.
+- Keep the main subject, vehicle, and logo fully visible. Do not cover faces, car details, or the logo.
+- Corner radius: about 3.5% of canvas height.
+- Card background color: #F4F4F4.
+- Text color: #6F49E8. Text weight: 700 bold.
+- Text alignment: left-aligned. Line-height about 1.1.
+- Text size: about 8-10% of canvas height per line.
+- Padding inside card: about 4% of canvas width left/right, about 5% of card height top/bottom.
+- Button: yellow pill, left-aligned, below text. Match the reference style only.`;
+  }
+
   return `${shared}
 
 **CARD DIMENSIONS - 9:16 (non-negotiable):**
@@ -242,6 +261,32 @@ ${SCENE_PROHIBITIONS}
       `${base}\n\n## THIS VARIATION\nTight crop - preserve as much of the original composition as possible.`,
       `${base}\n\n## THIS VARIATION\nSlightly more headroom above the subject.`,
       `${base}\n\n## THIS VARIATION\nWider crop to reveal more of the scene around the subject.`,
+    ];
+  }
+
+  if (ratio === '1.91:1') {
+    const base = `
+**TASK:** Reframe the source image to a 1.91:1 landscape canvas - scene only, no UI card.
+
+${SCENE_PROHIBITIONS}
+
+## LAYOUT
+- Canvas: 1.91:1 landscape, equivalent to a 1200x628 Google marketing image.
+- Logo: top-left. Width about 10-12% of canvas width. Top margin about 6-8%.
+- Subject: prominent and natural, with the full face visible.
+- Vehicle/context: keep useful scene detail visible across the wide frame.
+- Bottom-left/lower-center portion: clean scene/background only (a UI card will be added later by the system).
+
+## GEOMETRY
+- EXTEND the scene sideways as needed to reach the wide canvas.
+- Do NOT stretch the subject, car, logo, or any brand element.
+- Do NOT crop the subject face or logo.
+`.trim();
+
+    return [
+      `${base}\n\n## THIS VARIATION\nBalanced landscape crop - preserve the original subject size and extend the sides naturally.`,
+      `${base}\n\n## THIS VARIATION\nMore horizontal scene context - reveal extra environment on both sides while keeping the subject prominent.`,
+      `${base}\n\n## THIS VARIATION\nMarketing image composition - keep a clean lower area for the card while preserving the subject and vehicle context.`,
     ];
   }
 

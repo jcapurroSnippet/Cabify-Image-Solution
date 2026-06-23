@@ -34,6 +34,15 @@ export const describeReplacementChange = (operation) => {
 };
 
 export const describeReplacementStatus = (operation) => {
+  if (operation?.message === 'NO_AVAILABLE_CREATIVE_FOR_RATIO') {
+    const ratio = operation.requiredAspectRatio || 'matching';
+    return {
+      label: `No ${ratio} creative`,
+      description: `Generate or sync a ${ratio} creative before replacing.`,
+      tone: 'warning',
+    };
+  }
+
   if (!operation?.creative) {
     return {
       label: 'No creative',

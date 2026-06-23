@@ -193,8 +193,8 @@ app.post('/api/aspect-ratio', async (request, response) => {
     const { imageDataUrl, imageUrl, targetRatio } = request.body ?? {};
     const parsedRatio = String(targetRatio ?? '').trim();
 
-    if (!['1:1', '9:16'].includes(parsedRatio)) {
-      throw new RequestValidationError('targetRatio must be "1:1" or "9:16".');
+    if (!['1:1', '9:16', '1.91:1'].includes(parsedRatio)) {
+      throw new RequestValidationError('targetRatio must be "1:1", "9:16", or "1.91:1".');
     }
 
     let finalImageDataUrl = imageDataUrl;

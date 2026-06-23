@@ -61,6 +61,8 @@ export const CREATIVE_LIBRARY_HEADERS = [
   'resized_image_url',
   'drive_file_id',
   'drive_url',
+  'aspect_ratio',
+  'image_resolution',
   'image_hash',
   'created_at',
   'reserved_at',

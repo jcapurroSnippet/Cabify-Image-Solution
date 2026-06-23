@@ -57,6 +57,15 @@ test('describes replacement status in operational language', () => {
     describeReplacementStatus(operation({ executableInMode: false, executionPolicy: 'manual_only' })).label,
     'Manual change',
   );
+  assert.equal(
+    describeReplacementStatus(operation({
+      status: 'skipped',
+      creative: null,
+      message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
+      requiredAspectRatio: '1.91:1',
+    })).label,
+    'No 1.91:1 creative',
+  );
 });
 
 test('builds new ad permission copy without dry-run language', () => {

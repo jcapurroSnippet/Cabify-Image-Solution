@@ -17,6 +17,43 @@ import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
 const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
 const EXPECTED_VARIATIONS_PER_RATIO = 3;
+const BATCH_ASPECT_RATIO_DEFINITIONS = [
+  { ratio: '1:1', aliases: ['1:1'] },
+  { ratio: '9:16', aliases: ['9:16'] },
+  { ratio: '1.91:1', aliases: ['1.91:1', '1.91', '1200x628', 'landscape'] },
+];
+const BATCH_ASPECT_RATIOS = BATCH_ASPECT_RATIO_DEFINITIONS.map((definition) => definition.ratio);
+const LEGACY_BATCH_ASPECT_RATIOS = ['1:1', '9:16'];
+
+const createEmptyRatioLinks = () =>
+  Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => [ratio, []]));
+
+const findRatioColumns = (headers, ratio) => {
+  const definition = BATCH_ASPECT_RATIO_DEFINITIONS.find((entry) => entry.ratio === ratio);
+  const aliases = definition?.aliases || [ratio];
+  const tokens = aliases.map((alias) => String(alias).toLowerCase());
+
+  return headers
+    .map((h, idx) => ({ h: String(h || '').toLowerCase(), idx }))
+    .filter((item) => tokens.some((token) => item.h.includes(token)))
+    .map((item) => item.idx);
+};
+
+const getRatioColumns = (headerNames) =>
+  Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => [ratio, findRatioColumns(headerNames, ratio)]));
+
+const hasExplicitRatioColumns = (ratioColumns) =>
+  Object.values(ratioColumns).some((columns) => columns.length > 0);
+
+const getTargetRatios = (ratioColumns) =>
+  hasExplicitRatioColumns(ratioColumns)
+    ? BATCH_ASPECT_RATIOS.filter((ratio) => ratioColumns[ratio]?.length > 0)
+    : LEGACY_BATCH_ASPECT_RATIOS;
+
+const getRatioFileSlug = (ratio) => ratio.replace(/\./g, '-').replace(/:/g, '-');
+
+export const getBatchRatioColumns = getRatioColumns;
+export const getBatchTargetRatios = getTargetRatios;
 
 const extractUrlFromFormula = (formula) => {
   if (typeof formula !== 'string') return null;
@@ -684,18 +721,8 @@ export const getBatchStatus = async (options) => {
   const imageUrlColumnName =
     headerNames[imageUrlColumnIndex] || `Column${String.fromCharCode(65 + imageUrlColumnIndex)}`;
 
-  const findRatioColumns = (headers, ratio) => {
-    const token = String(ratio).toLowerCase();
-    return headers
-      .map((h, idx) => ({ h: String(h || '').toLowerCase(), idx }))
-      .filter((item) => item.h.includes(token))
-      .map((item) => item.idx);
-  };
-
-  const ratioColumns = {
-    '1:1': findRatioColumns(headerNames, '1:1'),
-    '9:16': findRatioColumns(headerNames, '9:16'),
-  };
+  const ratioColumns = getRatioColumns(headerNames);
+  const explicitRatioColumns = hasExplicitRatioColumns(ratioColumns);
 
   const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
   const totalRows = rows.length;
@@ -717,24 +744,28 @@ export const getBatchStatus = async (options) => {
       continue;
     }
 
-    let links11 = [];
-    let links916 = [];
+    const linksByRatio = createEmptyRatioLinks();
     let expectedCount = 0;
 
-    if (ratioColumns['1:1'].length > 0 || ratioColumns['9:16'].length > 0) {
-      links11 = collectLinksFromColumns(row, headerNames, ratioColumns['1:1']);
-      links916 = collectLinksFromColumns(row, headerNames, ratioColumns['9:16']);
-      expectedCount = ratioColumns['1:1'].length + ratioColumns['9:16'].length;
+    if (explicitRatioColumns) {
+      for (const ratio of BATCH_ASPECT_RATIOS) {
+        linksByRatio[ratio] = collectLinksFromColumns(row, headerNames, ratioColumns[ratio] || []);
+        expectedCount += ratioColumns[ratio]?.length || 0;
+      }
     } else {
       const start = imageUrlColumnIndex + 1;
-      const cols11 = [start, start + 1, start + 2];
-      const cols916 = [start + 3, start + 4, start + 5];
-      links11 = collectLinksFromColumns(row, headerNames, cols11);
-      links916 = collectLinksFromColumns(row, headerNames, cols916);
-      expectedCount = EXPECTED_VARIATIONS_PER_RATIO * 2;
+      for (const [ratioIndex, ratio] of LEGACY_BATCH_ASPECT_RATIOS.entries()) {
+        const ratioStart = start + ratioIndex * EXPECTED_VARIATIONS_PER_RATIO;
+        const cols = Array.from(
+          { length: EXPECTED_VARIATIONS_PER_RATIO },
+          (_, offset) => ratioStart + offset,
+        );
+        linksByRatio[ratio] = collectLinksFromColumns(row, headerNames, cols);
+      }
+      expectedCount = EXPECTED_VARIATIONS_PER_RATIO * LEGACY_BATCH_ASPECT_RATIOS.length;
     }
 
-    const foundCount = links11.length + links916.length;
+    const foundCount = Object.values(linksByRatio).reduce((total, links) => total + links.length, 0);
     if (expectedCount === 0) {
       expectedCount = foundCount > 0 ? foundCount : 0;
     }
@@ -743,10 +774,7 @@ export const getBatchStatus = async (options) => {
       completedRows += 1;
       completedMap[rowNumber] = {
         status: 'completed',
-        links: {
-          '1:1': links11,
-          '9:16': links916,
-        },
+        links: linksByRatio,
       };
     }
   }
@@ -779,7 +807,7 @@ export const getBatchStatus = async (options) => {
  *   imageUrl: string,
  *   rowData: object,
  *   error?: string,
- *   results?: { ratio: '1:1' | '9:16', links: string[] }
+ *   results?: { ratio: '1:1' | '9:16' | '1.91:1', links: string[] }
  * }
  */
 export const processBatch = async (options) => {
@@ -959,18 +987,9 @@ export const processBatch = async (options) => {
       }
     }
 
-    const findRatioColumns = (headers, ratio) => {
-      const token = String(ratio).toLowerCase();
-      return headers
-        .map((h, idx) => ({ h: String(h || '').toLowerCase(), idx }))
-        .filter((item) => item.h.includes(token))
-        .map((item) => item.idx);
-    };
-
-    const ratioColumns = {
-      '1:1': findRatioColumns(headerNames, '1:1'),
-      '9:16': findRatioColumns(headerNames, '9:16'),
-    };
+    const ratioColumns = getRatioColumns(headerNames);
+    const explicitRatioColumns = hasExplicitRatioColumns(ratioColumns);
+    const targetRatios = getTargetRatios(ratioColumns);
 
     // Step 4: Read all rows from sheet
     onProgress?.({
@@ -990,7 +1009,7 @@ export const processBatch = async (options) => {
     // Step 5: Process each row
     const updates = [];
 
-    console.log(`[BATCH] Starting row loop. imageUrlColumnName="${imageUrlColumnName}", ratioColumns=${JSON.stringify(ratioColumns)}`);
+    console.log(`[BATCH] Starting row loop. imageUrlColumnName="${imageUrlColumnName}", ratioColumns=${JSON.stringify(ratioColumns)}, targetRatios=${targetRatios.join(',')}`);
 
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
       const row = rows[rowIndex];
@@ -1027,29 +1046,20 @@ export const processBatch = async (options) => {
         const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
         console.log(`[BATCH] Row ${rowNumber}: download complete, size=${imageDataUrl?.length ?? 0}`);
 
-        // Generate 1:1 variations
-        onProgress?.({
-          rowNumber,
-          currentRow: rowIndex + 1,
-          totalRows,
-          status: 'generating',
-          ratio: '1:1',
-          rowData: row,
-        });
+        const generatedImagesByRatio = {};
+        for (const ratio of targetRatios) {
+          onProgress?.({
+            rowNumber,
+            currentRow: rowIndex + 1,
+            totalRows,
+            status: 'generating',
+            ratio,
+            rowData: row,
+          });
 
-        const { images: oneToOneImages } = await generateAspectRatioImages(imageDataUrl, '1:1');
-
-        // Generate 9:16 variations
-        onProgress?.({
-          rowNumber,
-          currentRow: rowIndex + 1,
-          totalRows,
-          status: 'generating',
-          ratio: '9:16',
-          rowData: row,
-        });
-
-        const { images: nineByEditSixteenImages } = await generateAspectRatioImages(imageDataUrl, '9:16');
+          const { images } = await generateAspectRatioImages(imageDataUrl, ratio);
+          generatedImagesByRatio[ratio] = images;
+        }
 
         // Upload all variations to Drive
         onProgress?.({
@@ -1060,35 +1070,21 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
-        const uploadedLinks = {
-          '1:1': [],
-          '9:16': [],
-        };
+        const uploadedLinks = createEmptyRatioLinks();
 
-        // Upload 1:1 variations
-        for (let i = 0; i < oneToOneImages.length; i++) {
-          const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_1-1_var${i + 1}.png`;
-          let link;
-          if (photosAlbumId) {
-            link = await uploadImageToPhotos(oneToOneImages[i], fileName, photosAlbumId);
-          } else {
-            const upload = await uploadImageToDrive(oneToOneImages[i], fileName, folderId);
-            link = await makeFilePublic(upload.fileId);
+        for (const ratio of targetRatios) {
+          const images = generatedImagesByRatio[ratio] || [];
+          for (let i = 0; i < images.length; i++) {
+            const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_${getRatioFileSlug(ratio)}_var${i + 1}.png`;
+            let link;
+            if (photosAlbumId) {
+              link = await uploadImageToPhotos(images[i], fileName, photosAlbumId);
+            } else {
+              const upload = await uploadImageToDrive(images[i], fileName, folderId);
+              link = await makeFilePublic(upload.fileId);
+            }
+            uploadedLinks[ratio].push(link);
           }
-          uploadedLinks['1:1'].push(link);
-        }
-
-        // Upload 9:16 variations
-        for (let i = 0; i < nineByEditSixteenImages.length; i++) {
-          const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_9-16_var${i + 1}.png`;
-          let link;
-          if (photosAlbumId) {
-            link = await uploadImageToPhotos(nineByEditSixteenImages[i], fileName, photosAlbumId);
-          } else {
-            const upload = await uploadImageToDrive(nineByEditSixteenImages[i], fileName, folderId);
-            link = await makeFilePublic(upload.fileId);
-          }
-          uploadedLinks['9:16'].push(link);
         }
 
         // Prepare sheet updates - place outputs into columns whose headers include the aspect ratio
@@ -1111,13 +1107,12 @@ export const processBatch = async (options) => {
           return true;
         };
 
-        const used11 = applyLinksToColumns('1:1', uploadedLinks['1:1']);
-        const used916 = applyLinksToColumns('9:16', uploadedLinks['9:16']);
+        const usedRatioColumns = targetRatios.map((ratio) => applyLinksToColumns(ratio, uploadedLinks[ratio]));
 
         // Fallback: if no ratio columns detected, write after image URL column as before
-        if (!used11 && !used916) {
+        if (!explicitRatioColumns && !usedRatioColumns.some(Boolean)) {
           const outputColumnStart = imageUrlColumnIndex + 1;
-          const fallbackLinks = [...uploadedLinks['1:1'], ...uploadedLinks['9:16']];
+          const fallbackLinks = targetRatios.flatMap((ratio) => uploadedLinks[ratio]);
           for (let i = 0; i < fallbackLinks.length; i++) {
             updates.push({
               range: `${sheetName}!${columnIndexToLetter(outputColumnStart + i)}${rowNumber}`,

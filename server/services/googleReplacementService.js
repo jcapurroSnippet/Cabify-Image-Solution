@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import sharp from 'sharp';
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 import {
   detectCategoryFromName,
@@ -24,8 +23,12 @@ import {
   replaceAdCreative,
 } from './googleAdsService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
-
-const ASPECT_RATIO_TOLERANCE = 0.01;
+import {
+  assertReplacementImageAspectRatio,
+  formatResolution,
+  getImageResolutionFromDataUrl,
+  getRequiredAspectRatio,
+} from './imageRatio.js';
 
 const buildOperationId = (parts) =>
   `replacement_${crypto
@@ -89,95 +92,6 @@ const getConfigForReplacement = async (sheetsUrl) => {
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
 };
 
-const parseResolution = (value) => {
-  const match = String(value || '').match(/(\d+)\s*[xX\u00d7]\s*(\d+)/);
-  if (!match) return null;
-
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-
-  return { width, height };
-};
-
-const greatestCommonDivisor = (left, right) => {
-  let a = Math.abs(Math.round(left));
-  let b = Math.abs(Math.round(right));
-  while (b > 0) {
-    const next = a % b;
-    a = b;
-    b = next;
-  }
-  return a || 1;
-};
-
-const formatResolution = ({ width, height }) => `${width}x${height}`;
-
-const formatAspectRatio = ({ width, height }) => {
-  const ratio = width / height;
-  const knownRatios = [
-    { label: '1:1', value: 1 },
-    { label: '9:16', value: 9 / 16 },
-    { label: '16:9', value: 16 / 9 },
-    { label: '4:5', value: 4 / 5 },
-    { label: '1.91:1', value: 1.91 },
-  ];
-  const knownRatio = knownRatios.find((candidate) => Math.abs(ratio - candidate.value) <= ASPECT_RATIO_TOLERANCE);
-  if (knownRatio) return knownRatio.label;
-
-  const divisor = greatestCommonDivisor(width, height);
-  return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
-};
-
-const hasMatchingAspectRatio = (expected, replacement) =>
-  Math.abs((expected.width / expected.height) - (replacement.width / replacement.height)) <= ASPECT_RATIO_TOLERANCE;
-
-export const readImageResolutionFromDataUrl = async (dataUrl) => {
-  const match = String(dataUrl || '').match(/^data:[^;]+;base64,(.+)$/);
-  if (!match) throw new Error('Invalid image data URL format.');
-
-  const metadata = await sharp(Buffer.from(match[1], 'base64')).metadata();
-  const width = Number(metadata.width || 0);
-  const height = Number(metadata.height || 0);
-
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new Error('Could not read replacement image resolution.');
-  }
-
-  return { width, height };
-};
-
-export const assertReplacementImageAspectRatio = ({
-  expectedResolution,
-  replacementResolution,
-  creativeId,
-}) => {
-  const expected = parseResolution(expectedResolution);
-  if (!expected) return null;
-
-  const replacement = parseResolution(
-    typeof replacementResolution === 'string' ? replacementResolution : formatResolution(replacementResolution || {}),
-  );
-  if (!replacement) throw new Error('Could not read replacement image resolution.');
-
-  if (hasMatchingAspectRatio(expected, replacement)) {
-    return {
-      expected,
-      replacement,
-      expectedAspectRatio: formatAspectRatio(expected),
-      replacementAspectRatio: formatAspectRatio(replacement),
-    };
-  }
-
-  const expectedAspectRatio = formatAspectRatio(expected);
-  const replacementAspectRatio = formatAspectRatio(replacement);
-  throw new Error(
-    `Replacement creative ${creativeId || 'selected creative'} has resolution ${formatResolution(replacement)} ` +
-      `(${replacementAspectRatio}), but Google asset expects ${formatResolution(expected)} ` +
-      `(${expectedAspectRatio}). Choose a ${expectedAspectRatio} creative for this replacement.`
-  );
-};
-
 export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
@@ -234,6 +148,10 @@ export const buildGoogleReplacementPlan = async ({
   for (const asset of lowPerformers) {
     const categoryMatch = buildCategoryMatch(asset, config, selectedCategories);
     const plazasMatch = buildPlazasMatch(asset, config);
+    const requiredAspectRatio = getRequiredAspectRatio({
+      oldImageResolution: asset.imageResolution || '',
+      assetFieldType: asset.assetFieldType,
+    });
     const baseOperation = {
       id: '',
       status: 'skipped',
@@ -255,6 +173,7 @@ export const buildGoogleReplacementPlan = async ({
       oldAssetResourceName: asset.assetResourceName,
       oldAssetUrl: asset.assetUrl,
       oldImageResolution: asset.imageResolution || '',
+      requiredAspectRatio,
       googleAdsUrl: asset.googleAdsUrl || '',
       reason: asset.reason,
       metrics: asset.metrics,
@@ -307,13 +226,15 @@ export const buildGoogleReplacementPlan = async ({
       config.selectionStrategy,
       reservedCreativeIds,
       plazasMatch.plazas,
+      requiredAspectRatio,
     );
 
     if (!creative) {
       operations.push({
         ...baseOperation,
         ...replacementCapability,
-        message: 'NO_AVAILABLE_CREATIVE',
+        message: requiredAspectRatio ? 'NO_AVAILABLE_CREATIVE_FOR_RATIO' : 'NO_AVAILABLE_CREATIVE',
+        blockedMessage: requiredAspectRatio ? `No ${requiredAspectRatio} creative` : undefined,
       });
       continue;
     }
@@ -328,6 +249,8 @@ export const buildGoogleReplacementPlan = async ({
         category: creative.category,
         plazas: creative.plazas || '',
         drive_url: creative.drive_url,
+        aspect_ratio: creative.aspect_ratio || '',
+        image_resolution: creative.image_resolution || '',
         created_at: creative.created_at,
       },
       message: replacementCapability.executableInMode
@@ -500,9 +423,10 @@ export const executeGoogleReplacements = async ({
       const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id);
       const creativeUrl = reserved.drive_url || operation.creative.drive_url;
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
-      const replacementImageResolution = await readImageResolutionFromDataUrl(imageDataUrl);
+      const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
       const imageAspectRatioValidation = assertReplacementImageAspectRatio({
         expectedResolution: operation.oldImageResolution,
+        expectedAspectRatio: operation.requiredAspectRatio,
         replacementResolution: replacementImageResolution,
         creativeId,
       });

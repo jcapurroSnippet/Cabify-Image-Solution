@@ -32,6 +32,12 @@ import {
 import { getSheetsClient } from './googleAuth.js';
 import { findOrCreateDriveFolder, makeFilePublic, uploadBufferToDrive } from './driveService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
+import {
+  classifyAspectRatio,
+  formatResolution,
+  getImageResolutionFromBuffer,
+  getImageResolutionFromDataUrl,
+} from './imageRatio.js';
 
 const DEFAULT_MAX_ROWS = Number(process.env.CREATIVE_LIBRARY_MAX_SCAN_ROWS || 500);
 export const CREATIVE_LIBRARY_SYNC_LOG_PATH =
@@ -134,7 +140,7 @@ const findHeaderRowIndex = (rowData) => {
     const score =
       texts.length +
       normalized.filter((text) =>
-        ['campaign', 'campana', 'campaña', 'categoria', 'category', 'plaza', 'plazas', 'ciudad', 'copy', 'preview', 'image', 'imagen', '1:1', '9:16'].some((keyword) =>
+        ['campaign', 'campana', 'campaña', 'categoria', 'category', 'plaza', 'plazas', 'ciudad', 'copy', 'preview', 'image', 'imagen', '1:1', '9:16', '1.91', '1200x628', 'landscape'].some((keyword) =>
           text.includes(keyword),
         ),
       ).length * 2;
@@ -668,7 +674,14 @@ const findOutputColumns = (headers) => {
   const isBlankOrGeneratedHeader = (header) => !header || /^column[a-z]+$/i.test(header);
 
   normalizedHeaders.forEach((header, index) => {
-    if (!header.includes('1:1') && !header.includes('9:16')) return;
+    if (
+      !header.includes('1:1') &&
+      !header.includes('9:16') &&
+      !header.includes('1.91:1') &&
+      !header.includes('1.91') &&
+      !header.includes('1200x628') &&
+      !header.includes('landscape')
+    ) return;
 
     outputColumns.add(index);
     for (let nextIndex = index + 1; nextIndex < normalizedHeaders.length; nextIndex++) {
@@ -960,6 +973,63 @@ const normalizeLibraryRowPlazas = async (sheets, spreadsheetId, libraryRows, con
   });
 };
 
+const normalizeLibraryRowImageMetadata = async (sheets, spreadsheetId, libraryRows) => {
+  const aspectRatioColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('aspect_ratio');
+  const imageResolutionColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('image_resolution');
+  if (aspectRatioColumnIndex < 0 || imageResolutionColumnIndex < 0) return;
+
+  const updates = [];
+
+  for (const row of libraryRows) {
+    const hasAspectRatio = String(row.aspect_ratio || '').trim();
+    const hasResolution = String(row.image_resolution || '').trim();
+    if (hasAspectRatio && hasResolution) continue;
+
+    const imageUrl = row.drive_url || row.resized_image_url;
+    if (!imageUrl) continue;
+
+    try {
+      const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
+      const imageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
+      const imageResolutionText = formatResolution(imageResolution);
+      const aspectRatio = classifyAspectRatio(imageResolution);
+
+      if (!hasAspectRatio) {
+        row.aspect_ratio = aspectRatio || '';
+        updates.push({
+          range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(aspectRatioColumnIndex)}${row.__rowNumber}`),
+          values: [[row.aspect_ratio]],
+        });
+      }
+
+      if (!hasResolution) {
+        row.image_resolution = imageResolutionText;
+        updates.push({
+          range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(imageResolutionColumnIndex)}${row.__rowNumber}`),
+          values: [[imageResolutionText]],
+        });
+      }
+    } catch (error) {
+      writeSyncLog('warn', 'Image metadata backfill failed', {
+        creativeId: row.creative_id || '',
+        rowNumber: row.__rowNumber,
+        imageUrl,
+        error: error.message,
+      });
+    }
+  }
+
+  if (updates.length === 0) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates,
+    },
+  });
+};
+
 export const appendAuditLog = async (spreadsheetId, entries) => {
   if (!entries || entries.length === 0) return;
 
@@ -1047,6 +1117,7 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
   const creatives = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, creatives, config);
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, creatives, config);
+  await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, creatives);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, creatives);
   const byCategory = {};
   const byStatus = {};
@@ -1115,7 +1186,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
 
   const outputColumns = findOutputColumns(headers);
   if (outputColumns.length === 0) {
-    throw new Error('No output columns found. Expected headers containing "1:1" or "9:16".');
+    throw new Error('No output columns found. Expected headers containing "1:1", "9:16", or "1.91:1".');
   }
   const inferredCategory = detectCategoryFromName(sourceSheetName, config).category;
   const inferredPlazas = '';
@@ -1123,6 +1194,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   const libraryRows = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, libraryRows, config);
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, libraryRows, config);
+  await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, libraryRows);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, libraryRows);
   const existing = getExistingLibraryIndexes(libraryRows);
   const categoryFolderCache = new Map();
@@ -1242,6 +1314,9 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
         const imageDataUrl = await downloadImageAsDataUrl(resizedImageUrl);
         const { buffer, mimeType } = dataUrlToBuffer(imageDataUrl);
         const imageHash = hashBuffer(buffer);
+        const imageResolution = await getImageResolutionFromBuffer(buffer);
+        const imageResolutionText = formatResolution(imageResolution);
+        const aspectRatio = classifyAspectRatio(imageResolution);
         const duplicateByHash = existing.byHash.get(imageHash);
 
         if (duplicateByHash) {
@@ -1270,6 +1345,8 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           resized_image_url: resizedImageUrl,
           drive_file_id: upload.fileId,
           drive_url: driveUrl,
+          aspect_ratio: aspectRatio || '',
+          image_resolution: imageResolutionText,
           image_hash: imageHash,
           created_at: createdAt,
           reserved_at: '',
@@ -1300,7 +1377,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           new_asset_resource_name: '',
           status: 'success',
           message: `Stored ${sourceSheetName}!${sourceCell}`,
-          payload_json: { rowNumber, sourceCell, resizedImageUrl, driveUrl },
+          payload_json: { rowNumber, sourceCell, resizedImageUrl, driveUrl, aspectRatio, imageResolution: imageResolutionText },
         });
       } catch (error) {
         rowCounts.storageFailed += 1;

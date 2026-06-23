@@ -3,7 +3,7 @@
 Single Vite + React app that combines two image workflows in separate tabs:
 
 - `Nano Editor`: prompt-driven image editing with strict Cabify constraints.
-- `Aspect Ratio`: generates `1:1` and `9:16` variants from one source image.
+- `Aspect Ratio`: generates `1:1`, `9:16`, and `1.91:1` variants from one source image.
 
 ## Requirements
 

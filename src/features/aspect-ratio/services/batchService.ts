@@ -5,6 +5,7 @@ export interface BatchStatusRow {
   links?: {
     '1:1': string[];
     '9:16': string[];
+    '1.91:1': string[];
   };
 }
 

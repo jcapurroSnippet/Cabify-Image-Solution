@@ -17,6 +17,8 @@ export interface CreativeLibraryItem {
   source_row: string;
   source_cell: string;
   drive_url: string;
+  aspect_ratio?: string;
+  image_resolution?: string;
   created_at: string;
   used_at: string;
   replacement_operation_id: string;
@@ -147,14 +149,19 @@ export interface ReplacementOperation {
   oldAssetId?: string;
   oldAssetResourceName?: string;
   oldImageResolution?: string;
+  requiredAspectRatio?: string | null;
   googleAdsUrl?: string;
   creative: {
     creative_id: string;
     category: string;
     plazas?: string;
     drive_url: string;
+    aspect_ratio?: string;
+    image_resolution?: string;
     created_at: string;
   } | null;
+  replacementImageResolution?: string;
+  replacementAspectRatio?: string | null;
   metrics: LowPerformer['metrics'];
 }
 

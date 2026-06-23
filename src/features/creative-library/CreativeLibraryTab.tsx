@@ -777,7 +777,12 @@ export default function CreativeLibraryTab() {
                           <p>{operation.campaignName}</p>
                           <p className="text-xs text-slate-500">{operation.adGroupName || operation.assetGroupName}</p>
                         </td>
-                        <td className="px-3 py-2 text-slate-300">{operation.oldImageResolution || '-'}</td>
+                        <td className="px-3 py-2 text-slate-300">
+                          <p>{operation.oldImageResolution || '-'}</p>
+                          {operation.requiredAspectRatio && (
+                            <p className="text-xs text-slate-500">Required: {operation.requiredAspectRatio}</p>
+                          )}
+                        </td>
                         <td className="px-3 py-2">
                           {operation.googleAdsUrl ? (
                             <a
@@ -800,7 +805,14 @@ export default function CreativeLibraryTab() {
                             <p className="text-xs text-slate-500">Creative: {operation.creative.plazas}</p>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-slate-300">{operation.creative?.creative_id || '-'}</td>
+                        <td className="px-3 py-2 text-slate-300">
+                          <p>{operation.creative?.creative_id || '-'}</p>
+                          {(operation.creative?.aspect_ratio || operation.creative?.image_resolution) && (
+                            <p className="text-xs text-slate-500">
+                              {[operation.creative?.aspect_ratio, operation.creative?.image_resolution].filter(Boolean).join(' / ')}
+                            </p>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}

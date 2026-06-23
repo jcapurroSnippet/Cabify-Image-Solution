@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { normalizeAspectRatio } from './imageRatio.js';
 
 export const normalizeCategory = (value, categories) => {
   const text = String(value ?? '').trim().toLowerCase();
@@ -462,13 +463,17 @@ export const selectCreativeForCategory = (
   strategy = 'oldest_first',
   reservedIds = new Set(),
   plazas = '',
+  requiredAspectRatio = null,
 ) => {
   const normalizedCategory = String(category || '').toLowerCase();
+  const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
   const candidates = creatives.filter(
     (creative) =>
       String(creative.category || '').toLowerCase() === normalizedCategory &&
       creative.status === 'available' &&
-      !reservedIds.has(creative.creative_id),
+      !reservedIds.has(creative.creative_id) &&
+      (!normalizedRequiredAspectRatio ||
+        normalizeAspectRatio(creative.aspect_ratio) === normalizedRequiredAspectRatio),
   );
   const requestedPlazas = plazasToSet(plazas);
   const wantsAll = requestedPlazas.has('all');
