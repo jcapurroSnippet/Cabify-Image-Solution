@@ -1,6 +1,44 @@
 const isExecutable = (operation) =>
   operation?.status === 'planned' && operation?.executableInMode !== false && Boolean(operation?.creative);
 
+export const describeGoogleAdType = (target = {}) => {
+  const adType = String(target.adType || '').toUpperCase();
+  const targetType = String(target.targetType || '').toUpperCase();
+
+  if (targetType === 'ASSET_GROUP_ASSET' || adType === 'ASSET_GROUP_ASSET') {
+    return {
+      label: 'Asset group asset',
+      description: 'Replaces the asset association in an asset group.',
+    };
+  }
+
+  if (adType === 'APP_ENGAGEMENT_AD') {
+    return {
+      label: 'App engagement ad',
+      description: 'Updates the image list on the existing ad.',
+    };
+  }
+
+  if (adType === 'APP_AD') {
+    return {
+      label: 'App install ad',
+      description: 'Needs a manual change in Google Ads.',
+    };
+  }
+
+  if (adType === 'IMAGE_AD') {
+    return {
+      label: 'Image ad',
+      description: 'Updates the existing image ad.',
+    };
+  }
+
+  return {
+    label: 'Google Ads target',
+    description: 'Review this item before replacing.',
+  };
+};
+
 export const describeReplacementChange = (operation) => {
   if (!operation || operation.executableInMode === false || operation.executionPolicy === 'manual_only') {
     return {

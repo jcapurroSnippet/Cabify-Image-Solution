@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildNewAdPermissionMessage,
+  describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
   summarizeReplacementSelection,
@@ -74,4 +75,23 @@ test('builds new ad permission copy without dry-run language', () => {
   assert.match(message, /Google needs to create a new ad for 2 replacements/);
   assert.match(message, /Continue and replace/);
   assert.doesNotMatch(message.toLowerCase(), /dry run/);
+});
+
+test('describes Google Ads target types plainly', () => {
+  assert.deepEqual(describeGoogleAdType({ adType: 'IMAGE_AD' }), {
+    label: 'Image ad',
+    description: 'Updates the existing image ad.',
+  });
+  assert.deepEqual(describeGoogleAdType({ adType: 'APP_ENGAGEMENT_AD' }), {
+    label: 'App engagement ad',
+    description: 'Updates the image list on the existing ad.',
+  });
+  assert.deepEqual(describeGoogleAdType({ adType: 'ASSET_GROUP_ASSET', targetType: 'ASSET_GROUP_ASSET' }), {
+    label: 'Asset group asset',
+    description: 'Replaces the asset association in an asset group.',
+  });
+  assert.deepEqual(describeGoogleAdType({ adType: 'APP_AD' }), {
+    label: 'App install ad',
+    description: 'Needs a manual change in Google Ads.',
+  });
 });

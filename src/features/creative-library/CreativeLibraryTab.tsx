@@ -33,6 +33,7 @@ import {
 import {
   buildNewAdPermissionMessage,
   buildReplacementCompletedItems,
+  describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
   summarizeReplacementSelection,
@@ -418,6 +419,18 @@ export default function CreativeLibraryTab() {
     if (tone === 'error') return 'border-red-400/30 bg-red-400/10 text-red-100';
     return 'border-slate-600/40 bg-slate-900/40 text-slate-200';
   };
+  const renderGoogleAdType = (target: Pick<LowPerformer, 'adType' | 'targetType'>) => {
+    const adType = describeGoogleAdType(target);
+
+    return (
+      <span
+        className="inline-flex max-w-44 items-center rounded-md border border-slate-700/80 bg-slate-900/40 px-2 py-1 text-xs text-slate-200"
+        title={adType.description}
+      >
+        <span className="truncate">{adType.label}</span>
+      </span>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -716,6 +729,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Change</th>
                     <th className="px-3 py-2">Location</th>
                     <th className="px-3 py-2">Resolution</th>
@@ -767,6 +781,7 @@ export default function CreativeLibraryTab() {
                             <span className="truncate">{status.label}</span>
                           </span>
                         </td>
+                        <td className="px-3 py-2">{renderGoogleAdType(operation)}</td>
                         <td className="px-3 py-2">
                           <div className="max-w-48">
                             <p className="text-slate-200">{change.label}</p>
@@ -826,6 +841,7 @@ export default function CreativeLibraryTab() {
                   <tr>
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
+                    <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Campaign</th>
                     <th className="px-3 py-2">Ad group</th>
                     <th className="px-3 py-2">Category</th>
@@ -856,6 +872,7 @@ export default function CreativeLibraryTab() {
                           )}
                         </div>
                       </td>
+                      <td className="px-3 py-2">{renderGoogleAdType(asset)}</td>
                       <td className="px-3 py-2 text-slate-200">{asset.campaignName}</td>
                       <td className="px-3 py-2 text-slate-300">{asset.adGroupName || asset.assetGroupName}</td>
                       <td className="px-3 py-2">

@@ -790,6 +790,57 @@ export const buildAppAdCloneReplacementMutations = ({
   throw new Error(`Unsupported clone replacement ad type: ${normalizedAdType || 'UNKNOWN'}.`);
 };
 
+export const buildImageAdReplacementMutations = ({
+  assetCreate,
+  oldAdResourceName,
+  newAssetResourceName,
+}) => [
+  assetCreate,
+  {
+    entity: 'ad_group_ad',
+    operation: 'update',
+    resource: {
+      resource_name: oldAdResourceName,
+      ad: {
+        image_ad: {
+          image_asset: { asset: newAssetResourceName },
+        },
+      },
+    },
+  },
+];
+
+export const buildAssetGroupAssetReplacementMutations = ({
+  assetCreate,
+  cleanCustomerId,
+  target,
+  newAssetResourceName,
+}) => {
+  if (!target?.assetGroupId) throw new Error('assetGroupId is required for asset group replacements.');
+  if (!target?.assetFieldType) throw new Error('assetFieldType is required for asset group replacements.');
+  if (!target?.associationResourceName) {
+    throw new Error('associationResourceName is required to remove the old asset group association.');
+  }
+
+  return [
+    assetCreate,
+    {
+      entity: 'asset_group_asset',
+      operation: 'create',
+      resource: {
+        asset_group: `customers/${cleanCustomerId}/assetGroups/${target.assetGroupId}`,
+        asset: newAssetResourceName,
+        field_type: normalizeGoogleAssetFieldType(target.assetFieldType),
+      },
+    },
+    {
+      entity: 'asset_group_asset',
+      operation: 'remove',
+      resource: target.associationResourceName,
+    },
+  ];
+};
+
 export const buildAppEngagementAdImageUpdateMutations = ({
   assetCreate,
   cleanCustomerId,
@@ -956,27 +1007,24 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
   };
 
   if (targetType === 'ASSET_GROUP_ASSET') {
-    if (!target.assetGroupId) throwWithGoogleAdsTrace(new Error('assetGroupId is required for asset group replacements.'), googleAdsTrace);
-    if (!target.assetFieldType) throwWithGoogleAdsTrace(new Error('assetFieldType is required for asset group replacements.'), googleAdsTrace);
-    if (!target.associationResourceName) throwWithGoogleAdsTrace(new Error('associationResourceName is required to remove the old asset group association.'), googleAdsTrace);
+    let assetGroupReplacementMutations;
+    try {
+      assetGroupReplacementMutations = buildAssetGroupAssetReplacementMutations({
+        assetCreate,
+        cleanCustomerId,
+        target,
+        newAssetResourceName: tempAssetResourceName,
+      });
+    } catch (error) {
+      throwWithGoogleAdsTrace(error, googleAdsTrace);
+    }
 
-    const replacement = await runTracedAtomicReplacementMutations(customer, [
-      assetCreate,
-      {
-        entity: 'asset_group_asset',
-        operation: 'create',
-        resource: {
-          asset_group: `customers/${cleanCustomerId}/assetGroups/${target.assetGroupId}`,
-          asset: tempAssetResourceName,
-          field_type: normalizeGoogleAssetFieldType(target.assetFieldType),
-        },
-      },
-      {
-        entity: 'asset_group_asset',
-        operation: 'remove',
-        resource: target.associationResourceName,
-      },
-    ], googleAdsTrace, 'upload_asset_and_replace_asset_group_asset');
+    const replacement = await runTracedAtomicReplacementMutations(
+      customer,
+      assetGroupReplacementMutations,
+      googleAdsTrace,
+      'upload_asset_and_replace_asset_group_asset',
+    );
 
     return {
       success: true,
@@ -999,23 +1047,17 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
   const oldAdResourceName = target.adResourceName || `customers/${cleanCustomerId}/adGroupAds/${target.adGroupId}~${target.adId}`;
 
   if (adType === 'IMAGE_AD') {
-    const updatedAd = {
-      image_ad: {
-        image_asset: { asset: tempAssetResourceName },
-      },
-    };
-
-    const replacement = await runTracedAtomicReplacementMutations(customer, [
+    const imageAdReplacementMutations = buildImageAdReplacementMutations({
       assetCreate,
-      {
-        entity: 'ad_group_ad',
-        operation: 'update',
-        resource: {
-          resource_name: oldAdResourceName,
-          ad: updatedAd,
-        },
-      },
-    ], googleAdsTrace, 'upload_asset_and_update_image_ad');
+      oldAdResourceName,
+      newAssetResourceName: tempAssetResourceName,
+    });
+    const replacement = await runTracedAtomicReplacementMutations(
+      customer,
+      imageAdReplacementMutations,
+      googleAdsTrace,
+      'upload_asset_and_update_image_ad',
+    );
 
     return {
       success: true,

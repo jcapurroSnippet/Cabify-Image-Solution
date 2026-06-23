@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   assertAppEngagementAdImageUpdate,
   buildAppAdCloneReplacementMutations,
+  buildAssetGroupAssetReplacementMutations,
   buildAppEngagementAdImageUpdateMutations,
+  buildImageAdReplacementMutations,
   replaceAdCreative,
 } from '../server/services/googleAdsService.js';
 
@@ -29,6 +31,86 @@ test('does not build API removal mutations for app install ads', () => {
   assert.throws(
     () => buildAppAdCloneReplacementMutations(buildInput('APP_AD')),
     /App Ad image replacement must be completed directly in Google Ads/,
+  );
+});
+
+test('builds image ad replacement mutations without remove operations', () => {
+  const mutations = buildImageAdReplacementMutations({
+    assetCreate: buildInput('IMAGE_AD').assetCreate,
+    oldAdResourceName: 'customers/123/adGroupAds/456~789',
+    newAssetResourceName: 'customers/123/assets/-1',
+  });
+
+  assert.deepEqual(
+    mutations.map((mutation) => `${mutation.entity}:${mutation.operation}`),
+    ['asset:create', 'ad_group_ad:update'],
+  );
+  assert.equal(mutations[1].resource.resource_name, 'customers/123/adGroupAds/456~789');
+  assert.equal(mutations[1].resource.ad.image_ad.image_asset.asset, 'customers/123/assets/-1');
+  assert.equal(
+    mutations.some((mutation) => mutation.operation === 'remove'),
+    false,
+  );
+});
+
+test('builds asset group replacement mutations with explicit old association removal', () => {
+  const mutations = buildAssetGroupAssetReplacementMutations({
+    assetCreate: buildInput('ASSET_GROUP_ASSET').assetCreate,
+    cleanCustomerId: '123',
+    target: {
+      assetGroupId: '999',
+      assetFieldType: 'MARKETING_IMAGE',
+      associationResourceName: 'customers/123/assetGroupAssets/999~111~MARKETING_IMAGE',
+    },
+    newAssetResourceName: 'customers/123/assets/-1',
+  });
+
+  assert.deepEqual(
+    mutations.map((mutation) => `${mutation.entity}:${mutation.operation}`),
+    ['asset:create', 'asset_group_asset:create', 'asset_group_asset:remove'],
+  );
+  assert.equal(mutations[1].resource.asset_group, 'customers/123/assetGroups/999');
+  assert.equal(mutations[1].resource.asset, 'customers/123/assets/-1');
+  assert.equal(mutations[1].resource.field_type, 'MARKETING_IMAGE');
+  assert.equal(mutations[2].resource, 'customers/123/assetGroupAssets/999~111~MARKETING_IMAGE');
+});
+
+test('requires asset group replacement identifiers before building remove mutation', () => {
+  const baseInput = {
+    assetCreate: buildInput('ASSET_GROUP_ASSET').assetCreate,
+    cleanCustomerId: '123',
+    newAssetResourceName: 'customers/123/assets/-1',
+  };
+
+  assert.throws(
+    () => buildAssetGroupAssetReplacementMutations({
+      ...baseInput,
+      target: {
+        assetFieldType: 'MARKETING_IMAGE',
+        associationResourceName: 'customers/123/assetGroupAssets/999~111~MARKETING_IMAGE',
+      },
+    }),
+    /assetGroupId is required/,
+  );
+  assert.throws(
+    () => buildAssetGroupAssetReplacementMutations({
+      ...baseInput,
+      target: {
+        assetGroupId: '999',
+        associationResourceName: 'customers/123/assetGroupAssets/999~111~MARKETING_IMAGE',
+      },
+    }),
+    /assetFieldType is required/,
+  );
+  assert.throws(
+    () => buildAssetGroupAssetReplacementMutations({
+      ...baseInput,
+      target: {
+        assetGroupId: '999',
+        assetFieldType: 'MARKETING_IMAGE',
+      },
+    }),
+    /associationResourceName is required/,
   );
 });
 
