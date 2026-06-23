@@ -149,7 +149,7 @@ test('classifies image ads as same-ad replacements in strict mode', () => {
   assert.equal(capability.executionPolicy, 'same_ad_update');
 });
 
-test('blocks clone-only app ads in strict same-ad mode', () => {
+test('classifies app install ads as manual replacements in strict mode', () => {
   const capability = describeGoogleReplacementCapability({
     supportedReplacement: true,
     targetType: 'AD_GROUP_AD',
@@ -158,9 +158,25 @@ test('blocks clone-only app ads in strict same-ad mode', () => {
   }, 'strict_same_ad');
 
   assert.equal(capability.canPreserveAdId, false);
-  assert.equal(capability.requiresNewAd, true);
+  assert.equal(capability.requiresNewAd, false);
   assert.equal(capability.executableInMode, false);
-  assert.equal(capability.blockedReason, 'REQUIRES_NEW_AD');
+  assert.equal(capability.executionPolicy, 'manual_only');
+  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI');
+});
+
+test('keeps app install ads as manual replacements even when new ads are allowed', () => {
+  const capability = describeGoogleReplacementCapability({
+    supportedReplacement: true,
+    targetType: 'AD_GROUP_AD',
+    adType: 'APP_AD',
+    replacementStrategy: 'APP_AD_CLONE_REPLACE',
+  }, 'allow_google_required_clone');
+
+  assert.equal(capability.canPreserveAdId, false);
+  assert.equal(capability.requiresNewAd, false);
+  assert.equal(capability.executableInMode, false);
+  assert.equal(capability.executionPolicy, 'manual_only');
+  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI');
 });
 
 test('classifies app engagement ads as same-ad image-list updates', () => {

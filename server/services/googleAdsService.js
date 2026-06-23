@@ -16,6 +16,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
 const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
+const APP_AD_MANUAL_REPLACEMENT_MESSAGE =
+  'App Ad image replacement must be completed directly in Google Ads. Google Ads API cannot remove App Ads or create another ad in the same app ad group.';
 
 const normalizeCustomerId = (value) => String(value || '').replace(/\D/g, '');
 
@@ -23,7 +25,7 @@ const getAdGroupAdReplacementStrategy = (adType) => {
   const normalized = normalizeGoogleAdType(adType);
   if (normalized === 'IMAGE_AD') return 'IMAGE_AD_UPDATE';
   if (normalized === 'APP_ENGAGEMENT_AD') return 'APP_ENGAGEMENT_AD_UPDATE';
-  if (normalized === 'APP_AD') return 'APP_AD_CLONE_REPLACE';
+  if (normalized === 'APP_AD') return 'APP_AD_MANUAL_REPLACEMENT';
   return 'UNSUPPORTED_TARGET';
 };
 
@@ -692,32 +694,6 @@ const decodeImageDataUrl = (newImageDataUrl) => {
   return Buffer.from(match[1], 'base64');
 };
 
-const clonePlain = (value) => {
-  if (value === undefined || value === null) return undefined;
-  return JSON.parse(JSON.stringify(value));
-};
-
-const compactObject = (value) => {
-  const entries = Object.entries(value)
-    .filter(([, entryValue]) => {
-      if (entryValue === undefined || entryValue === null) return false;
-      if (Array.isArray(entryValue)) return entryValue.length > 0;
-      if (typeof entryValue === 'object') return Object.keys(entryValue).length > 0;
-      return true;
-    });
-  return Object.fromEntries(entries);
-};
-
-const cloneTextAssets = (assets) =>
-  Array.isArray(assets)
-    ? assets
-      .map((asset) => compactObject({
-        text: asset?.text,
-        pinned_field: asset?.pinned_field,
-      }))
-      .filter((asset) => asset.text)
-    : [];
-
 const cloneAssetRefs = (assets) =>
   Array.isArray(assets)
     ? assets
@@ -790,64 +766,6 @@ const fetchAdForReplacement = async (customer, adGroupId, adId) => {
   return rows[0];
 };
 
-const buildReplacementAdName = (name) => {
-  const base = String(name || 'Creative Library replacement').trim() || 'Creative Library replacement';
-  const suffix = `replacement ${new Date().toISOString().slice(0, 10)}`;
-  return `${base} ${suffix}`.slice(0, 255);
-};
-
-const buildCommonReplacementAdFields = (ad) => compactObject({
-  name: buildReplacementAdName(ad.name),
-  final_urls: clonePlain(ad.final_urls),
-  final_mobile_urls: clonePlain(ad.final_mobile_urls),
-  final_app_urls: clonePlain(ad.final_app_urls),
-  final_url_suffix: ad.final_url_suffix,
-  tracking_url_template: ad.tracking_url_template,
-  url_custom_parameters: clonePlain(ad.url_custom_parameters),
-});
-
-const buildClonedAppAdWithImageReplacement = (ad, oldAssetResourceName, newAssetResourceName) => {
-  const adType = normalizeGoogleAdType(ad.type);
-  if (adType === 'APP_AD') {
-    const appAd = ad.app_ad || {};
-    const replacementImages = replaceAssetRef(appAd.images, oldAssetResourceName, newAssetResourceName);
-    if (!replacementImages.replaced) throw new Error('Old image asset was not found in the App Ad image list.');
-    if (replacementImages.assets.length === 0) throw new Error('App Ad must keep at least one image asset.');
-
-    return {
-      ...buildCommonReplacementAdFields(ad),
-      app_ad: compactObject({
-        app_deep_link: appAd.app_deep_link,
-        descriptions: cloneTextAssets(appAd.descriptions),
-        headlines: cloneTextAssets(appAd.headlines),
-        html5_media_bundles: cloneAssetRefs(appAd.html5_media_bundles),
-        images: replacementImages.assets,
-        mandatory_ad_text: clonePlain(appAd.mandatory_ad_text),
-        youtube_videos: cloneAssetRefs(appAd.youtube_videos),
-      }),
-    };
-  }
-
-  if (adType === 'APP_ENGAGEMENT_AD') {
-    const appEngagementAd = ad.app_engagement_ad || {};
-    const replacementImages = replaceAssetRef(appEngagementAd.images, oldAssetResourceName, newAssetResourceName);
-    if (!replacementImages.replaced) throw new Error('Old image asset was not found in the App Engagement Ad image list.');
-    if (replacementImages.assets.length === 0) throw new Error('App Engagement Ad must keep at least one image asset.');
-
-    return {
-      ...buildCommonReplacementAdFields(ad),
-      app_engagement_ad: compactObject({
-        descriptions: cloneTextAssets(appEngagementAd.descriptions),
-        headlines: cloneTextAssets(appEngagementAd.headlines),
-        images: replacementImages.assets,
-        videos: cloneAssetRefs(appEngagementAd.videos),
-      }),
-    };
-  }
-
-  throw new Error(`Unsupported app ad type: ${adType || 'UNKNOWN'}.`);
-};
-
 const buildReplacementTarget = (adGroupIdOrOperation, oldAdId) => {
   if (typeof adGroupIdOrOperation === 'object' && adGroupIdOrOperation !== null) {
     return adGroupIdOrOperation;
@@ -864,35 +782,12 @@ const buildReplacementTarget = (adGroupIdOrOperation, oldAdId) => {
 
 export const buildAppAdCloneReplacementMutations = ({
   adType,
-  assetCreate,
-  cleanCustomerId,
-  target,
-  oldAdResourceName,
-  clonedAd,
 }) => {
-  if (normalizeGoogleAdType(adType) !== 'APP_AD') {
-    throw new Error(`Unsupported clone replacement ad type: ${normalizeGoogleAdType(adType) || 'UNKNOWN'}.`);
+  const normalizedAdType = normalizeGoogleAdType(adType);
+  if (normalizedAdType === 'APP_AD') {
+    throw new Error(APP_AD_MANUAL_REPLACEMENT_MESSAGE);
   }
-
-  const createReplacementAd = {
-    entity: 'ad_group_ad',
-    operation: 'create',
-    resource: {
-      ad_group: `customers/${cleanCustomerId}/adGroups/${target.adGroupId}`,
-      ad: clonedAd,
-      status: 'ENABLED',
-    },
-  };
-
-  return [
-    assetCreate,
-    {
-      entity: 'ad_group_ad',
-      operation: 'remove',
-      resource: oldAdResourceName,
-    },
-    createReplacementAd,
-  ];
+  throw new Error(`Unsupported clone replacement ad type: ${normalizedAdType || 'UNKNOWN'}.`);
 };
 
 export const buildAppEngagementAdImageUpdateMutations = ({
@@ -1042,6 +937,11 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     adType: adType || null,
     imageBytes: imageData.length,
   });
+
+  if (adType === 'APP_AD') {
+    throwWithGoogleAdsTrace(new Error(APP_AD_MANUAL_REPLACEMENT_MESSAGE), googleAdsTrace);
+  }
+
   const customer = getClient(customerId);
   const tempAssetResourceName = buildTempAssetResourceName(cleanCustomerId);
   const assetCreate = {
@@ -1187,56 +1087,6 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       oldAdUpdated: true,
       updatedAssetCount: verifiedImageAssets.length,
       verifiedImageAssets,
-      googleAdsTrace,
-    };
-  }
-
-  if (adType === 'APP_AD') {
-    if (!target.oldAssetResourceName) {
-      throwWithGoogleAdsTrace(new Error('oldAssetResourceName is required for App Ad image replacement.'), googleAdsTrace);
-    }
-    let existingAdRow;
-    try {
-      pushGoogleAdsTrace(googleAdsTrace, 'fetch_existing_ad_for_clone_replace', 'started', {
-        adGroupId: target.adGroupId,
-        adId: target.adId,
-      });
-      existingAdRow = await fetchAdForReplacement(customer, target.adGroupId, target.adId);
-      pushGoogleAdsTrace(googleAdsTrace, 'fetch_existing_ad_for_clone_replace', 'success');
-    } catch (error) {
-      pushGoogleAdsTrace(googleAdsTrace, 'fetch_existing_ad_for_clone_replace', 'error', getGoogleAdsErrorDetails(error));
-      throwWithGoogleAdsTrace(error, googleAdsTrace);
-    }
-
-    const clonedAd = buildClonedAppAdWithImageReplacement(
-      existingAdRow.ad_group_ad.ad,
-      target.oldAssetResourceName,
-      tempAssetResourceName,
-    );
-
-    const appReplacementMutations = buildAppAdCloneReplacementMutations({
-      adType,
-      assetCreate,
-      cleanCustomerId,
-      target,
-      oldAdResourceName,
-      clonedAd,
-    });
-    const replacement = await runTracedAtomicReplacementMutations(
-      customer,
-      appReplacementMutations,
-      googleAdsTrace,
-      'upload_asset_and_clone_replace_app_ad',
-    );
-
-    return {
-      success: true,
-      replacementType: getAdGroupAdReplacementStrategy(adType),
-      assetResourceName: replacement.assetResourceName,
-      newAdResourceName: replacement.newAdResourceName,
-      oldAdResourceName,
-      oldAdRemoved: true,
-      clonedAssetCount: clonedAd.app_ad?.images?.length || 0,
       googleAdsTrace,
     };
   }

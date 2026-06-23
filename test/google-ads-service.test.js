@@ -4,6 +4,7 @@ import {
   assertAppEngagementAdImageUpdate,
   buildAppAdCloneReplacementMutations,
   buildAppEngagementAdImageUpdateMutations,
+  replaceAdCreative,
 } from '../server/services/googleAdsService.js';
 
 const buildInput = (adType) => ({
@@ -24,16 +25,28 @@ const buildInput = (adType) => ({
   },
 });
 
-test('removes regular app ads before creating the replacement ad', () => {
-  const mutations = buildAppAdCloneReplacementMutations(buildInput('APP_AD'));
-
-  assert.deepEqual(
-    mutations.map((mutation) => `${mutation.entity}:${mutation.operation}`),
-    ['asset:create', 'ad_group_ad:remove', 'ad_group_ad:create'],
+test('does not build API removal mutations for app install ads', () => {
+  assert.throws(
+    () => buildAppAdCloneReplacementMutations(buildInput('APP_AD')),
+    /App Ad image replacement must be completed directly in Google Ads/,
   );
-  assert.equal(mutations[1].resource, 'customers/123/adGroupAds/456~789');
-  assert.equal(mutations[2].resource.ad_group, 'customers/123/adGroups/456');
-  assert.equal(mutations[2].resource.status, 'ENABLED');
+});
+
+test('rejects app install ad replacement before calling Google Ads', async () => {
+  await assert.rejects(
+    () => replaceAdCreative(
+      '123',
+      {
+        targetType: 'AD_GROUP_AD',
+        adType: 'APP_AD',
+        adGroupId: '456',
+        adId: '789',
+        oldAssetResourceName: 'customers/123/assets/111',
+      },
+      'data:image/png;base64,AA==',
+    ),
+    /App Ad image replacement must be completed directly in Google Ads/,
+  );
 });
 
 test('updates app engagement ads by replacing the image list on the same ad', () => {

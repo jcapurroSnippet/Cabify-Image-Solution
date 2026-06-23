@@ -379,18 +379,27 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
     supportedReplacement &&
     targetType === 'ASSET_GROUP_ASSET' &&
     (!replacementStrategy || replacementStrategy === 'ASSET_GROUP_ASSET_ASSOCIATION');
+  const isAppInstallAd =
+    supportedReplacement &&
+    targetType === 'AD_GROUP_AD' &&
+    adType === 'APP_AD';
   const requiresNewAd =
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
-    (adType === 'APP_AD' || (adType !== 'APP_ENGAGEMENT_AD' && replacementStrategy.includes('CLONE_REPLACE')));
+    !isAppInstallAd &&
+    adType !== 'APP_ENGAGEMENT_AD' &&
+    replacementStrategy.includes('CLONE_REPLACE');
   const canPreserveAdId = isSameAdImageUpdate || isAppEngagementAdImageUpdate;
   const canPreserveServingContainer = canPreserveAdId || isAssetGroupAssociation;
   const executableInMode =
     supportedReplacement &&
+    !isAppInstallAd &&
     (canPreserveAdId ||
       (replacementMode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE &&
         (requiresNewAd || isAssetGroupAssociation)));
-  const executionPolicy = canPreserveAdId
+  const executionPolicy = isAppInstallAd
+    ? 'manual_only'
+    : canPreserveAdId
     ? 'same_ad_update'
     : requiresNewAd
       ? 'clone_replace'
@@ -403,6 +412,9 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   if (!supportedReplacement) {
     blockedReason = target.replacementSupportReason || target.supportReason || 'UNSUPPORTED_TARGET';
     blockedMessage = target.replacementSupportMessage || target.supportMessage || null;
+  } else if (isAppInstallAd) {
+    blockedReason = 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI';
+    blockedMessage = 'Google Ads API cannot replace App Ad images automatically. Replace this creative directly in Google Ads.';
   } else if (!executableInMode && requiresNewAd) {
     blockedReason = 'REQUIRES_NEW_AD';
   } else if (!executableInMode && isAssetGroupAssociation) {
