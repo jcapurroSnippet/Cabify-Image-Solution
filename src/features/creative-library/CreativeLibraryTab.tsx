@@ -37,6 +37,7 @@ import {
   describeReplacementChange,
   describeReplacementStatus,
   summarizeCreativeLibraryPlazas,
+  summarizeCreativeLibraryResolutions,
   summarizeReplacementSelection,
 } from './replacementUi.js';
 
@@ -175,6 +176,16 @@ export default function CreativeLibraryTab() {
         Object.keys(library?.summary.byCategory || {}).map((category) => [
           category,
           summarizeCreativeLibraryPlazas(library?.creatives || [], category),
+        ]),
+      ),
+    [library],
+  );
+  const libraryResolutionsByCategory = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.keys(library?.summary.byCategory || {}).map((category) => [
+          category,
+          summarizeCreativeLibraryResolutions(library?.creatives || [], category),
         ]),
       ),
     [library],
@@ -695,11 +706,13 @@ export default function CreativeLibraryTab() {
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {Object.entries(library.summary.byCategory).map(([category, counts]) => {
               const plazas = libraryPlazasByCategory[category] || [];
+              const resolutions = libraryResolutionsByCategory[category] || [];
 
               return (
                 <div key={category} className="rounded-lg border border-slate-700/70 bg-slate-900/40 p-3">
                   <p className="text-sm font-semibold text-white">{formatCategoryLabel(category)}</p>
                   <p className="mt-1 text-xs text-slate-400">{counts.available || 0} available / {counts.total || 0} total</p>
+                  <p className="mt-3 text-[11px] font-medium uppercase text-slate-500">Plazas</p>
                   <div className="mt-3 flex flex-wrap gap-1">
                     {plazas.length > 0 ? (
                       plazas.map((plaza) => (
@@ -713,6 +726,22 @@ export default function CreativeLibraryTab() {
                       ))
                     ) : (
                       <span className="text-xs text-slate-500">No available plazas</span>
+                    )}
+                  </div>
+                  <p className="mt-3 text-[11px] font-medium uppercase text-slate-500">Resolutions</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {resolutions.length > 0 ? (
+                      resolutions.map((resolution) => (
+                        <span
+                          key={resolution.resolution}
+                          className="rounded-md border border-slate-700/70 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200"
+                          title={`${resolution.count} available ${formatCategoryLabel(category)} creative${resolution.count === 1 ? '' : 's'}`}
+                        >
+                          {resolution.resolution} {resolution.count}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No available resolutions</span>
                     )}
                   </div>
                 </div>

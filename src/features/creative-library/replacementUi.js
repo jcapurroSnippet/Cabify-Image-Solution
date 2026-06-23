@@ -6,6 +6,11 @@ const parsePlazas = (value) =>
     .map((plaza) => plaza.trim().toUpperCase())
     .filter(Boolean);
 
+const normalizeResolution = (value) => {
+  const match = String(value || '').match(/(\d+)\s*[xX]\s*(\d+)/);
+  return match ? `${match[1]}x${match[2]}` : '';
+};
+
 export const summarizeCreativeLibraryPlazas = (creatives = [], category) => {
   const normalizedCategory = String(category || '').trim().toLowerCase();
   const plazaCounts = new Map();
@@ -26,6 +31,24 @@ export const summarizeCreativeLibraryPlazas = (creatives = [], category) => {
       if (right.plaza === 'ALL') return 1;
       return left.plaza.localeCompare(right.plaza);
     });
+};
+
+export const summarizeCreativeLibraryResolutions = (creatives = [], category) => {
+  const normalizedCategory = String(category || '').trim().toLowerCase();
+  const resolutionCounts = new Map();
+
+  for (const creative of creatives) {
+    if (String(creative?.category || '').trim().toLowerCase() !== normalizedCategory) continue;
+    if (String(creative?.status || '').trim().toLowerCase() !== 'available') continue;
+
+    const resolution = normalizeResolution(creative.image_resolution);
+    if (!resolution) continue;
+    resolutionCounts.set(resolution, (resolutionCounts.get(resolution) || 0) + 1);
+  }
+
+  return [...resolutionCounts.entries()]
+    .map(([resolution, count]) => ({ resolution, count }))
+    .sort((left, right) => left.resolution.localeCompare(right.resolution));
 };
 
 export const describeGoogleAdType = (target = {}) => {

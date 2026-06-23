@@ -6,6 +6,7 @@ import {
   describeReplacementChange,
   describeReplacementStatus,
   summarizeCreativeLibraryPlazas,
+  summarizeCreativeLibraryResolutions,
   summarizeReplacementSelection,
 } from '../src/features/creative-library/replacementUi.js';
 
@@ -110,5 +111,20 @@ test('summarizes available creative plazas by category', () => {
     { plaza: 'ALL', count: 1 },
     { plaza: 'BUE', count: 2 },
     { plaza: 'MVD', count: 1 },
+  ]);
+});
+
+test('summarizes available creative resolutions by category', () => {
+  const creatives = [
+    { creative_id: 'square-1', category: 'Promo', image_resolution: '1080x1080', status: 'available' },
+    { creative_id: 'square-2', category: 'promo', image_resolution: '1080 x 1080', status: 'available' },
+    { creative_id: 'landscape-1', category: 'Promo', image_resolution: '1200x628', status: 'available' },
+    { creative_id: 'used-1', category: 'Promo', image_resolution: '1080x1920', status: 'used' },
+    { creative_id: 'generic-1', category: 'Generic', image_resolution: '1080x1080', status: 'available' },
+  ];
+
+  assert.deepEqual(summarizeCreativeLibraryResolutions(creatives, 'promo'), [
+    { resolution: '1080x1080', count: 2 },
+    { resolution: '1200x628', count: 1 },
   ]);
 });
