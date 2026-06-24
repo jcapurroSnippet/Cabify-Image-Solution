@@ -8,8 +8,9 @@ const GRAPH_API_VERSION = 'v25.0';
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 const META_CREATIVE_FIELDS =
   'id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,effective_object_story_id';
-const META_ADS_FIELDS =
+const META_AD_FIELDS =
   `id,name,effective_status,adset{id,name,campaign{id,name}},creative{${META_CREATIVE_FIELDS}}`;
+const META_ADS_FIELDS = META_AD_FIELDS;
 const META_INSIGHTS_FIELDS =
   'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,actions,cost_per_action_type';
 
@@ -38,13 +39,38 @@ export const getAccounts = () => {
   });
 };
 
+export const formatMetaGraphErrorMessage = (error) => {
+  const graphError = error?.response?.data?.error;
+  if (!graphError) return error?.message || String(error);
+
+  const title = graphError.error_user_title || graphError.message || 'Meta API error';
+  const body = graphError.error_user_msg && graphError.error_user_msg !== title
+    ? ` ${graphError.error_user_msg}`
+    : '';
+  const details = [
+    graphError.code !== undefined ? `code ${graphError.code}` : '',
+    graphError.fbtrace_id ? `fbtrace_id ${graphError.fbtrace_id}` : '',
+  ].filter(Boolean).join(', ');
+
+  return `Meta Ads: ${title}.${body}${details ? ` (${details})` : ''}`;
+};
+
+const decorateMetaGraphError = (error) => {
+  error.message = formatMetaGraphErrorMessage(error);
+  return error;
+};
+
 const graphGet = async (endpoint, params = {}) => {
   const accessToken = getAccessToken();
-  const response = await axios.get(`${GRAPH_BASE_URL}${endpoint}`, {
-    params: { access_token: accessToken, ...params },
-    timeout: 30000,
-  });
-  return response.data;
+  try {
+    const response = await axios.get(`${GRAPH_BASE_URL}${endpoint}`, {
+      params: { access_token: accessToken, ...params },
+      timeout: 30000,
+    });
+    return response.data;
+  } catch (error) {
+    throw decorateMetaGraphError(error);
+  }
 };
 
 const graphPost = async (endpoint, data = {}) => {
@@ -63,8 +89,12 @@ const graphPost = async (endpoint, data = {}) => {
   }
 
   const body = isFormData ? data : { access_token: accessToken, ...data };
-  const response = await axios.post(`${GRAPH_BASE_URL}${endpoint}`, body, config);
-  return response.data;
+  try {
+    const response = await axios.post(`${GRAPH_BASE_URL}${endpoint}`, body, config);
+    return response.data;
+  } catch (error) {
+    throw decorateMetaGraphError(error);
+  }
 };
 
 const getMetaErrorDetails = (error) => ({
@@ -332,6 +362,12 @@ const resolveImageResolution = async (imageUrl) => {
 const insightMapByAdId = (insights = []) =>
   new Map((insights || []).map((insight) => [String(insight.ad_id || ''), insight]));
 
+const normalizeInsightCandidate = (insight = {}) => ({
+  adId: String(insight.ad_id || '').trim(),
+  insight,
+  metrics: buildMetaMetrics(insight),
+});
+
 /**
  * Fetch all active campaigns for an ad account.
  */
@@ -350,6 +386,56 @@ export const getCampaigns = async (adAccountId) => {
   }));
 };
 
+export const collectMetaLowPerformerAssets = async ({
+  adAccountId,
+  campaignIds,
+  limit,
+  datePreset = 'last_30d',
+  graphGetImpl = graphGet,
+  resolveImageResolutionImpl = resolveImageResolution,
+}) => {
+  const maxResults = Math.max(1, Math.min(Number(limit || 100), 500));
+  const selectedCampaignIds = normalizeCampaignIds({ campaignIds });
+  const insights = [];
+
+  for (const campaignId of selectedCampaignIds) {
+    const insightsResponse = await graphGetImpl(`/${campaignId}/insights`, {
+      level: 'ad',
+      fields: META_INSIGHTS_FIELDS,
+      date_preset: datePreset,
+      limit: 500,
+    });
+    insights.push(...(insightsResponse?.data || []));
+  }
+
+  const rankedCandidates = rankMetaLowPerformers(
+    insights
+      .map(normalizeInsightCandidate)
+      .filter((candidate) => candidate.adId),
+  ).slice(0, Math.min(Math.max(maxResults * 5, maxResults), 100));
+  const assets = [];
+
+  for (const candidate of rankedCandidates) {
+    if (assets.length >= maxResults) break;
+
+    const ad = await graphGetImpl(`/${candidate.adId}`, {
+      fields: META_AD_FIELDS,
+    });
+    const imageUrl = getMetaCreativeImageUrl(ad?.creative || {});
+    if (!imageUrl) continue;
+
+    const imageResolution = await resolveImageResolutionImpl(imageUrl);
+    assets.push(normalizeMetaLowPerformerAd({
+      adAccountId,
+      ad,
+      insight: candidate.insight,
+      imageResolution,
+    }));
+  }
+
+  return assets;
+};
+
 export const getLowPerformingImageAssets = async (adAccountId, options = {}) => {
   if (!adAccountId) throw new Error('adAccountId is required.');
 
@@ -359,41 +445,14 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
   const campaigns = selectedCampaignIds.length > 0
     ? selectedCampaignIds.map((id) => ({ id }))
     : await getCampaigns(adAccountId);
-  const assets = [];
+  const campaignIds = campaigns.map((campaign) => String(campaign.id || '').trim()).filter(Boolean);
 
-  for (const campaign of campaigns) {
-    const campaignId = String(campaign.id || '').trim();
-    if (!campaignId) continue;
-
-    const insightsResponse = await graphGet(`/${campaignId}/insights`, {
-      level: 'ad',
-      fields: META_INSIGHTS_FIELDS,
-      date_preset: datePreset,
-      limit: 500,
-    });
-    const insightsByAdId = insightMapByAdId(insightsResponse?.data || []);
-    const adsResponse = await graphGet(`/${campaignId}/ads`, {
-      fields: META_ADS_FIELDS,
-      effective_status: '["ACTIVE"]',
-      limit: 500,
-    });
-
-    for (const ad of adsResponse?.data || []) {
-      const insight = insightsByAdId.get(String(ad.id || '')) || {};
-      const imageUrl = getMetaCreativeImageUrl(ad.creative || {});
-      if (!imageUrl) continue;
-
-      const imageResolution = await resolveImageResolution(imageUrl);
-      assets.push(normalizeMetaLowPerformerAd({
-        adAccountId,
-        ad,
-        insight,
-        imageResolution,
-      }));
-    }
-  }
-
-  return rankMetaLowPerformers(assets).slice(0, limit);
+  return collectMetaLowPerformerAssets({
+    adAccountId,
+    campaignIds,
+    limit,
+    datePreset,
+  });
 };
 
 /**

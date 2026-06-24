@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildMetaCreativeClonePayload,
+  collectMetaLowPerformerAssets,
+  formatMetaGraphErrorMessage,
   isSafeMetaCreativeForImageClone,
   normalizeMetaLowPerformerAd,
   rankMetaLowPerformers,
@@ -142,4 +144,73 @@ test('builds Meta creative payload by cloning existing link data and replacing o
   assert.equal(payload.url_tags, 'utm_source=meta');
   assert.equal(creative.object_story_spec.link_data.image_hash, 'old-hash');
   assert.equal(creative.object_story_spec.link_data.picture, 'https://example.com/old.png');
+});
+
+test('collects Meta low performers by ranking insights before fetching ad details', async () => {
+  const calls = [];
+  const graphGetImpl = async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          { ad_id: 'ad-high', impressions: '5000', clicks: '100', spend: '100', actions: [{ action_type: 'purchase', value: '10' }] },
+          { ad_id: 'ad-low', impressions: '3000', clicks: '50', spend: '300', actions: [{ action_type: 'purchase', value: '0' }] },
+        ],
+      };
+    }
+    if (endpoint === '/ad-low') {
+      return {
+        id: 'ad-low',
+        name: 'Low ad',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-low',
+          name: 'Creative low',
+          image_url: 'https://example.com/low.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].adId, 'ad-low');
+  assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-low']);
+  assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
+});
+
+test('formats Meta Graph API rate limit errors for the UI', () => {
+  const error = new Error('Request failed with status code 400');
+  error.response = {
+    status: 400,
+    data: {
+      error: {
+        error_user_title: 'Ad Account Has Too Many API Calls',
+        error_user_msg: 'Please wait a bit and try again.',
+        code: 17,
+        fbtrace_id: 'trace-1',
+      },
+    },
+  };
+
+  assert.equal(
+    formatMetaGraphErrorMessage(error),
+    'Meta Ads: Ad Account Has Too Many API Calls. Please wait a bit and try again. (code 17, fbtrace_id trace-1)',
+  );
 });
