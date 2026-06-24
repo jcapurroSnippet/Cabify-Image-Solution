@@ -21,6 +21,11 @@ import {
   executeGoogleReplacements,
   getGoogleLowPerformers,
 } from './services/googleReplacementService.js';
+import {
+  buildAdsReplacementPlan,
+  executeAdsReplacements,
+  getAdsLowPerformers,
+} from './services/adsReplacementService.js';
 
 class RequestValidationError extends Error {}
 
@@ -89,6 +94,37 @@ const normalizeOptionalStringList = (value) => {
   if (value === undefined || value === null || value === '') return [];
   const rawValues = Array.isArray(value) ? value : [value];
   return [...new Set(rawValues.map((item) => String(item).trim()).filter(Boolean))];
+};
+
+const normalizeAdsSource = (value) => {
+  const source = String(value || 'google').trim().toLowerCase();
+  if (!['google', 'meta', 'both'].includes(source)) {
+    throw new RequestValidationError('source must be "google", "meta", or "both".');
+  }
+  return source;
+};
+
+const getActiveAdsPlatforms = (source) => (source === 'both' ? ['google', 'meta'] : [source]);
+
+const normalizeAdsSelections = ({ source, selections, accountId, campaignId, campaignIds }) => {
+  const normalizedSelections = {};
+  for (const platform of getActiveAdsPlatforms(source)) {
+    const selection = selections?.[platform] || {};
+    const resolvedAccountId = String(selection.accountId || (source === platform ? accountId : '') || '').trim();
+    if (!resolvedAccountId) {
+      throw new RequestValidationError(`${platform} accountId is required.`);
+    }
+
+    normalizedSelections[platform] = {
+      accountId: resolvedAccountId,
+      campaignIds: normalizeOptionalStringList(
+        selection.campaignIds ??
+          selection.campaignId ??
+          (source === platform ? campaignIds ?? campaignId : undefined),
+      ),
+    };
+  }
+  return normalizedSelections;
 };
 
 const getCategoryOptions = async (sheetsUrl) => {
@@ -548,6 +584,157 @@ app.post('/api/ads/replace-creative', async (request, response) => {
         status: error?.response?.status || error?.code || null,
         data: error?.response?.data || null,
       },
+    });
+  }
+});
+
+app.post('/api/ads/low-performers', async (request, response) => {
+  try {
+    const { accountId, campaignId, campaignIds, limit, sheetsUrl, selections } = request.body ?? {};
+    const source = normalizeAdsSource(request.body?.source);
+    const normalizedSelections = normalizeAdsSelections({
+      source,
+      selections,
+      accountId,
+      campaignId,
+      campaignIds,
+    });
+
+    const result = await getAdsLowPerformers({
+      source,
+      selections: normalizedSelections,
+      sheetsUrl: sheetsUrl ? String(sheetsUrl).trim() : undefined,
+      limit: Number(limit) || 100,
+    });
+
+    return response.status(200).json({
+      ...result,
+      categories: await getCategoryOptions(sheetsUrl),
+    });
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to fetch Ads low performers.'),
+    });
+  }
+});
+
+app.post('/api/ads/replacement-plan', async (request, response) => {
+  try {
+    const {
+      sheetsUrl,
+      accountId,
+      campaignId,
+      campaignIds,
+      limit,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+      replacementMode,
+      selections,
+    } = request.body ?? {};
+
+    if (!sheetsUrl) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+
+    const source = normalizeAdsSource(request.body?.source);
+    const normalizedSelections = normalizeAdsSelections({
+      source,
+      selections,
+      accountId,
+      campaignId,
+      campaignIds,
+    });
+    const plan = await buildAdsReplacementPlan({
+      source,
+      selections: normalizedSelections,
+      sheetsUrl: String(sheetsUrl).trim(),
+      limit: Number(limit) || 20,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+      replacementMode,
+    });
+
+    return response.status(200).json(plan);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to build Ads replacement plan.'),
+    });
+  }
+});
+
+app.post('/api/ads/execute-replacements', async (request, response) => {
+  try {
+    const {
+      sheetsUrl,
+      accountId,
+      campaignId,
+      campaignIds,
+      limit,
+      confirm,
+      selectedOperationIds,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+      replacementMode,
+      allowNewAdCreation,
+      selections,
+    } = request.body ?? {};
+
+    if (!sheetsUrl) {
+      throw new RequestValidationError('sheetsUrl is required.');
+    }
+    if (confirm !== true) {
+      throw new RequestValidationError('confirm must be true.');
+    }
+
+    const source = normalizeAdsSource(request.body?.source);
+    const normalizedSelections = normalizeAdsSelections({
+      source,
+      selections,
+      accountId,
+      campaignId,
+      campaignIds,
+    });
+
+    const result = await executeAdsReplacements({
+      source,
+      selections: normalizedSelections,
+      sheetsUrl: String(sheetsUrl).trim(),
+      limit: Number(limit) || 10,
+      confirm,
+      selectedOperationIds,
+      selectedLowPerformerIds,
+      lowPerformerCategories,
+      replacementMode,
+      allowNewAdCreation,
+    });
+
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      return response.status(400).json({ error: error.message });
+    }
+
+    console.error('[ADS_REPLACEMENT] Execute request failed', {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      status: error?.response?.status || error?.code || null,
+      data: error?.response?.data || null,
+      googleAdsTrace: error?.googleAdsTrace || [],
+      metaAdsTrace: error?.metaAdsTrace || [],
+    });
+
+    return response.status(500).json({
+      error: getErrorMessage(error, 'Failed to execute Ads replacements.'),
+      googleAdsTrace: error?.googleAdsTrace || undefined,
+      metaAdsTrace: error?.metaAdsTrace || undefined,
     });
   }
 });

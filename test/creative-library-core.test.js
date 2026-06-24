@@ -53,6 +53,19 @@ test('keeps image metadata next to drive url in creative sheet headers', () => {
   assert.equal(CREATIVE_LIBRARY_HEADERS.indexOf('image_resolution'), CREATIVE_LIBRARY_HEADERS.indexOf('aspect_ratio') + 1);
 });
 
+test('keeps platform-neutral replacement columns before legacy Google resource column', () => {
+  assert.equal(CREATIVE_LIBRARY_HEADERS.includes('ads_platform'), true);
+  assert.equal(CREATIVE_LIBRARY_HEADERS.includes('ads_resource_name'), true);
+  assert.equal(
+    CREATIVE_LIBRARY_HEADERS.indexOf('ads_platform') < CREATIVE_LIBRARY_HEADERS.indexOf('google_ads_asset_resource_name'),
+    true,
+  );
+  assert.equal(
+    CREATIVE_LIBRARY_HEADERS.indexOf('ads_resource_name') < CREATIVE_LIBRARY_HEADERS.indexOf('google_ads_asset_resource_name'),
+    true,
+  );
+});
+
 test('uses Riders AR as the default creative source sheet', () => {
   assert.deepEqual(config.sourceSheets, ['Riders | AR']);
 });

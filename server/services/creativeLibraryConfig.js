@@ -67,6 +67,8 @@ export const CREATIVE_LIBRARY_HEADERS = [
   'created_at',
   'reserved_at',
   'used_at',
+  'ads_platform',
+  'ads_resource_name',
   'google_ads_asset_resource_name',
   'replacement_operation_id',
   'notes',

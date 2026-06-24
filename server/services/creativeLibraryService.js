@@ -1521,9 +1521,14 @@ export const markCreativeUsed = async (spreadsheetId, creativeId, data) => {
   const creative = rows.find((row) => row.creative_id === creativeId);
   if (!creative) throw new Error(`Creative ${creativeId} not found.`);
 
+  const adsResourceName = data.adsResourceName || data.googleAdsAssetResourceName || '';
+  const adsPlatform = data.adsPlatform || (data.googleAdsAssetResourceName ? 'google' : '');
+
   await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
     status: 'used',
     used_at: nowIso(),
+    ads_platform: adsPlatform,
+    ads_resource_name: adsResourceName,
     google_ads_asset_resource_name: data.googleAdsAssetResourceName || '',
     replacement_operation_id: data.operationId || creative.replacement_operation_id || '',
     notes: data.notes || creative.notes || '',

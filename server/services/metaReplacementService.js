@@ -1,14 +1,4 @@
-import crypto from 'node:crypto';
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
-import {
-  detectCategoryFromName,
-  detectPlazasFromName,
-  describeGoogleReplacementCapability,
-  normalizeGoogleReplacementMode,
-  normalizeCategory,
-  requiresNewAdCreationPermission,
-  selectCreativeForCategory,
-} from './creativeLibraryCore.js';
 import {
   appendAuditLog,
   getSpreadsheetIdFromLibraryInput,
@@ -19,9 +9,15 @@ import {
   reserveCreative,
 } from './creativeLibraryService.js';
 import {
+  detectCategoryFromName,
+  detectPlazasFromName,
+  normalizeCategory,
+  selectCreativeForCategory,
+} from './creativeLibraryCore.js';
+import {
   getLowPerformingImageAssets,
-  replaceAdCreative,
-} from './googleAdsService.js';
+  replaceAdCreativeFromOperation,
+} from './metaAdsService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
 import {
   assertReplacementImageAspectRatio,
@@ -30,20 +26,8 @@ import {
   getRequiredAspectRatio,
 } from './imageRatio.js';
 
-const buildOperationId = (parts) =>
-  `replacement_${crypto
-    .createHash('sha1')
-    .update(parts.filter(Boolean).join('|'))
-    .digest('hex')
-    .slice(0, 16)}`;
-
-const buildTargetCategoryName = (asset) =>
-  [asset.adGroupName, asset.assetGroupName]
-    .filter(Boolean)
-    .join(' | ');
-
-const buildTargetPlazasName = (asset) =>
-  asset.campaignName || '';
+const buildTargetCategoryName = (asset) => asset.adGroupName || asset.assetName || '';
+const buildTargetPlazasName = (asset) => asset.campaignName || '';
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
   const rawIds = Array.isArray(campaignIds)
@@ -92,7 +76,7 @@ const getConfigForReplacement = async (sheetsUrl) => {
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
 };
 
-export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
+export const getMetaLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
   const assets = await getLowPerformingImageAssets(accountId, {
@@ -105,9 +89,6 @@ export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignId
     const plazasMatch = buildPlazasMatch(asset, config);
     return {
       ...asset,
-      platform: 'google',
-      platformLabel: 'Google Ads',
-      accountId,
       detectedCategory: categoryMatch.category,
       categorySource: categoryMatch.source,
       categoryWarning: categoryMatch.warning,
@@ -117,7 +98,29 @@ export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignId
   });
 };
 
-export const buildGoogleReplacementPlan = async ({
+const getLowPerformersWithLimit = async ({
+  accountId,
+  campaignIds,
+  sheetsUrl,
+  limit,
+  selectedLowPerformerIds,
+}) => {
+  const maxResults = Math.max(1, Number(limit || 20));
+  const assets = await getMetaLowPerformers({
+    accountId,
+    campaignIds,
+    sheetsUrl,
+    limit: Math.max(maxResults * 4, 50),
+  });
+
+  if (selectedLowPerformerIds?.size) {
+    return assets.filter((asset) => selectedLowPerformerIds.has(String(asset.id))).slice(0, maxResults);
+  }
+
+  return assets.slice(0, maxResults);
+};
+
+export const buildMetaReplacementPlan = async ({
   sheetsUrl,
   accountId,
   campaignId,
@@ -125,12 +128,11 @@ export const buildGoogleReplacementPlan = async ({
   limit = 20,
   selectedLowPerformerIds,
   lowPerformerCategories,
-  replacementMode,
+  excludedCreativeIds = [],
 }) => {
   if (!sheetsUrl) throw new Error('sheetsUrl is required.');
   if (!accountId) throw new Error('accountId is required.');
 
-  const effectiveReplacementMode = normalizeGoogleReplacementMode(replacementMode);
   const config = await getConfigForReplacement(sheetsUrl);
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const selectedCategories = normalizeLowPerformerCategories(lowPerformerCategories, config);
@@ -145,7 +147,7 @@ export const buildGoogleReplacementPlan = async ({
     limit,
     selectedLowPerformerIds: selectedLowIds,
   });
-  const reservedCreativeIds = new Set();
+  const reservedCreativeIds = new Set(excludedCreativeIds.map((id) => String(id)).filter(Boolean));
   const operations = [];
 
   for (const asset of lowPerformers) {
@@ -155,19 +157,20 @@ export const buildGoogleReplacementPlan = async ({
       oldImageResolution: asset.imageResolution || '',
       assetFieldType: asset.assetFieldType,
     });
+    const supportedReplacement = asset.supportedReplacement !== false;
     const baseOperation = {
-      id: '',
-      platform: 'google',
-      platformLabel: 'Google Ads',
-      accountId,
+      id: asset.id,
+      platform: 'meta',
+      platformLabel: 'Meta Ads',
       status: 'skipped',
-      customerId: accountId.replace(/-/g, ''),
+      accountId,
+      customerId: accountId,
       campaignId: asset.campaignId,
       campaignName: asset.campaignName,
       adGroupId: asset.adGroupId,
       adGroupName: asset.adGroupName,
-      assetGroupId: asset.assetGroupId,
-      assetGroupName: asset.assetGroupName,
+      assetGroupId: '',
+      assetGroupName: '',
       adId: asset.adId,
       adType: asset.adType,
       adResourceName: asset.adResourceName,
@@ -180,7 +183,8 @@ export const buildGoogleReplacementPlan = async ({
       oldAssetUrl: asset.assetUrl,
       oldImageResolution: asset.imageResolution || '',
       requiredAspectRatio,
-      googleAdsUrl: asset.googleAdsUrl || '',
+      adsUrl: asset.adsUrl || '',
+      googleAdsUrl: '',
       reason: asset.reason,
       metrics: asset.metrics,
       detectedCategory: categoryMatch.category,
@@ -188,31 +192,27 @@ export const buildGoogleReplacementPlan = async ({
       categorySource: categoryMatch.source,
       categoryWarning: categoryMatch.warning,
       matchedCategories: categoryMatch.matched,
-      supportedReplacement: asset.supportedReplacement,
+      supportedReplacement,
       supportReason: asset.replacementSupportReason,
       supportMessage: asset.replacementSupportMessage,
+      canPreserveAdId: supportedReplacement,
+      canPreserveServingContainer: supportedReplacement,
+      requiresNewAd: false,
+      executableInMode: supportedReplacement,
+      executionPolicy: supportedReplacement ? 'same_ad_update' : 'manual_only',
+      blockedReason: supportedReplacement ? null : asset.replacementSupportReason || 'META_MANUAL_REVIEW',
+      blockedMessage: supportedReplacement
+        ? null
+        : asset.replacementSupportMessage || 'Review this Meta creative before replacing it.',
+      metaCreative: asset.metaCreative || null,
       creative: null,
       message: '',
     };
-    const replacementCapability = describeGoogleReplacementCapability(baseOperation, effectiveReplacementMode);
-    baseOperation.id = asset.id || buildOperationId([
-      accountId.replace(/-/g, ''),
-      asset.campaignId,
-      asset.adGroupId,
-      asset.assetGroupId,
-      asset.adId,
-      asset.assetResourceName,
-      asset.assetUrl,
-    ]);
 
-    if (replacementCapability.executionPolicy === 'manual_only') {
+    if (!supportedReplacement) {
       operations.push({
         ...baseOperation,
-        ...replacementCapability,
-        message:
-          replacementCapability.blockedMessage ||
-          replacementCapability.blockedReason ||
-          'UNSUPPORTED_TARGET',
+        message: baseOperation.blockedMessage || baseOperation.blockedReason,
       });
       continue;
     }
@@ -220,7 +220,6 @@ export const buildGoogleReplacementPlan = async ({
     if (!categoryMatch.category) {
       operations.push({
         ...baseOperation,
-        ...replacementCapability,
         message: 'CATEGORY_NOT_FOUND',
       });
       continue;
@@ -238,7 +237,6 @@ export const buildGoogleReplacementPlan = async ({
     if (!creative) {
       operations.push({
         ...baseOperation,
-        ...replacementCapability,
         message: requiredAspectRatio ? 'NO_AVAILABLE_CREATIVE_FOR_RATIO' : 'NO_AVAILABLE_CREATIVE',
         blockedMessage: requiredAspectRatio ? `No ${requiredAspectRatio} creative` : undefined,
       });
@@ -248,7 +246,6 @@ export const buildGoogleReplacementPlan = async ({
     reservedCreativeIds.add(creative.creative_id);
     operations.push({
       ...baseOperation,
-      ...replacementCapability,
       status: 'planned',
       creative: {
         creative_id: creative.creative_id,
@@ -259,17 +256,13 @@ export const buildGoogleReplacementPlan = async ({
         image_resolution: creative.image_resolution || '',
         created_at: creative.created_at,
       },
-      message: replacementCapability.executableInMode
-        ? 'READY'
-        : replacementCapability.blockedMessage ||
-          replacementCapability.blockedReason ||
-          'UNSUPPORTED_TARGET',
+      message: 'READY',
     });
   }
 
   return {
     dryRun: true,
-    replacementMode: effectiveReplacementMode,
+    source: 'meta',
     accountId,
     campaignId: selectedCampaignIds.length === 1 ? selectedCampaignIds[0] : '',
     campaignIds: selectedCampaignIds,
@@ -279,36 +272,14 @@ export const buildGoogleReplacementPlan = async ({
       planned: operations.filter((operation) => operation.status === 'planned').length,
       executable: operations.filter((operation) => operation.status === 'planned' && operation.executableInMode).length,
       sameAdUpdates: operations.filter((operation) => operation.executionPolicy === 'same_ad_update').length,
-      cloneReplacements: operations.filter((operation) => operation.executionPolicy === 'clone_replace').length,
+      cloneReplacements: 0,
       manualOnly: operations.filter((operation) => operation.executionPolicy === 'manual_only').length,
-      assetGroupReassociations: operations.filter((operation) => operation.executionPolicy === 'asset_group_reassociation').length,
+      assetGroupReassociations: 0,
       skipped: operations.filter((operation) => operation.status === 'skipped').length,
     },
     operations,
     librarySummary: library.summary,
   };
-};
-
-const getLowPerformersWithLimit = async ({
-  accountId,
-  campaignIds,
-  sheetsUrl,
-  limit,
-  selectedLowPerformerIds,
-}) => {
-  const maxResults = Math.max(1, Number(limit || 20));
-  const assets = await getGoogleLowPerformers({
-    accountId,
-    campaignIds,
-    sheetsUrl,
-    limit: Math.max(maxResults * 4, 50),
-  });
-
-  if (selectedLowPerformerIds?.size) {
-    return assets.filter((asset) => selectedLowPerformerIds.has(String(asset.id))).slice(0, maxResults);
-  }
-
-  return assets.slice(0, maxResults);
 };
 
 const getExecutionErrorDetails = (error) => ({
@@ -317,42 +288,36 @@ const getExecutionErrorDetails = (error) => ({
   code: error?.code || null,
   status: error?.status || error?.response?.status || null,
   details: error?.details || null,
-  errors: error?.errors || error?.failure?.errors || error?.response?.data?.errors || null,
+  errors: error?.errors || error?.response?.data?.errors || null,
   response: error?.response?.data || null,
-  googleAdsTrace: error?.googleAdsTrace || [],
   metaAdsTrace: error?.metaAdsTrace || [],
 });
 
-export const collectExecutionGoogleAdsTrace = (results = []) =>
+export const collectExecutionMetaAdsTrace = (results = []) =>
   results.flatMap((result) => [
-    ...(result.googleAdsTrace || []),
-    ...(result.executionError?.googleAdsTrace || []),
-    ...(result.replacement?.googleAdsTrace || []),
+    ...(result.metaAdsTrace || []),
+    ...(result.executionError?.metaAdsTrace || []),
+    ...(result.replacement?.metaAdsTrace || []),
   ]);
 
 const logReplacementFailure = ({ operation, creativeId, executionError }) => {
-  console.error('[GOOGLE_REPLACEMENT] Replacement failed', {
+  console.error('[META_REPLACEMENT] Replacement failed', {
     operationId: operation.id,
     creativeId,
     campaignName: operation.campaignName,
     adGroupName: operation.adGroupName,
-    assetGroupName: operation.assetGroupName || null,
-    targetType: operation.targetType || null,
-    adType: operation.adType || null,
-    assetFieldType: operation.assetFieldType || null,
-    oldAssetResourceName: operation.oldAssetResourceName || null,
-    associationResourceName: operation.associationResourceName || null,
+    adId: operation.adId,
     message: executionError.message,
     code: executionError.code,
     status: executionError.status,
     errors: executionError.errors,
     details: executionError.details,
     response: executionError.response,
-    googleAdsTrace: executionError.googleAdsTrace,
+    metaAdsTrace: executionError.metaAdsTrace,
   });
 };
 
-export const executeGoogleReplacements = async ({
+export const executeMetaReplacements = async ({
   sheetsUrl,
   accountId,
   campaignId,
@@ -362,8 +327,7 @@ export const executeGoogleReplacements = async ({
   selectedOperationIds,
   selectedLowPerformerIds,
   lowPerformerCategories,
-  replacementMode,
-  allowNewAdCreation = false,
+  excludedCreativeIds = [],
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -378,7 +342,7 @@ export const executeGoogleReplacements = async ({
     throw new Error('At least one replacement operation must be selected.');
   }
 
-  const plan = await buildGoogleReplacementPlan({
+  const plan = await buildMetaReplacementPlan({
     sheetsUrl,
     accountId,
     campaignId,
@@ -386,13 +350,8 @@ export const executeGoogleReplacements = async ({
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
-    replacementMode,
+    excludedCreativeIds,
   });
-  const needsNewAdCreationPermission = requiresNewAdCreationPermission(plan.operations, selectedIds);
-  if (needsNewAdCreationPermission && allowNewAdCreation !== true) {
-    throw new Error('New ad creation permission is required for the selected replacements.');
-  }
-
   const results = [];
 
   for (const operation of plan.operations) {
@@ -410,11 +369,7 @@ export const executeGoogleReplacements = async ({
       results.push({
         ...operation,
         executionStatus: 'skipped',
-        executionMessage:
-          operation.blockedMessage ||
-          operation.blockedReason ||
-          operation.message ||
-          'UNSUPPORTED_TARGET',
+        executionMessage: operation.blockedMessage || operation.blockedReason || operation.message || 'META_MANUAL_REVIEW',
       });
       continue;
     }
@@ -436,21 +391,16 @@ export const executeGoogleReplacements = async ({
         replacementResolution: replacementImageResolution,
         creativeId,
       });
-      const replacement = await replaceAdCreative(
+      const replacement = await replaceAdCreativeFromOperation(
         accountId,
         operation,
         imageDataUrl,
       );
-      const replacementResourceName =
-        replacement.assetResourceName ||
-        replacement.newAdResourceName ||
-        replacement.updatedAdResourceName ||
-        '';
+      const replacementResourceName = replacement.newCreativeId || replacement.assetResourceName || '';
 
       await markCreativeUsed(spreadsheetId, creativeId, {
-        adsPlatform: 'google',
+        adsPlatform: 'meta',
         adsResourceName: replacementResourceName,
-        googleAdsAssetResourceName: replacementResourceName,
         operationId: operation.id,
         notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
       });
@@ -460,15 +410,15 @@ export const executeGoogleReplacements = async ({
           event: 'ASSET_REPLACED',
           creative_id: creativeId,
           category: reserved.category || operation.detectedCategory || '',
-          customer_id: accountId.replace(/-/g, ''),
+          customer_id: accountId,
           campaign_id: operation.campaignId,
           ad_group_id: operation.adGroupId,
-          asset_group_id: operation.assetGroupId || '',
+          asset_group_id: '',
           old_asset_resource_name: operation.oldAssetResourceName,
           new_asset_resource_name: replacementResourceName,
           status: 'success',
           message: 'Replacement completed.',
-          payload_json: { operation, replacement, replacementImageResolution, imageAspectRatioValidation },
+          payload_json: { platform: 'meta', operation, replacement, replacementImageResolution, imageAspectRatioValidation },
         },
       ]);
 
@@ -488,15 +438,15 @@ export const executeGoogleReplacements = async ({
           event: 'REPLACEMENT_FAILED',
           creative_id: creativeId,
           category: operation.detectedCategory || '',
-          customer_id: accountId.replace(/-/g, ''),
+          customer_id: accountId,
           campaign_id: operation.campaignId,
           ad_group_id: operation.adGroupId,
-          asset_group_id: operation.assetGroupId || '',
+          asset_group_id: '',
           old_asset_resource_name: operation.oldAssetResourceName,
           new_asset_resource_name: '',
           status: 'failed',
           message: error.message,
-          payload_json: { operation, executionError },
+          payload_json: { platform: 'meta', operation, executionError },
         },
       ]);
 
@@ -505,7 +455,6 @@ export const executeGoogleReplacements = async ({
         executionStatus: 'failed',
         executionMessage: error.message,
         executionError,
-        googleAdsTrace: executionError.googleAdsTrace,
         metaAdsTrace: executionError.metaAdsTrace,
       });
     }
@@ -518,20 +467,14 @@ export const executeGoogleReplacements = async ({
     skipped: results.filter((result) => result.executionStatus === 'skipped').length,
   };
 
-  console.log('[GOOGLE_REPLACEMENT] Execute completed', {
-    accountId,
-    campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),
-    summary,
-  });
-
   return {
     dryRun: false,
-    replacementMode: plan.replacementMode,
+    source: 'meta',
     accountId,
     campaignId: plan.campaignIds?.length === 1 ? plan.campaignIds[0] : '',
     campaignIds: plan.campaignIds || normalizeCampaignIds({ campaignId, campaignIds }),
     summary,
-    googleAdsTrace: collectExecutionGoogleAdsTrace(results),
+    metaAdsTrace: collectExecutionMetaAdsTrace(results),
     results,
   };
 };

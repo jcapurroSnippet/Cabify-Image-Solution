@@ -1,8 +1,17 @@
 import axios from 'axios';
+import crypto from 'node:crypto';
 import FormData from 'form-data';
+import { downloadAdImage } from './adImageDownloader.js';
+import { getImageResolutionFromDataUrl } from './imageRatio.js';
 
 const GRAPH_API_VERSION = 'v25.0';
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
+const META_CREATIVE_FIELDS =
+  'id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,effective_object_story_id';
+const META_ADS_FIELDS =
+  `id,name,effective_status,adset{id,name,campaign{id,name}},creative{${META_CREATIVE_FIELDS}}`;
+const META_INSIGHTS_FIELDS =
+  'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,actions,cost_per_action_type';
 
 const getAccessToken = () => {
   const accessToken = process.env.META_ACCESS_TOKEN;
@@ -81,6 +90,248 @@ const throwWithMetaTrace = (error, trace) => {
   throw error;
 };
 
+const parseNumber = (value) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const deepClone = (value) =>
+  value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+
+const buildMetaLowPerformerId = ({
+  adAccountId,
+  campaignId,
+  adsetId,
+  adId,
+  creativeId,
+  imageUrl,
+}) =>
+  `meta_${crypto
+    .createHash('sha1')
+    .update([adAccountId, campaignId, adsetId, adId, creativeId, imageUrl].filter(Boolean).join('|'))
+    .digest('hex')
+    .slice(0, 16)}`;
+
+const buildMetaAdsUrl = (adAccountId, adId) => {
+  const cleanAccountId = String(adAccountId || '').replace(/^act_/i, '').trim();
+  const params = new URLSearchParams();
+  if (cleanAccountId) params.set('act', cleanAccountId);
+  if (adId) params.set('selected_ad_ids', adId);
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads?${params.toString()}`;
+};
+
+const getMetaCreativeImageUrl = (creative = {}) =>
+  creative.image_url ||
+  creative.thumbnail_url ||
+  creative.object_story_spec?.link_data?.picture ||
+  '';
+
+export const isSafeMetaCreativeForImageClone = (creative = {}) => {
+  if (!creative || typeof creative !== 'object') {
+    return {
+      supported: false,
+      reason: 'META_CREATIVE_NOT_FOUND',
+      message: 'Review this Meta creative before replacing it.',
+    };
+  }
+
+  if (creative.asset_feed_spec) {
+    return {
+      supported: false,
+      reason: 'META_DYNAMIC_CREATIVE',
+      message: 'Flexible Meta creatives need a manual review before replacement.',
+    };
+  }
+
+  const objectStorySpec = creative.object_story_spec || {};
+  if (objectStorySpec.video_data) {
+    return {
+      supported: false,
+      reason: 'META_VIDEO_CREATIVE',
+      message: 'Video Meta creatives need a manual review before replacement.',
+    };
+  }
+
+  const linkData = objectStorySpec.link_data;
+  if (!linkData || typeof linkData !== 'object') {
+    return {
+      supported: false,
+      reason: 'META_UNSUPPORTED_CREATIVE_SHAPE',
+      message: 'This Meta creative needs a manual review before replacement.',
+    };
+  }
+
+  if (Array.isArray(linkData.child_attachments) && linkData.child_attachments.length > 0) {
+    return {
+      supported: false,
+      reason: 'META_CAROUSEL_CREATIVE',
+      message: 'Carousel Meta creatives need a manual review before replacement.',
+    };
+  }
+
+  if (!objectStorySpec.page_id) {
+    return {
+      supported: false,
+      reason: 'META_PAGE_ID_NOT_FOUND',
+      message: 'This Meta creative is missing the Page context needed for replacement.',
+    };
+  }
+
+  return {
+    supported: true,
+    reason: null,
+    message: null,
+  };
+};
+
+export const buildMetaCreativeClonePayload = (creative, imageHash, name) => {
+  const safety = isSafeMetaCreativeForImageClone(creative);
+  if (!safety.supported) {
+    throw new Error(safety.message || 'Meta creative cannot be cloned safely.');
+  }
+  if (!imageHash) throw new Error('imageHash is required.');
+
+  const objectStorySpec = deepClone(creative.object_story_spec);
+  objectStorySpec.link_data = {
+    ...objectStorySpec.link_data,
+    image_hash: imageHash,
+  };
+  delete objectStorySpec.link_data.picture;
+  delete objectStorySpec.link_data.image_crops;
+
+  const payload = {
+    name: name || `${creative.name || 'Creative'} replacement`,
+    object_story_spec: objectStorySpec,
+  };
+
+  if (creative.degrees_of_freedom_spec) {
+    payload.degrees_of_freedom_spec = deepClone(creative.degrees_of_freedom_spec);
+  }
+  if (creative.url_tags) {
+    payload.url_tags = creative.url_tags;
+  }
+
+  return payload;
+};
+
+const buildMetaMetrics = (insight = {}) => {
+  const impressions = parseNumber(insight.impressions);
+  const clicks = parseNumber(insight.clicks);
+  const conversions = insight.conversions !== undefined
+    ? parseNumber(insight.conversions)
+    : extractConversions(insight);
+  const cpa = insight.cpa !== undefined ? parseNumber(insight.cpa) : extractCPA(insight);
+  const cost = parseNumber(insight.spend);
+  const ctr = clicks > 0 && impressions > 0 ? clicks / impressions : 0;
+  const conversionRate = clicks > 0 ? conversions / clicks : 0;
+
+  return { impressions, clicks, ctr, conversions, conversionRate, cost, cpa };
+};
+
+export const normalizeMetaLowPerformerAd = ({
+  adAccountId,
+  ad,
+  insight = {},
+  imageResolution = {},
+}) => {
+  const creative = ad?.creative || {};
+  const campaign = ad?.adset?.campaign || {};
+  const campaignId = String(campaign.id || insight.campaign_id || '');
+  const campaignName = campaign.name || insight.campaign_name || 'Unknown Campaign';
+  const adsetId = String(ad?.adset?.id || insight.adset_id || '');
+  const adsetName = ad?.adset?.name || insight.adset_name || 'Unknown Ad Set';
+  const adId = String(ad?.id || insight.ad_id || '');
+  const creativeId = String(creative.id || '');
+  const imageUrl = getMetaCreativeImageUrl(creative);
+  const width = parseNumber(imageResolution.width);
+  const height = parseNumber(imageResolution.height);
+  const safety = isSafeMetaCreativeForImageClone(creative);
+
+  return {
+    id: buildMetaLowPerformerId({
+      adAccountId,
+      campaignId,
+      adsetId,
+      adId,
+      creativeId,
+      imageUrl,
+    }),
+    platform: 'meta',
+    platformLabel: 'Meta Ads',
+    accountId: adAccountId,
+    customerId: adAccountId,
+    campaignId,
+    campaignName,
+    adGroupId: adsetId,
+    adGroupName: adsetName,
+    assetGroupId: '',
+    assetGroupName: '',
+    adId,
+    adType: 'META_IMAGE_AD',
+    adResourceName: adId,
+    assetId: creativeId,
+    assetResourceName: creativeId,
+    assetName: creative.name || ad?.name || `Ad ${adId}`,
+    assetUrl: imageUrl,
+    imageWidth: width,
+    imageHeight: height,
+    imageResolution: width > 0 && height > 0 ? `${width}x${height}` : '',
+    targetType: 'META_AD',
+    associationResourceName: adId,
+    assetFieldType: '',
+    googleAdsUrl: '',
+    adsUrl: buildMetaAdsUrl(adAccountId, adId),
+    targetName: [campaignName, adsetName].filter(Boolean).join(' | '),
+    metrics: buildMetaMetrics(insight),
+    performanceLabel: '',
+    reason: 'META_LOW_CONVERSIONS_HIGH_CPA',
+    supportedReplacement: safety.supported,
+    replacementSupportReason: safety.supported ? null : safety.reason,
+    replacementSupportMessage: safety.supported ? null : safety.message,
+    replacementStrategy: safety.supported ? 'META_CREATIVE_CLONE' : 'META_MANUAL_REVIEW',
+    metaCreative: creative,
+  };
+};
+
+export const rankMetaLowPerformers = (assets = []) =>
+  [...assets].sort((left, right) => {
+    const leftMetrics = left.metrics || {};
+    const rightMetrics = right.metrics || {};
+    const conversionDelta = parseNumber(leftMetrics.conversions) - parseNumber(rightMetrics.conversions);
+    if (conversionDelta !== 0) return conversionDelta;
+
+    const cpaDelta = parseNumber(rightMetrics.cpa) - parseNumber(leftMetrics.cpa);
+    if (cpaDelta !== 0) return cpaDelta;
+
+    return parseNumber(rightMetrics.impressions) - parseNumber(leftMetrics.impressions);
+  });
+
+const normalizeCampaignIds = (options = {}) => {
+  const rawIds = Array.isArray(options.campaignIds)
+    ? options.campaignIds
+    : options.campaignIds
+      ? [options.campaignIds]
+      : options.campaignId
+        ? [options.campaignId]
+        : [];
+
+  return [...new Set(rawIds.map((id) => String(id).trim()).filter(Boolean))];
+};
+
+const resolveImageResolution = async (imageUrl) => {
+  if (!imageUrl) return {};
+
+  try {
+    const dataUrl = await downloadAdImage(imageUrl);
+    return await getImageResolutionFromDataUrl(dataUrl);
+  } catch {
+    return {};
+  }
+};
+
+const insightMapByAdId = (insights = []) =>
+  new Map((insights || []).map((insight) => [String(insight.ad_id || ''), insight]));
+
 /**
  * Fetch all active campaigns for an ad account.
  */
@@ -97,6 +348,52 @@ export const getCampaigns = async (adAccountId) => {
     id: c.id,
     label: c.name || `Campaign ${c.id}`,
   }));
+};
+
+export const getLowPerformingImageAssets = async (adAccountId, options = {}) => {
+  if (!adAccountId) throw new Error('adAccountId is required.');
+
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
+  const datePreset = options.datePreset || 'last_30d';
+  const selectedCampaignIds = normalizeCampaignIds(options);
+  const campaigns = selectedCampaignIds.length > 0
+    ? selectedCampaignIds.map((id) => ({ id }))
+    : await getCampaigns(adAccountId);
+  const assets = [];
+
+  for (const campaign of campaigns) {
+    const campaignId = String(campaign.id || '').trim();
+    if (!campaignId) continue;
+
+    const insightsResponse = await graphGet(`/${campaignId}/insights`, {
+      level: 'ad',
+      fields: META_INSIGHTS_FIELDS,
+      date_preset: datePreset,
+      limit: 500,
+    });
+    const insightsByAdId = insightMapByAdId(insightsResponse?.data || []);
+    const adsResponse = await graphGet(`/${campaignId}/ads`, {
+      fields: META_ADS_FIELDS,
+      effective_status: '["ACTIVE"]',
+      limit: 500,
+    });
+
+    for (const ad of adsResponse?.data || []) {
+      const insight = insightsByAdId.get(String(ad.id || '')) || {};
+      const imageUrl = getMetaCreativeImageUrl(ad.creative || {});
+      if (!imageUrl) continue;
+
+      const imageResolution = await resolveImageResolution(imageUrl);
+      assets.push(normalizeMetaLowPerformerAd({
+        adAccountId,
+        ad,
+        insight,
+        imageResolution,
+      }));
+    }
+  }
+
+  return rankMetaLowPerformers(assets).slice(0, limit);
 };
 
 /**
@@ -200,17 +497,18 @@ const extractCPA = (insightData) => {
   return cpaAction ? Number(cpaAction.value ?? 0) : 0;
 };
 
-/**
- * Replace an ad's creative with a new image.
- */
-export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
-  const metaAdsTrace = [];
+export const getAdCreativeForReplacement = async (adId) => {
+  if (!adId) throw new Error('adId is required.');
 
-  if (!adAccountId) {
-    throw new Error('adAccountId is required.');
-  }
+  const response = await graphGet(`/${adId}`, {
+    fields: `creative{${META_CREATIVE_FIELDS}}`,
+  });
 
-  const match = newImageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  return response?.creative || null;
+};
+
+const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace }) => {
+  const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
     throw new Error('Invalid image data URL format.');
   }
@@ -218,13 +516,11 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
   const imageBuffer = Buffer.from(match[2], 'base64');
   pushMetaTrace(metaAdsTrace, 'validate_input', 'success', {
     adAccountId,
-    adId,
     mimeType: match[1],
     imageBytes: imageBuffer.length,
   });
 
-  // 1. Upload image to ad account
-  const fileName = `optimized_${Date.now()}.png`;
+  const fileName = `creative_replacement_${Date.now()}.png`;
   const form = new FormData();
   form.append('filename', fileName);
   form.append('file', imageBuffer, {
@@ -253,28 +549,43 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
     });
     throwWithMetaTrace(error, metaAdsTrace);
   }
+
   pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'success', {
     imageHash,
     responseImageKeys: Object.keys(uploadResponse?.images || {}),
   });
+  return imageHash;
+};
 
-  // 2. Create new ad creative
+export const replaceAdCreativeFromOperation = async (adAccountId, operation, newImageDataUrl) => {
+  const metaAdsTrace = [];
+
+  if (!adAccountId) {
+    throw new Error('adAccountId is required.');
+  }
+  if (!operation?.adId) {
+    throw new Error('operation.adId is required.');
+  }
+
+  const imageHash = await uploadMetaImage({
+    adAccountId,
+    imageDataUrl: newImageDataUrl,
+    metaAdsTrace,
+  });
+  const existingCreative = operation.metaCreative || await getAdCreativeForReplacement(operation.adId);
+  const creativePayload = buildMetaCreativeClonePayload(
+    existingCreative,
+    imageHash,
+    `${existingCreative?.name || operation.assetName || 'Meta creative'} replacement`,
+  );
+
   let creativeResponse;
   try {
     pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'started', {
       endpoint: `/${adAccountId}/adcreatives`,
-      pageIdConfigured: Boolean(process.env.META_PAGE_ID),
+      sourceCreativeId: existingCreative?.id || null,
     });
-    creativeResponse = await graphPost(`/${adAccountId}/adcreatives`, {
-    name: `Optimized Creative ${Date.now()}`,
-    object_story_spec: {
-      page_id: process.env.META_PAGE_ID,
-      link_data: {
-        image_hash: imageHash,
-        link: 'https://www.cabify.com',
-      },
-    },
-    });
+    creativeResponse = await graphPost(`/${adAccountId}/adcreatives`, creativePayload);
   } catch (error) {
     pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'error', getMetaErrorDetails(error));
     throwWithMetaTrace(error, metaAdsTrace);
@@ -293,21 +604,21 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
     newCreativeId,
   });
 
-  // 3. Update ad to use new creative
   try {
     pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'started', {
-      endpoint: `/${adId}`,
+      endpoint: `/${operation.adId}`,
       newCreativeId,
     });
-    await graphPost(`/${adId}`, {
+    await graphPost(`/${operation.adId}`, {
       creative: { creative_id: newCreativeId },
     });
   } catch (error) {
     pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'error', getMetaErrorDetails(error));
     throwWithMetaTrace(error, metaAdsTrace);
   }
+
   pushMetaTrace(metaAdsTrace, 'update_meta_ad', 'success', {
-    adId,
+    adId: operation.adId,
     newCreativeId,
   });
 
@@ -315,6 +626,15 @@ export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
     success: true,
     newCreativeId,
     imageHash,
+    assetResourceName: newCreativeId,
+    updatedAdResourceName: operation.adId,
     metaAdsTrace,
   };
+};
+
+/**
+ * Replace an ad's creative with a new image.
+ */
+export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
+  return replaceAdCreativeFromOperation(adAccountId, { adId }, newImageDataUrl);
 };

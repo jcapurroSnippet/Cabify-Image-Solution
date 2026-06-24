@@ -51,9 +51,24 @@ export const summarizeCreativeLibraryResolutions = (creatives = [], category) =>
     .sort((left, right) => left.resolution.localeCompare(right.resolution));
 };
 
-export const describeGoogleAdType = (target = {}) => {
+export const describeAdsTargetType = (target = {}) => {
+  const platform = String(target.platform || '').toLowerCase();
   const adType = String(target.adType || '').toUpperCase();
   const targetType = String(target.targetType || '').toUpperCase();
+
+  if (platform === 'meta' || adType.startsWith('META_')) {
+    if (adType === 'META_IMAGE_AD') {
+      return {
+        label: 'Meta image ad',
+        description: 'Updates the current Meta ad with a new creative.',
+      };
+    }
+
+    return {
+      label: 'Meta ad',
+      description: 'Review this Meta ad before replacing.',
+    };
+  }
 
   if (targetType === 'ASSET_GROUP_ASSET' || adType === 'ASSET_GROUP_ASSET') {
     return {
@@ -89,11 +104,16 @@ export const describeGoogleAdType = (target = {}) => {
   };
 };
 
+export const describeGoogleAdType = (target = {}) => describeAdsTargetType({
+  ...target,
+  platform: 'google',
+});
+
 export const describeReplacementChange = (operation) => {
   if (!operation || operation.executableInMode === false || operation.executionPolicy === 'manual_only') {
     return {
-      label: 'Replace in Google',
-      description: 'This one needs a manual change in Google Ads.',
+      label: 'Review manually',
+      description: 'This one needs a manual change in Ads.',
       tone: 'warning',
     };
   }
@@ -142,7 +162,7 @@ export const describeReplacementStatus = (operation) => {
   if (operation.executableInMode === false || operation.executionPolicy === 'manual_only') {
     return {
       label: 'Manual change',
-      description: operation.blockedMessage || 'Replace this creative directly in Google Ads.',
+      description: operation.blockedMessage || 'Replace this creative directly in Ads.',
       tone: 'warning',
     };
   }

@@ -1,9 +1,12 @@
 import type {
   AccountOption,
+  AdsPlatform,
+  AdsSelections,
   CampaignOption,
   CreativeLibraryResponse,
   ExecutionResponse,
   LowPerformer,
+  LowPerformerSource,
   ReplacementPlanResponse,
   SyncResponse,
 } from '../types';
@@ -11,6 +14,7 @@ import type {
 export type LowPerformerCategories = Record<string, string>;
 
 const GOOGLE_REQUIRED_REPLACEMENT_MODE = 'allow_google_required_clone';
+const PLATFORM_VALUES: AdsPlatform[] = ['google', 'meta'];
 
 const parseErrorMessage = async (response: Response, url: string): Promise<string> => {
   try {
@@ -57,16 +61,38 @@ const postJson = async <T>(url: string, body: unknown): Promise<T> => {
   return (await response.json()) as T;
 };
 
-export const fetchGoogleAccounts = async (): Promise<AccountOption[]> => {
-  const data = await getJson<{ accounts: AccountOption[] }>('/api/ads/accounts?platform=google');
+const getActivePlatforms = (source: LowPerformerSource): AdsPlatform[] =>
+  source === 'both' ? PLATFORM_VALUES : [source];
+
+const buildSelectionsPayload = (source: LowPerformerSource, selections: AdsSelections) =>
+  Object.fromEntries(
+    getActivePlatforms(source).map((platform) => {
+      const selection = selections[platform];
+      return [
+        platform,
+        {
+          accountId: selection?.accountId || '',
+          campaignIds: selection?.campaignIds?.length ? selection.campaignIds : undefined,
+        },
+      ];
+    }),
+  );
+
+export const fetchAdAccounts = async (platform: AdsPlatform): Promise<AccountOption[]> => {
+  const data = await getJson<{ accounts: AccountOption[] }>(`/api/ads/accounts?platform=${platform}`);
   return data.accounts || [];
 };
 
-export const fetchGoogleCampaigns = async (accountId: string): Promise<CampaignOption[]> => {
-  const params = new URLSearchParams({ platform: 'google', accountId });
+export const fetchGoogleAccounts = async (): Promise<AccountOption[]> => fetchAdAccounts('google');
+
+export const fetchAdCampaigns = async (platform: AdsPlatform, accountId: string): Promise<CampaignOption[]> => {
+  const params = new URLSearchParams({ platform, accountId });
   const data = await getJson<{ campaigns: CampaignOption[] }>(`/api/ads/campaigns?${params.toString()}`);
   return data.campaigns || [];
 };
+
+export const fetchGoogleCampaigns = async (accountId: string): Promise<CampaignOption[]> =>
+  fetchAdCampaigns('google', accountId);
 
 export const syncCreativeLibrary = async (sheetsUrl: string, sheetName?: string): Promise<SyncResponse> => {
   const url = '/api/creative-library/sync';
@@ -136,14 +162,14 @@ export const fetchCreativeLibrary = async (sheetsUrl: string): Promise<CreativeL
 
 export const fetchLowPerformers = async (
   sheetsUrl: string,
-  accountId: string,
-  campaignIds: string[],
+  source: LowPerformerSource,
+  selections: AdsSelections,
   limit: number,
 ): Promise<{ assets: LowPerformer[]; categories: string[] }> => {
-  const data = await postJson<{ assets: LowPerformer[]; categories: string[] }>('/api/ads/google/low-performers', {
+  const data = await postJson<{ assets: LowPerformer[]; categories: string[] }>('/api/ads/low-performers', {
     sheetsUrl,
-    accountId,
-    campaignIds: campaignIds.length > 0 ? campaignIds : undefined,
+    source,
+    selections: buildSelectionsPayload(source, selections),
     limit,
   });
   return {
@@ -154,16 +180,16 @@ export const fetchLowPerformers = async (
 
 export const buildReplacementPlan = async (
   sheetsUrl: string,
-  accountId: string,
-  campaignIds: string[],
+  source: LowPerformerSource,
+  selections: AdsSelections,
   limit: number,
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
 ): Promise<ReplacementPlanResponse> =>
-  postJson<ReplacementPlanResponse>('/api/ads/google/replacement-plan', {
+  postJson<ReplacementPlanResponse>('/api/ads/replacement-plan', {
     sheetsUrl,
-    accountId,
-    campaignIds: campaignIds.length > 0 ? campaignIds : undefined,
+    source,
+    selections: buildSelectionsPayload(source, selections),
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
@@ -172,18 +198,18 @@ export const buildReplacementPlan = async (
 
 export const executeReplacements = async (
   sheetsUrl: string,
-  accountId: string,
-  campaignIds: string[],
+  source: LowPerformerSource,
+  selections: AdsSelections,
   limit: number,
   selectedOperationIds: string[],
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
   allowNewAdCreation = false,
 ): Promise<ExecutionResponse> =>
-  postJson<ExecutionResponse>('/api/ads/google/execute-replacements', {
+  postJson<ExecutionResponse>('/api/ads/execute-replacements', {
     sheetsUrl,
-    accountId,
-    campaignIds: campaignIds.length > 0 ? campaignIds : undefined,
+    source,
+    selections: buildSelectionsPayload(source, selections),
     limit,
     selectedOperationIds,
     selectedLowPerformerIds,

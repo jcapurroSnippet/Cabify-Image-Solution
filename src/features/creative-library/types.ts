@@ -8,6 +8,16 @@ export interface CampaignOption {
   label: string;
 }
 
+export type AdsPlatform = 'google' | 'meta';
+export type LowPerformerSource = AdsPlatform | 'both';
+
+export interface AdsSelection {
+  accountId: string;
+  campaignIds: string[];
+}
+
+export type AdsSelections = Partial<Record<AdsPlatform, AdsSelection>>;
+
 export interface CreativeLibraryItem {
   creative_id: string;
   status: string;
@@ -21,6 +31,9 @@ export interface CreativeLibraryItem {
   image_resolution?: string;
   created_at: string;
   used_at: string;
+  ads_platform?: string;
+  ads_resource_name?: string;
+  google_ads_asset_resource_name?: string;
   replacement_operation_id: string;
 }
 
@@ -76,6 +89,9 @@ export interface SyncResponse {
 
 export interface LowPerformer {
   id: string;
+  platform?: AdsPlatform;
+  platformLabel?: string;
+  accountId?: string;
   customerId: string;
   campaignId: string;
   campaignName: string;
@@ -97,6 +113,7 @@ export interface LowPerformer {
   assetFieldType?: string;
   replacementStrategy?: string;
   googleAdsUrl: string;
+  adsUrl?: string;
   detectedCategory?: string | null;
   detectedPlazas?: string | null;
   categorySource?: string;
@@ -114,11 +131,15 @@ export interface LowPerformer {
     conversions: number;
     conversionRate: number;
     cost: number;
+    cpa?: number;
   };
 }
 
 export interface ReplacementOperation {
   id: string;
+  platform?: AdsPlatform;
+  platformLabel?: string;
+  accountId?: string;
   status: string;
   executionStatus?: string;
   message: string;
@@ -151,6 +172,7 @@ export interface ReplacementOperation {
   oldImageResolution?: string;
   requiredAspectRatio?: string | null;
   googleAdsUrl?: string;
+  adsUrl?: string;
   creative: {
     creative_id: string;
     category: string;
@@ -167,6 +189,7 @@ export interface ReplacementOperation {
 
 export interface ReplacementPlanResponse {
   dryRun: boolean;
+  source?: LowPerformerSource;
   replacementMode?: ReplacementMode;
   summary: Record<string, number>;
   operations: ReplacementOperation[];
@@ -175,8 +198,10 @@ export interface ReplacementPlanResponse {
 
 export interface ExecutionResponse {
   dryRun: boolean;
+  source?: LowPerformerSource;
   replacementMode?: ReplacementMode;
   summary: Record<string, number>;
   googleAdsTrace?: AdsTraceEntry[];
+  metaAdsTrace?: AdsTraceEntry[];
   results: ReplacementOperation[];
 }

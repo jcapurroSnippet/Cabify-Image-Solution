@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildNewAdPermissionMessage,
+  describeAdsTargetType,
   describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
@@ -46,7 +47,7 @@ test('describes replacement changes without technical strategy labels', () => {
   );
   assert.equal(
     describeReplacementChange(operation({ executableInMode: false, executionPolicy: 'manual_only' })).label,
-    'Replace in Google',
+    'Review manually',
   );
 });
 
@@ -95,6 +96,17 @@ test('describes Google Ads target types plainly', () => {
   assert.deepEqual(describeGoogleAdType({ adType: 'APP_AD' }), {
     label: 'App install ad',
     description: 'Needs a manual change in Google Ads.',
+  });
+});
+
+test('describes Meta Ads target types plainly', () => {
+  assert.deepEqual(describeAdsTargetType({ platform: 'meta', adType: 'META_IMAGE_AD' }), {
+    label: 'Meta image ad',
+    description: 'Updates the current Meta ad with a new creative.',
+  });
+  assert.deepEqual(describeAdsTargetType({ platform: 'meta', adType: 'META_UNSUPPORTED_CREATIVE_SHAPE' }), {
+    label: 'Meta ad',
+    description: 'Review this Meta ad before replacing.',
   });
 });
 

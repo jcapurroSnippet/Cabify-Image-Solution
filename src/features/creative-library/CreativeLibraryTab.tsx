@@ -14,26 +14,29 @@ import {
 } from 'lucide-react';
 import type {
   AccountOption,
+  AdsPlatform,
+  AdsSelections,
   CampaignOption,
   CreativeLibraryResponse,
   ExecutionResponse,
   LowPerformer,
+  LowPerformerSource,
   ReplacementPlanResponse,
   SyncResponse,
 } from './types';
 import {
   buildReplacementPlan,
   executeReplacements,
+  fetchAdAccounts,
+  fetchAdCampaigns,
   fetchCreativeLibrary,
-  fetchGoogleAccounts,
-  fetchGoogleCampaigns,
   fetchLowPerformers,
   syncCreativeLibrary,
 } from './services/creativeLibraryApi';
 import {
   buildNewAdPermissionMessage,
   buildReplacementCompletedItems,
-  describeGoogleAdType,
+  describeAdsTargetType,
   describeReplacementChange,
   describeReplacementStatus,
   summarizeCreativeLibraryPlazas,
@@ -48,6 +51,33 @@ const DEFAULT_CATEGORY_OPTIONS = [
   'Promo',
   'Alianzas',
 ];
+
+const ADS_PLATFORMS: AdsPlatform[] = ['google', 'meta'];
+
+const PLATFORM_LABELS: Record<AdsPlatform, string> = {
+  google: 'Google Ads',
+  meta: 'Meta Ads',
+};
+
+const PLATFORM_EMPTY_ACCOUNTS: Record<AdsPlatform, AccountOption[]> = {
+  google: [],
+  meta: [],
+};
+
+const PLATFORM_EMPTY_CAMPAIGNS: Record<AdsPlatform, CampaignOption[]> = {
+  google: [],
+  meta: [],
+};
+
+const PLATFORM_EMPTY_STRINGS: Record<AdsPlatform, string> = {
+  google: '',
+  meta: '',
+};
+
+const PLATFORM_EMPTY_LISTS: Record<AdsPlatform, string[]> = {
+  google: [],
+  meta: [],
+};
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Unexpected error.';
@@ -71,12 +101,13 @@ const getPreviewSrc = (url?: string | null) => {
 export default function CreativeLibraryTab() {
   const [sheetsUrl, setSheetsUrl] = useState('');
   const [sheetName, setSheetName] = useState('');
-  const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
-  const [accountId, setAccountId] = useState('');
-  const [campaignIds, setCampaignIds] = useState<string[]>([]);
-  const [campaignSearch, setCampaignSearch] = useState('');
-  const [isCampaignMenuOpen, setIsCampaignMenuOpen] = useState(false);
+  const [adsSource, setAdsSource] = useState<LowPerformerSource>('google');
+  const [accountsByPlatform, setAccountsByPlatform] = useState<Record<AdsPlatform, AccountOption[]>>(PLATFORM_EMPTY_ACCOUNTS);
+  const [campaignsByPlatform, setCampaignsByPlatform] = useState<Record<AdsPlatform, CampaignOption[]>>(PLATFORM_EMPTY_CAMPAIGNS);
+  const [accountIds, setAccountIds] = useState<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
+  const [campaignIdsByPlatform, setCampaignIdsByPlatform] = useState<Record<AdsPlatform, string[]>>(PLATFORM_EMPTY_LISTS);
+  const [campaignSearchByPlatform, setCampaignSearchByPlatform] = useState<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
+  const [openCampaignMenu, setOpenCampaignMenu] = useState<AdsPlatform | null>(null);
   const [limit, setLimit] = useState(10);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,16 +120,28 @@ export default function CreativeLibraryTab() {
   const [execution, setExecution] = useState<ExecutionResponse | null>(null);
   const [selectedLowPerformerIds, setSelectedLowPerformerIds] = useState<Set<string>>(new Set());
   const [selectedOperationIds, setSelectedOperationIds] = useState<Set<string>>(new Set());
-  const campaignMenuRef = useRef<HTMLDivElement | null>(null);
+  const campaignControlsRef = useRef<HTMLDivElement | null>(null);
+  const fetchedCampaignAccountsRef = useRef<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
 
   useEffect(() => {
     let isActive = true;
     setBusyAction('accounts');
-    fetchGoogleAccounts()
-      .then((items) => {
+    Promise.all(
+      ADS_PLATFORMS.map(async (platform) => [
+        platform,
+        await fetchAdAccounts(platform),
+      ] as const),
+    )
+      .then((entries) => {
         if (!isActive) return;
-        setAccounts(items);
-        if (items[0]) setAccountId(items[0].id);
+        setAccountsByPlatform(Object.fromEntries(entries) as Record<AdsPlatform, AccountOption[]>);
+        setAccountIds((previous) => {
+          const next = { ...previous };
+          for (const [platform, items] of entries) {
+            if (!next[platform] && items[0]) next[platform] = items[0].id;
+          }
+          return next;
+        });
       })
       .catch((err) => {
         if (isActive) setError(getErrorMessage(err));
@@ -113,19 +156,47 @@ export default function CreativeLibraryTab() {
   }, []);
 
   useEffect(() => {
-    if (!accountId) {
-      setCampaigns([]);
-      setCampaignIds([]);
-      return;
-    }
+    const platformsForSource = adsSource === 'both' ? ADS_PLATFORMS : [adsSource];
+    const platformsToFetch = platformsForSource.filter((platform) => {
+      const accountId = accountIds[platform];
+      if (!accountId) {
+        fetchedCampaignAccountsRef.current = {
+          ...fetchedCampaignAccountsRef.current,
+          [platform]: '',
+        };
+        setCampaignsByPlatform((previous) => ({ ...previous, [platform]: [] }));
+        setCampaignIdsByPlatform((previous) => ({ ...previous, [platform]: [] }));
+        return false;
+      }
+      return fetchedCampaignAccountsRef.current[platform] !== accountId;
+    });
 
+    if (platformsToFetch.length === 0) return;
     let isActive = true;
     setBusyAction('campaigns');
-    fetchGoogleCampaigns(accountId)
-      .then((items) => {
+    Promise.all(
+      platformsToFetch.map(async (platform) => [
+        platform,
+        accountIds[platform],
+        await fetchAdCampaigns(platform, accountIds[platform]),
+      ] as const),
+    )
+      .then((entries) => {
         if (!isActive) return;
-        setCampaigns(items);
-        setCampaignIds([]);
+        setCampaignsByPlatform((previous) => {
+          const next = { ...previous };
+          for (const [platform, , items] of entries) next[platform] = items;
+          return next;
+        });
+        setCampaignIdsByPlatform((previous) => {
+          const next = { ...previous };
+          for (const [platform] of entries) next[platform] = [];
+          return next;
+        });
+        fetchedCampaignAccountsRef.current = {
+          ...fetchedCampaignAccountsRef.current,
+          ...Object.fromEntries(entries.map(([platform, accountId]) => [platform, accountId])),
+        } as Record<AdsPlatform, string>;
       })
       .catch((err) => {
         if (isActive) setError(getErrorMessage(err));
@@ -137,7 +208,7 @@ export default function CreativeLibraryTab() {
     return () => {
       isActive = false;
     };
-  }, [accountId]);
+  }, [adsSource, accountIds.google, accountIds.meta]);
 
   useEffect(() => {
     setLowPerformers([]);
@@ -146,16 +217,23 @@ export default function CreativeLibraryTab() {
     setPlan(null);
     setExecution(null);
     setSelectedOperationIds(new Set());
-  }, [accountId, campaignIds, limit]);
+  }, [
+    adsSource,
+    accountIds.google,
+    accountIds.meta,
+    campaignIdsByPlatform.google,
+    campaignIdsByPlatform.meta,
+    limit,
+  ]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!campaignMenuRef.current?.contains(event.target as Node)) {
-        setIsCampaignMenuOpen(false);
+      if (!campaignControlsRef.current?.contains(event.target as Node)) {
+        setOpenCampaignMenu(null);
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsCampaignMenuOpen(false);
+      if (event.key === 'Escape') setOpenCampaignMenu(null);
     };
 
     document.addEventListener('mousedown', handlePointerDown);
@@ -190,22 +268,45 @@ export default function CreativeLibraryTab() {
       ),
     [library],
   );
-  const selectedCampaignCount = campaignIds.length;
-  const selectedCampaignIdSet = useMemo(() => new Set(campaignIds), [campaignIds]);
-  const selectedCampaignLabel = useMemo(() => {
-    if (selectedCampaignCount === 0) return 'All enabled campaigns';
-    if (selectedCampaignCount === 1) {
-      return campaigns.find((campaign) => campaign.id === campaignIds[0])?.label || '1 campaign selected';
+  const activePlatforms = useMemo<AdsPlatform[]>(
+    () => (adsSource === 'both' ? ADS_PLATFORMS : [adsSource]),
+    [adsSource],
+  );
+  const adsSelections = useMemo<AdsSelections>(
+    () =>
+      Object.fromEntries(
+        activePlatforms.map((platform) => [
+          platform,
+          {
+            accountId: accountIds[platform],
+            campaignIds: campaignIdsByPlatform[platform],
+          },
+        ]),
+      ) as AdsSelections,
+    [
+      activePlatforms,
+      accountIds.google,
+      accountIds.meta,
+      campaignIdsByPlatform.google,
+      campaignIdsByPlatform.meta,
+    ],
+  );
+  const getCampaignLabel = (platform: AdsPlatform) => {
+    const selectedIds = campaignIdsByPlatform[platform];
+    if (selectedIds.length === 0) return 'All enabled campaigns';
+    if (selectedIds.length === 1) {
+      return campaignsByPlatform[platform].find((campaign) => campaign.id === selectedIds[0])?.label || '1 campaign selected';
     }
-    return `${selectedCampaignCount} campaigns selected`;
-  }, [campaignIds, campaigns, selectedCampaignCount]);
-  const filteredCampaigns = useMemo(() => {
-    const query = campaignSearch.trim().toLowerCase();
+    return `${selectedIds.length} campaigns selected`;
+  };
+  const getFilteredCampaigns = (platform: AdsPlatform) => {
+    const query = campaignSearchByPlatform[platform].trim().toLowerCase();
+    const campaigns = campaignsByPlatform[platform];
     if (!query) return campaigns;
     return campaigns.filter((campaign) =>
       `${campaign.label} ${campaign.id}`.toLowerCase().includes(query),
     );
-  }, [campaignSearch, campaigns]);
+  };
 
   const validateSheet = () => {
     if (!sheetsUrl.trim()) {
@@ -216,8 +317,9 @@ export default function CreativeLibraryTab() {
   };
 
   const validateAds = () => {
-    if (!accountId) {
-      setError('Google Ads account is required.');
+    const missingPlatform = activePlatforms.find((platform) => !accountIds[platform]);
+    if (missingPlatform) {
+      setError(`${PLATFORM_LABELS[missingPlatform]} ad account is required.`);
       return false;
     }
     return true;
@@ -267,7 +369,7 @@ export default function CreativeLibraryTab() {
   const handleLowPerformers = () => {
     if (!validateAds()) return;
     void runAction('low', async () => {
-      const result = await fetchLowPerformers(sheetsUrl.trim(), accountId, campaignIds, limit);
+      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit);
       const assets = result.assets;
       setLowPerformers(assets);
       setCategoryOptions(result.categories.length > 0 ? result.categories : DEFAULT_CATEGORY_OPTIONS);
@@ -308,8 +410,8 @@ export default function CreativeLibraryTab() {
     void runAction('execute', async () => {
       const nextPlan = await buildReplacementPlan(
         sheetsUrl.trim(),
-        accountId,
-        campaignIds,
+        adsSource,
+        adsSelections,
         limit,
         selectedLowIds,
         selectedCategories,
@@ -337,17 +439,20 @@ export default function CreativeLibraryTab() {
 
       const result = await executeReplacements(
         sheetsUrl.trim(),
-        accountId,
-        campaignIds,
+        adsSource,
+        adsSelections,
         limit,
         selectedIds,
         selectedLowIds,
         selectedCategories,
         requiresNewAdPermission,
       );
-      console.info('[Creative Library] Google execution result', result);
+      console.info('[Creative Library] Ads execution result', result);
       if (result.googleAdsTrace?.length) {
         console.table(result.googleAdsTrace);
+      }
+      if (result.metaAdsTrace?.length) {
+        console.table(result.metaAdsTrace);
       }
       setExecution(result);
       setPlan({
@@ -386,12 +491,13 @@ export default function CreativeLibraryTab() {
     });
   };
 
-  const toggleCampaign = (selectedCampaignId: string) => {
-    setCampaignIds((previous) =>
-      previous.includes(selectedCampaignId)
-        ? previous.filter((id) => id !== selectedCampaignId)
-        : [...previous, selectedCampaignId],
-    );
+  const toggleCampaign = (platform: AdsPlatform, selectedCampaignId: string) => {
+    setCampaignIdsByPlatform((previous) => ({
+      ...previous,
+      [platform]: previous[platform].includes(selectedCampaignId)
+        ? previous[platform].filter((id) => id !== selectedCampaignId)
+        : [...previous[platform], selectedCampaignId],
+    }));
   };
 
   const updateLowPerformerCategory = (assetId: string, category: string) => {
@@ -404,9 +510,9 @@ export default function CreativeLibraryTab() {
     setSelectedOperationIds(new Set());
   };
 
-  const clearCampaignSelection = () => {
-    setCampaignIds([]);
-    setCampaignSearch('');
+  const clearCampaignSelection = (platform: AdsPlatform) => {
+    setCampaignIdsByPlatform((previous) => ({ ...previous, [platform]: [] }));
+    setCampaignSearchByPlatform((previous) => ({ ...previous, [platform]: '' }));
   };
 
   const selectAllLowPerformers = () => {
@@ -441,8 +547,8 @@ export default function CreativeLibraryTab() {
     if (tone === 'error') return 'border-red-400/30 bg-red-400/10 text-red-100';
     return 'border-slate-600/40 bg-slate-900/40 text-slate-200';
   };
-  const renderGoogleAdType = (target: Pick<LowPerformer, 'adType' | 'targetType'>) => {
-    const adType = describeGoogleAdType(target);
+  const renderAdsTargetType = (target: Pick<LowPerformer, 'adType' | 'targetType' | 'platform'>) => {
+    const adType = describeAdsTargetType(target);
 
     return (
       <span
@@ -453,6 +559,121 @@ export default function CreativeLibraryTab() {
       </span>
     );
   };
+  const renderPlatformControls = (platform: AdsPlatform) => {
+    const accounts = accountsByPlatform[platform];
+    const campaigns = campaignsByPlatform[platform];
+    const selectedCampaignIds = campaignIdsByPlatform[platform];
+    const selectedCampaignIdSet = new Set(selectedCampaignIds);
+    const filteredCampaigns = getFilteredCampaigns(platform);
+    const isMenuOpen = openCampaignMenu === platform;
+
+    return (
+      <div key={platform} className="grid gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-3 lg:grid-cols-[0.8fr_1.2fr]">
+        <label className="space-y-1">
+          <span className="text-xs font-medium uppercase text-slate-400">{PLATFORM_LABELS[platform]} ad account</span>
+          <select
+            value={accountIds[platform]}
+            onChange={(event) => setAccountIds((previous) => ({ ...previous, [platform]: event.target.value }))}
+            className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
+          >
+            {accounts.length === 0 && <option value="">No accounts</option>}
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>{account.label}</option>
+            ))}
+          </select>
+        </label>
+        <div className="relative space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium uppercase text-slate-400">Campaigns</span>
+            <span className="text-xs text-slate-500">
+              {selectedCampaignIds.length > 0 ? `${selectedCampaignIds.length} selected` : 'All enabled'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpenCampaignMenu(isMenuOpen ? null : platform)}
+            aria-expanded={isMenuOpen}
+            className="flex h-10 w-full items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-left text-sm text-white outline-none hover:border-slate-500 focus:border-cyan-300/70"
+          >
+            <span className="min-w-0 flex-1 truncate">{getCampaignLabel(platform)}</span>
+            {selectedCampaignIds.length > 0 && (
+              <span className="rounded-md bg-cyan-300/15 px-1.5 py-0.5 text-xs text-cyan-100">
+                {selectedCampaignIds.length}
+              </span>
+            )}
+            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {isMenuOpen && (
+            <div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-lg border border-slate-700/90 bg-slate-950 shadow-xl shadow-slate-950/40">
+              <div className="border-b border-slate-800 p-2">
+                <div className="flex h-9 items-center gap-2 rounded-md border border-slate-700/80 bg-slate-900/80 px-2">
+                  <Search className="h-4 w-4 shrink-0 text-slate-500" />
+                  <input
+                    value={campaignSearchByPlatform[platform]}
+                    onChange={(event) =>
+                      setCampaignSearchByPlatform((previous) => ({ ...previous, [platform]: event.target.value }))
+                    }
+                    className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+                    placeholder="Search campaign"
+                  />
+                  {campaignSearchByPlatform[platform] && (
+                    <button
+                      type="button"
+                      onClick={() => setCampaignSearchByPlatform((previous) => ({ ...previous, [platform]: '' }))}
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="max-h-64 overflow-y-auto py-1 text-sm">
+                <button
+                  type="button"
+                  onClick={() => clearCampaignSelection(platform)}
+                  aria-pressed={selectedCampaignIds.length === 0}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-200 hover:bg-slate-900"
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-950/50">
+                    {selectedCampaignIds.length === 0 && <Check className="h-3.5 w-3.5 text-green-400" />}
+                  </span>
+                  <span className="min-w-0 truncate">All enabled campaigns</span>
+                </button>
+                {campaigns.length === 0 && (
+                  <div className="px-3 py-2 text-slate-500">
+                    {busyAction === 'campaigns' ? 'Loading campaigns' : 'No campaigns'}
+                  </div>
+                )}
+                {campaigns.length > 0 && filteredCampaigns.length === 0 && (
+                  <div className="px-3 py-2 text-slate-500">No matches</div>
+                )}
+                {filteredCampaigns.map((campaign) => {
+                  const isSelected = selectedCampaignIdSet.has(campaign.id);
+                  return (
+                    <button
+                      key={campaign.id}
+                      type="button"
+                      onClick={() => toggleCampaign(platform, campaign.id)}
+                      aria-pressed={isSelected}
+                      title={campaign.label}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-200 hover:bg-slate-900"
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-950/50">
+                        {isSelected && <Check className="h-3.5 w-3.5 text-green-400" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{campaign.label}</span>
+                      <span className="shrink-0 text-xs text-slate-600">{campaign.id}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -460,7 +681,7 @@ export default function CreativeLibraryTab() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-white">Creative Library</h3>
-            <p className="mt-1 text-sm text-slate-400">Accepted creatives, category matching, and Google Ads replacement.</p>
+            <p className="mt-1 text-sm text-slate-400">Accepted creatives, category matching, and Ads replacement.</p>
           </div>
           <div className="inline-flex items-center gap-2 rounded-lg border border-slate-700/70 px-3 py-2 text-sm text-slate-300">
             <Database className="h-4 w-4" />
@@ -557,109 +778,21 @@ export default function CreativeLibraryTab() {
       </section>
 
       <section className="panel-surface space-y-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_1.15fr_0.45fr]">
+        <div className="grid gap-3 lg:grid-cols-[0.7fr_0.3fr]">
           <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Google Ads account</span>
+            <span className="text-xs font-medium uppercase text-slate-400">Platform</span>
             <select
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
+              value={adsSource}
+              onChange={(event) => setAdsSource(event.target.value as LowPerformerSource)}
               className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
             >
-              {accounts.length === 0 && <option value="">No accounts</option>}
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>{account.label}</option>
-              ))}
+              <option value="google">Google Ads</option>
+              <option value="meta">Meta Ads</option>
+              <option value="both">Both</option>
             </select>
           </label>
-          <div className="relative space-y-1" ref={campaignMenuRef}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium uppercase text-slate-400">Campaigns</span>
-              <span className="text-xs text-slate-500">
-                {selectedCampaignCount > 0 ? `${selectedCampaignCount} selected` : 'All enabled'}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsCampaignMenuOpen((isOpen) => !isOpen)}
-              aria-expanded={isCampaignMenuOpen}
-              className="flex h-10 w-full items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-left text-sm text-white outline-none hover:border-slate-500 focus:border-cyan-300/70"
-            >
-              <span className="min-w-0 flex-1 truncate">{selectedCampaignLabel}</span>
-              {selectedCampaignCount > 0 && (
-                <span className="rounded-md bg-cyan-300/15 px-1.5 py-0.5 text-xs text-cyan-100">
-                  {selectedCampaignCount}
-                </span>
-              )}
-              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isCampaignMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {isCampaignMenuOpen && (
-              <div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-lg border border-slate-700/90 bg-slate-950 shadow-xl shadow-slate-950/40">
-                <div className="border-b border-slate-800 p-2">
-                  <div className="flex h-9 items-center gap-2 rounded-md border border-slate-700/80 bg-slate-900/80 px-2">
-                    <Search className="h-4 w-4 shrink-0 text-slate-500" />
-                    <input
-                      value={campaignSearch}
-                      onChange={(event) => setCampaignSearch(event.target.value)}
-                      className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
-                      placeholder="Search campaign"
-                    />
-                    {campaignSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setCampaignSearch('')}
-                        className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-slate-100"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="max-h-64 overflow-y-auto py-1 text-sm">
-                  <button
-                    type="button"
-                    onClick={clearCampaignSelection}
-                    aria-pressed={selectedCampaignCount === 0}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-200 hover:bg-slate-900"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-950/50">
-                      {selectedCampaignCount === 0 && <Check className="h-3.5 w-3.5 text-green-400" />}
-                    </span>
-                    <span className="min-w-0 truncate">All enabled campaigns</span>
-                  </button>
-                  {campaigns.length === 0 && (
-                    <div className="px-3 py-2 text-slate-500">
-                      {busyAction === 'campaigns' ? 'Loading campaigns' : 'No campaigns'}
-                    </div>
-                  )}
-                  {campaigns.length > 0 && filteredCampaigns.length === 0 && (
-                    <div className="px-3 py-2 text-slate-500">No matches</div>
-                  )}
-                  {filteredCampaigns.map((campaign) => {
-                    const isSelected = selectedCampaignIdSet.has(campaign.id);
-                    return (
-                      <button
-                        key={campaign.id}
-                        type="button"
-                        onClick={() => toggleCampaign(campaign.id)}
-                        aria-pressed={isSelected}
-                        title={campaign.label}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-200 hover:bg-slate-900"
-                      >
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-950/50">
-                          {isSelected && <Check className="h-3.5 w-3.5 text-green-400" />}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">{campaign.label}</span>
-                        <span className="shrink-0 text-xs text-slate-600">{campaign.id}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
           <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Limit</span>
+            <span className="text-xs font-medium uppercase text-slate-400">Limit per platform</span>
             <input
               type="number"
               min={1}
@@ -669,6 +802,10 @@ export default function CreativeLibraryTab() {
               className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70"
             />
           </label>
+        </div>
+
+        <div ref={campaignControlsRef} className="space-y-3">
+          {activePlatforms.map((platform) => renderPlatformControls(platform))}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -693,7 +830,7 @@ export default function CreativeLibraryTab() {
         </div>
 
         <p className="text-xs text-slate-500">
-          Replacements use available creatives from the library. If Google needs a new ad, you will be asked before anything runs.
+          Replacements use available creatives from the library. If a replacement needs a new ad, you will be asked before anything runs.
         </p>
       </section>
 
@@ -754,7 +891,7 @@ export default function CreativeLibraryTab() {
       {(lowPerformers.length > 0 || plan) && (
         <section className="panel-surface space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-sm font-medium uppercase text-slate-400">Google Ads</h3>
+            <h3 className="text-sm font-medium uppercase text-slate-400">Ads</h3>
             {lowPerformers.length > 0 && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{lowPerformers.length} low performers</span>}
             {lowPerformers.length > 0 && <span className="rounded-md bg-slate-900/40 px-2 py-1 text-xs text-slate-300">{selectedLowPerformerCount} selected for replacement</span>}
             {replacementSelectionSummary && <span className="rounded-md bg-green-400/10 px-2 py-1 text-xs text-green-100">{replacementSelectionSummary.ready} ready</span>}
@@ -788,6 +925,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Platform</th>
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Change</th>
                     <th className="px-3 py-2">Location</th>
@@ -840,7 +978,8 @@ export default function CreativeLibraryTab() {
                             <span className="truncate">{status.label}</span>
                           </span>
                         </td>
-                        <td className="px-3 py-2">{renderGoogleAdType(operation)}</td>
+                        <td className="px-3 py-2 text-slate-300">{operation.platformLabel || (operation.platform ? PLATFORM_LABELS[operation.platform] : 'Google Ads')}</td>
+                        <td className="px-3 py-2">{renderAdsTargetType(operation)}</td>
                         <td className="px-3 py-2">
                           <div className="max-w-48">
                             <p className="text-slate-200">{change.label}</p>
@@ -858,15 +997,15 @@ export default function CreativeLibraryTab() {
                           )}
                         </td>
                         <td className="px-3 py-2">
-                          {operation.googleAdsUrl ? (
+                          {operation.adsUrl || operation.googleAdsUrl ? (
                             <a
-                              href={operation.googleAdsUrl}
+                              href={operation.adsUrl || operation.googleAdsUrl}
                               target="_blank"
                               rel="noreferrer"
                               className="inline-flex items-center gap-1 rounded-md border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300/70 hover:text-cyan-100"
                             >
                               <ExternalLink className="h-3.5 w-3.5" />
-                              Open
+                              Open in Ads
                             </a>
                           ) : (
                             <span className="text-slate-500">-</span>
@@ -900,6 +1039,7 @@ export default function CreativeLibraryTab() {
                   <tr>
                     <th className="px-3 py-2">Apply</th>
                     <th className="px-3 py-2">Preview</th>
+                    <th className="px-3 py-2">Platform</th>
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Campaign</th>
                     <th className="px-3 py-2">Ad group</th>
@@ -931,7 +1071,8 @@ export default function CreativeLibraryTab() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2">{renderGoogleAdType(asset)}</td>
+                      <td className="px-3 py-2 text-slate-300">{asset.platformLabel || (asset.platform ? PLATFORM_LABELS[asset.platform] : 'Google Ads')}</td>
+                      <td className="px-3 py-2">{renderAdsTargetType(asset)}</td>
                       <td className="px-3 py-2 text-slate-200">{asset.campaignName}</td>
                       <td className="px-3 py-2 text-slate-300">{asset.adGroupName || asset.assetGroupName}</td>
                       <td className="px-3 py-2">
@@ -949,15 +1090,15 @@ export default function CreativeLibraryTab() {
                       <td className="px-3 py-2 text-slate-300">{asset.detectedPlazas || '-'}</td>
                       <td className="px-3 py-2 text-slate-300">{asset.imageResolution || '-'}</td>
                       <td className="px-3 py-2">
-                        {asset.googleAdsUrl ? (
+                        {asset.adsUrl || asset.googleAdsUrl ? (
                           <a
-                            href={asset.googleAdsUrl}
+                            href={asset.adsUrl || asset.googleAdsUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 rounded-md border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300/70 hover:text-cyan-100"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
-                            Open
+                            Open in Ads
                           </a>
                         ) : (
                           <span className="text-slate-500">-</span>
