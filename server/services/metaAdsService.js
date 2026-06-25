@@ -311,6 +311,7 @@ export const normalizeMetaLowPerformerAd = ({
     assetGroupId: '',
     assetGroupName: '',
     adId,
+    adName: ad?.name || `Ad ${adId}`,
     adType: 'META_IMAGE_AD',
     adResourceName: adId,
     assetId: creativeId,

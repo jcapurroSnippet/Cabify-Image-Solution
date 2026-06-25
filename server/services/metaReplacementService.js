@@ -26,7 +26,7 @@ import {
   getRequiredAspectRatio,
 } from './imageRatio.js';
 
-const buildTargetCategoryName = (asset) => asset.adGroupName || asset.assetName || '';
+export const buildMetaTargetCategoryName = (asset) => asset.adName || asset.assetName || '';
 const buildTargetPlazasName = (asset) => asset.campaignName || '';
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
@@ -62,7 +62,7 @@ const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) =
     };
   }
 
-  const match = detectCategoryFromName(buildTargetCategoryName(asset), config);
+  const match = detectCategoryFromName(buildMetaTargetCategoryName(asset), config);
   return {
     ...match,
     source: match.category ? 'automatic' : 'none',
@@ -172,6 +172,7 @@ export const buildMetaReplacementPlan = async ({
       assetGroupId: '',
       assetGroupName: '',
       adId: asset.adId,
+      adName: asset.adName || '',
       adType: asset.adType,
       adResourceName: asset.adResourceName,
       targetType: asset.targetType,

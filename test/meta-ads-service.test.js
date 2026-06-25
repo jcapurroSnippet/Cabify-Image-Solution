@@ -59,6 +59,7 @@ test('normalizes Meta ads into Creative Library low performer assets', () => {
   assert.equal(asset.campaignId, 'campaign-1');
   assert.equal(asset.adGroupId, 'adset-1');
   assert.equal(asset.adId, 'ad-1');
+  assert.equal(asset.adName, 'Promo BUE image');
   assert.equal(asset.assetId, 'creative-1');
   assert.equal(asset.assetUrl, 'https://example.com/current.png');
   assert.equal(asset.imageResolution, '1080x1080');

@@ -102,6 +102,7 @@ export interface LowPerformer {
   assetResourceName: string;
   assetGroupName?: string;
   adId?: string;
+  adName?: string;
   adType?: string;
   adResourceName?: string;
   assetName: string;
@@ -149,6 +150,7 @@ export interface ReplacementOperation {
   adGroupName: string;
   assetGroupName?: string;
   adId?: string;
+  adName?: string;
   adType?: string;
   targetType?: string;
   assetFieldType?: string;
