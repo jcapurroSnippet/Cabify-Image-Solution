@@ -233,6 +233,7 @@ export const buildGoogleReplacementPlan = async ({
       reservedCreativeIds,
       plazasMatch.plazas,
       requiredAspectRatio,
+      'google',
     );
 
     if (!creative) {
@@ -426,7 +427,7 @@ export const executeGoogleReplacements = async ({
     }
 
     try {
-      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id);
+      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id, 'google');
       const creativeUrl = reserved.drive_url || operation.creative.drive_url;
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
       const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);

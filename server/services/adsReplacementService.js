@@ -67,18 +67,6 @@ const mergeSummaries = (summaries) => {
   return merged;
 };
 
-const collectPlannedCreativeIds = (operations = []) =>
-  operations
-    .map((operation) => operation.creative?.creative_id)
-    .filter(Boolean)
-    .map((creativeId) => String(creativeId));
-
-const collectResultCreativeIds = (results = []) =>
-  results
-    .map((result) => result.creative?.creative_id)
-    .filter(Boolean)
-    .map((creativeId) => String(creativeId));
-
 const getDeps = (deps = {}) => ({
   google: { ...DEFAULT_DEPS.google, ...(deps.google || {}) },
   meta: { ...DEFAULT_DEPS.meta, ...(deps.meta || {}) },
@@ -137,7 +125,6 @@ export const buildAdsReplacementPlan = async ({
   const effectiveDeps = getDeps(deps);
   const operations = [];
   const summaries = [];
-  const excludedCreativeIds = [];
   let librarySummary = null;
 
   for (const platform of activePlatforms) {
@@ -153,7 +140,7 @@ export const buildAdsReplacementPlan = async ({
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
-      excludedCreativeIds: [...excludedCreativeIds],
+      excludedCreativeIds: [],
     });
 
     const platformOperations = (plan.operations || []).map((operation) =>
@@ -161,7 +148,6 @@ export const buildAdsReplacementPlan = async ({
     );
     operations.push(...platformOperations);
     summaries.push(plan.summary || {});
-    excludedCreativeIds.push(...collectPlannedCreativeIds(platformOperations));
     librarySummary = plan.librarySummary || librarySummary;
   }
 
@@ -197,7 +183,6 @@ export const executeAdsReplacements = async ({
   const summaries = [];
   const googleAdsTrace = [];
   const metaAdsTrace = [];
-  const excludedCreativeIds = [];
 
   for (const platform of activePlatforms) {
     const selection = getSelectionForPlatform({ platform, selections, accountId, campaignId, campaignIds });
@@ -215,7 +200,7 @@ export const executeAdsReplacements = async ({
       lowPerformerCategories,
       replacementMode,
       allowNewAdCreation,
-      excludedCreativeIds: [...excludedCreativeIds],
+      excludedCreativeIds: [],
     });
 
     const platformResults = (execution.results || []).map((result) =>
@@ -225,7 +210,6 @@ export const executeAdsReplacements = async ({
     summaries.push(execution.summary || {});
     googleAdsTrace.push(...(execution.googleAdsTrace || []));
     metaAdsTrace.push(...(execution.metaAdsTrace || []));
-    excludedCreativeIds.push(...collectResultCreativeIds(platformResults));
   }
 
   return {

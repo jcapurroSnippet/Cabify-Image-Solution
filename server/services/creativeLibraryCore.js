@@ -457,6 +457,38 @@ const plazasToSet = (value) =>
       .filter(Boolean),
   );
 
+const hasUsageValue = (value) => String(value ?? '').trim().length > 0;
+
+const normalizeAdsPlatform = (value) => {
+  const platform = String(value || '').trim().toLowerCase();
+  return platform === 'google' || platform === 'meta' ? platform : null;
+};
+
+const hasLegacyGoogleUsage = (creative) => {
+  if (hasUsageValue(creative.used_at)) return true;
+  if (hasUsageValue(creative.used_at_google) || hasUsageValue(creative.used_at_meta)) return false;
+  return String(creative.status || '').toLowerCase() === 'used';
+};
+
+const getCreativeUsedAtForPlatform = (creative, adsPlatform) => {
+  const platform = normalizeAdsPlatform(adsPlatform);
+  if (platform === 'google') return creative.used_at_google || creative.used_at || (hasLegacyGoogleUsage(creative) ? 'legacy_used' : '');
+  if (platform === 'meta') return creative.used_at_meta || '';
+  return '';
+};
+
+export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
+  if (!creative) return false;
+
+  const platform = normalizeAdsPlatform(adsPlatform);
+  const status = String(creative.status || '').toLowerCase();
+  if (!platform) return status === 'available';
+  if (['reserved', 'failed', 'archived'].includes(status)) return false;
+  if (!['available', 'used'].includes(status)) return false;
+
+  return !hasUsageValue(getCreativeUsedAtForPlatform(creative, platform));
+};
+
 export const selectCreativeForCategory = (
   creatives,
   category,
@@ -464,13 +496,14 @@ export const selectCreativeForCategory = (
   reservedIds = new Set(),
   plazas = '',
   requiredAspectRatio = null,
+  adsPlatform = '',
 ) => {
   const normalizedCategory = String(category || '').toLowerCase();
   const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
   const candidates = creatives.filter(
     (creative) =>
       String(creative.category || '').toLowerCase() === normalizedCategory &&
-      creative.status === 'available' &&
+      isCreativeAvailableForPlatform(creative, adsPlatform) &&
       !reservedIds.has(creative.creative_id) &&
       (!normalizedRequiredAspectRatio ||
         normalizeAspectRatio(creative.aspect_ratio) === normalizedRequiredAspectRatio),

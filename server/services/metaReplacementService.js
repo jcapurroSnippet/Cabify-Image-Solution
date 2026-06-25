@@ -232,6 +232,7 @@ export const buildMetaReplacementPlan = async ({
       reservedCreativeIds,
       plazasMatch.plazas,
       requiredAspectRatio,
+      'meta',
     );
 
     if (!creative) {
@@ -381,7 +382,7 @@ export const executeMetaReplacements = async ({
     }
 
     try {
-      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id);
+      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id, 'meta');
       const creativeUrl = reserved.drive_url || operation.creative.drive_url;
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
       const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);

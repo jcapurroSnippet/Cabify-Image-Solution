@@ -30,7 +30,8 @@ export interface CreativeLibraryItem {
   aspect_ratio?: string;
   image_resolution?: string;
   created_at: string;
-  used_at: string;
+  used_at_google: string;
+  used_at_meta: string;
   ads_platform?: string;
   ads_resource_name?: string;
   google_ads_asset_resource_name?: string;

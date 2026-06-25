@@ -217,6 +217,78 @@ test('collects Meta low performers with at least 30 running days by lowest impre
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
 });
 
+test('collects only Meta image low performers and skips video thumbnails', async () => {
+  const resolvedUrls = [];
+  const graphGetImpl = async (endpoint) => {
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          { ad_id: 'ad-video', impressions: '100', clicks: '10', spend: '20' },
+          { ad_id: 'ad-image', impressions: '300', clicks: '50', spend: '300' },
+        ],
+      };
+    }
+    if (endpoint === '/ad-video') {
+      return {
+        id: 'ad-video',
+        name: 'Video ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-video',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-video',
+          name: 'Creative video',
+          thumbnail_url: 'https://example.com/video-thumbnail.jpg',
+          object_story_spec: {
+            page_id: 'page-1',
+            video_data: { video_id: 'video-1' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-image') {
+      return {
+        id: 'ad-image',
+        name: 'Image ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-image',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-image',
+          name: 'Creative image',
+          image_url: 'https://example.com/image.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async (url) => {
+      resolvedUrls.push(url);
+      return { width: 1080, height: 1080 };
+    },
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.deepEqual(assets.map((asset) => asset.adId), ['ad-image']);
+  assert.deepEqual(resolvedUrls, ['https://example.com/image.png']);
+});
+
 test('formats Meta Graph API rate limit errors for the UI', () => {
   const error = new Error('Request failed with status code 400');
   error.response = {

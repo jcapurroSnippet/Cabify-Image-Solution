@@ -19,6 +19,7 @@ import {
   getCellText,
   getCellUrl,
   hashBuffer,
+  isCreativeAvailableForPlatform,
   normalizeCategory,
   normalizeHeader,
   normalizeUrl,
@@ -125,6 +126,14 @@ const normalizeLibraryLinkFields = (row) => {
     const url = getUrlFromSheetValue(row[header]);
     if (url) row[header] = url;
   }
+
+  if (!row.used_at_google && row.used_at) {
+    row.used_at_google = row.used_at;
+  }
+  if (row.used_at_meta === undefined) {
+    row.used_at_meta = '';
+  }
+
   return row;
 };
 
@@ -175,7 +184,11 @@ const normalizeSheetTitleForMatch = (value) =>
     .replace(/\s*\|\s*/g, '|')
     .replace(/\s+/g, ' ');
 
-const migrateRowsToHeaders = (values, targetHeaders) => {
+const HEADER_ALIASES = {
+  used_at_google: ['used_at_google', 'used_at'],
+};
+
+export const migrateRowsToHeaders = (values, targetHeaders) => {
   if (!Array.isArray(values) || values.length <= 1) return [];
 
   const sourceHeaders = values[0] || [];
@@ -187,7 +200,10 @@ const migrateRowsToHeaders = (values, targetHeaders) => {
 
   return values.slice(1).map((row) =>
     targetHeaders.map((header) => {
-      const sourceIndex = sourceIndexes.get(normalizeHeader(header));
+      const aliases = HEADER_ALIASES[normalizeHeader(header)] || [header];
+      const sourceIndex = aliases
+        .map((alias) => sourceIndexes.get(normalizeHeader(alias)))
+        .find((index) => index !== undefined);
       return sourceIndex === undefined ? '' : row?.[sourceIndex] ?? '';
     }),
   );
@@ -1350,7 +1366,8 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           image_hash: imageHash,
           created_at: createdAt,
           reserved_at: '',
-          used_at: '',
+          used_at_google: '',
+          used_at_meta: '',
           google_ads_asset_resource_name: '',
           replacement_operation_id: '',
           notes: '',
@@ -1496,13 +1513,22 @@ const updateLibraryRow = async (spreadsheetId, rowNumber, patch) => {
   });
 };
 
-export const reserveCreative = async (spreadsheetId, creativeId, operationId) => {
+const hasUsageValue = (value) => String(value ?? '').trim().length > 0;
+
+const statusAfterReservationRelease = (creative) =>
+  hasUsageValue(creative?.used_at_google) ||
+  hasUsageValue(creative?.used_at_meta) ||
+  hasUsageValue(creative?.used_at)
+    ? 'used'
+    : 'available';
+
+export const reserveCreative = async (spreadsheetId, creativeId, operationId, adsPlatform = '') => {
   const sheets = await getSheetsClient();
   const rows = await readLibraryRows(sheets, spreadsheetId);
   const creative = rows.find((row) => row.creative_id === creativeId);
 
   if (!creative) throw new Error(`Creative ${creativeId} not found.`);
-  if (creative.status !== 'available') {
+  if (!isCreativeAvailableForPlatform(creative, adsPlatform)) {
     throw new Error(`Creative ${creativeId} is not available.`);
   }
 
@@ -1523,13 +1549,17 @@ export const markCreativeUsed = async (spreadsheetId, creativeId, data) => {
 
   const adsResourceName = data.adsResourceName || data.googleAdsAssetResourceName || '';
   const adsPlatform = data.adsPlatform || (data.googleAdsAssetResourceName ? 'google' : '');
+  const usageColumn = adsPlatform === 'meta' ? 'used_at_meta' : 'used_at_google';
 
   await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
     status: 'used',
-    used_at: nowIso(),
+    [usageColumn]: nowIso(),
     ads_platform: adsPlatform,
     ads_resource_name: adsResourceName,
-    google_ads_asset_resource_name: data.googleAdsAssetResourceName || '',
+    google_ads_asset_resource_name:
+      adsPlatform === 'google'
+        ? data.googleAdsAssetResourceName || adsResourceName
+        : creative.google_ads_asset_resource_name || '',
     replacement_operation_id: data.operationId || creative.replacement_operation_id || '',
     notes: data.notes || creative.notes || '',
   });
@@ -1542,7 +1572,7 @@ export const releaseCreativeReservation = async (spreadsheetId, creativeId, note
   if (!creative) return;
 
   await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
-    status: 'available',
+    status: statusAfterReservationRelease(creative),
     reserved_at: '',
     replacement_operation_id: '',
     notes: notes || creative.notes || '',

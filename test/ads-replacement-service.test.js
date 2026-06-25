@@ -39,7 +39,7 @@ test('fetches low performers for both platforms and tags merged assets', async (
   ]);
 });
 
-test('builds a combined replacement plan and keeps later platforms from reusing planned creatives', async () => {
+test('builds a combined replacement plan without cross-platform creative exclusions', async () => {
   const metaCalls = [];
   const result = await buildAdsReplacementPlan({
     source: 'both',
@@ -78,7 +78,7 @@ test('builds a combined replacement plan and keeps later platforms from reusing 
                 platform: 'meta',
                 status: 'planned',
                 executableInMode: true,
-                creative: { creative_id: 'creative-2' },
+              creative: { creative_id: 'creative-1' },
               },
             ],
             librarySummary: { total: 2 },
@@ -88,7 +88,7 @@ test('builds a combined replacement plan and keeps later platforms from reusing 
     },
   });
 
-  assert.deepEqual(metaCalls[0].excludedCreativeIds, ['creative-1']);
+  assert.deepEqual(metaCalls[0].excludedCreativeIds, []);
   assert.deepEqual(
     result.operations.map((operation) => operation.id),
     ['google-op', 'meta-op'],

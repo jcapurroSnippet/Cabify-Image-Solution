@@ -66,6 +66,16 @@ test('keeps platform-neutral replacement columns before legacy Google resource c
   );
 });
 
+test('keeps separate platform usage columns and removes legacy used_at header', () => {
+  assert.equal(CREATIVE_LIBRARY_HEADERS.includes('used_at'), false);
+  assert.equal(CREATIVE_LIBRARY_HEADERS.includes('used_at_google'), true);
+  assert.equal(CREATIVE_LIBRARY_HEADERS.includes('used_at_meta'), true);
+  assert.equal(
+    CREATIVE_LIBRARY_HEADERS.indexOf('used_at_google') < CREATIVE_LIBRARY_HEADERS.indexOf('used_at_meta'),
+    true,
+  );
+});
+
 test('uses Riders AR as the default creative source sheet', () => {
   assert.deepEqual(config.sourceSheets, ['Riders | AR']);
 });
@@ -135,6 +145,75 @@ test('selects an available creative by category and avoids reserved ids', () => 
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE')?.creative_id, 'c');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'TUC')?.creative_id, 'd');
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL')?.creative_id, 'd');
+});
+
+test('selects creatives by platform-specific usage columns', () => {
+  const creatives = [
+    {
+      creative_id: 'google-used',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'used',
+      used_at_google: '2026-06-01T00:00:00Z',
+      used_at_meta: '',
+      created_at: '2026-01-01T00:00:00Z',
+    },
+    {
+      creative_id: 'meta-used',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'used',
+      used_at_google: '',
+      used_at_meta: '2026-06-02T00:00:00Z',
+      created_at: '2026-01-02T00:00:00Z',
+    },
+    {
+      creative_id: 'both-used',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'used',
+      used_at_google: '2026-06-01T00:00:00Z',
+      used_at_meta: '2026-06-02T00:00:00Z',
+      created_at: '2026-01-03T00:00:00Z',
+    },
+  ];
+
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google')?.creative_id,
+    'meta-used',
+  );
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta')?.creative_id,
+    'google-used',
+  );
+  assert.equal(
+    selectCreativeForCategory([creatives[2]], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google'),
+    null,
+  );
+  assert.equal(
+    selectCreativeForCategory([creatives[2]], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta'),
+    null,
+  );
+});
+
+test('treats legacy used_at rows as Google usage only', () => {
+  const creative = {
+    creative_id: 'legacy-google-used',
+    category: 'promo',
+    plazas: 'ALL',
+    status: 'used',
+    used_at: '2026-06-01T00:00:00Z',
+    created_at: '2026-01-01T00:00:00Z',
+  };
+
+  assert.equal(
+    selectCreativeForCategory([creative], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google'),
+    null,
+  );
+  assert.equal(
+    selectCreativeForCategory([creative], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta')?.creative_id,
+    'legacy-google-used',
+  );
 });
 
 test('prefers exact plaza creatives before ALL fallback', () => {

@@ -156,6 +156,20 @@ const getMetaCreativeImageUrl = (creative = {}) =>
   creative.object_story_spec?.link_data?.picture ||
   '';
 
+const hasListEntries = (value) => Array.isArray(value) && value.length > 0;
+
+const isMetaVideoCreative = (creative = {}) => {
+  const objectStorySpec = creative.object_story_spec || {};
+  const assetFeedSpec = creative.asset_feed_spec || {};
+  return Boolean(
+    creative.video_id ||
+    objectStorySpec.video_data ||
+    objectStorySpec.video_id ||
+    objectStorySpec.link_data?.video_id ||
+    hasListEntries(assetFeedSpec.videos),
+  );
+};
+
 export const isSafeMetaCreativeForImageClone = (creative = {}) => {
   if (!creative || typeof creative !== 'object') {
     return {
@@ -174,7 +188,7 @@ export const isSafeMetaCreativeForImageClone = (creative = {}) => {
   }
 
   const objectStorySpec = creative.object_story_spec || {};
-  if (objectStorySpec.video_data) {
+  if (isMetaVideoCreative(creative)) {
     return {
       supported: false,
       reason: 'META_VIDEO_CREATIVE',
@@ -424,7 +438,10 @@ export const collectMetaLowPerformerAssets = async ({
     });
     if (getMetaAdRunningDays(ad, now) < 30) continue;
 
-    const imageUrl = getMetaCreativeImageUrl(ad?.creative || {});
+    const creative = ad?.creative || {};
+    if (isMetaVideoCreative(creative)) continue;
+
+    const imageUrl = getMetaCreativeImageUrl(creative);
     if (!imageUrl) continue;
 
     const imageResolution = await resolveImageResolutionImpl(imageUrl);
@@ -468,7 +485,7 @@ export const getWorstPerformers = async (adAccountId, campaignId, days = 30) => 
 
   // Step 1: Fetch ads filtered by campaign
   const adsResponse = await graphGet(`/${campaignId}/ads`, {
-    fields: 'id,name,adset{name,campaign{name}},creative{image_url,thumbnail_url}',
+      fields: 'id,name,adset{name,campaign{name}},creative{image_url,thumbnail_url,object_story_spec,asset_feed_spec}',
     effective_status: '["ACTIVE"]',
     limit: 200,
   });
@@ -496,6 +513,8 @@ export const getWorstPerformers = async (adAccountId, campaignId, days = 30) => 
         const insightData = insights?.data?.[0];
         const conversions = extractConversions(insightData);
         const cpa = extractCPA(insightData);
+
+        if (isMetaVideoCreative(ad.creative || {})) return null;
 
         const imageUrl =
           ad.creative?.image_url || ad.creative?.thumbnail_url || null;
