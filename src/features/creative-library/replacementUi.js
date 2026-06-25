@@ -109,6 +109,12 @@ export const describeGoogleAdType = (target = {}) => describeAdsTargetType({
   platform: 'google',
 });
 
+export const describeAdsVisibleContext = (target = {}) => {
+  const platform = String(target.platform || '').toLowerCase();
+  if (platform === 'meta' && target.adName) return target.adName;
+  return target.adGroupName || target.assetGroupName || target.adName || '';
+};
+
 export const describeReplacementChange = (operation) => {
   if (!operation || operation.executableInMode === false || operation.executionPolicy === 'manual_only') {
     return {

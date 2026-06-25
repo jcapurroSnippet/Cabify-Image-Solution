@@ -37,6 +37,7 @@ import {
   buildNewAdPermissionMessage,
   buildReplacementCompletedItems,
   describeAdsTargetType,
+  describeAdsVisibleContext,
   describeReplacementChange,
   describeReplacementStatus,
   summarizeCreativeLibraryPlazas,
@@ -988,7 +989,7 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2 text-slate-200">
                           <p>{operation.campaignName}</p>
-                          <p className="text-xs text-slate-500">{operation.adGroupName || operation.assetGroupName}</p>
+                          <p className="text-xs text-slate-500">{describeAdsVisibleContext(operation)}</p>
                         </td>
                         <td className="px-3 py-2 text-slate-300">
                           <p>{operation.oldImageResolution || '-'}</p>
@@ -1042,7 +1043,7 @@ export default function CreativeLibraryTab() {
                     <th className="px-3 py-2">Platform</th>
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Campaign</th>
-                    <th className="px-3 py-2">Ad group</th>
+                    <th className="px-3 py-2">Ad context</th>
                     <th className="px-3 py-2">Category</th>
                     <th className="px-3 py-2">Plazas</th>
                     <th className="px-3 py-2">Resolution</th>
@@ -1074,7 +1075,7 @@ export default function CreativeLibraryTab() {
                       <td className="px-3 py-2 text-slate-300">{asset.platformLabel || (asset.platform ? PLATFORM_LABELS[asset.platform] : 'Google Ads')}</td>
                       <td className="px-3 py-2">{renderAdsTargetType(asset)}</td>
                       <td className="px-3 py-2 text-slate-200">{asset.campaignName}</td>
-                      <td className="px-3 py-2 text-slate-300">{asset.adGroupName || asset.assetGroupName}</td>
+                      <td className="px-3 py-2 text-slate-300">{describeAdsVisibleContext(asset)}</td>
                       <td className="px-3 py-2">
                         <select
                           value={getLowPerformerCategoryValue(asset)}

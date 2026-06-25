@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildNewAdPermissionMessage,
   describeAdsTargetType,
+  describeAdsVisibleContext,
   describeGoogleAdType,
   describeReplacementChange,
   describeReplacementStatus,
@@ -108,6 +109,27 @@ test('describes Meta Ads target types plainly', () => {
     label: 'Meta ad',
     description: 'Review this Meta ad before replacing.',
   });
+});
+
+test('uses Meta ad name as the visible context instead of ad group name', () => {
+  assert.equal(
+    describeAdsVisibleContext({
+      platform: 'meta',
+      adName: 'Promo BUE image',
+      adGroupName: 'AR | Alianzas | BUE',
+      assetGroupName: '',
+    }),
+    'Promo BUE image',
+  );
+  assert.equal(
+    describeAdsVisibleContext({
+      platform: 'google',
+      adName: 'Google image ad',
+      adGroupName: 'AR | Alianzas | BUE',
+      assetGroupName: '',
+    }),
+    'AR | Alianzas | BUE',
+  );
 });
 
 test('summarizes available creative plazas by category', () => {
