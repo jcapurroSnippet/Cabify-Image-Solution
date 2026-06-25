@@ -9,17 +9,16 @@ import {
   rankMetaLowPerformers,
 } from '../server/services/metaAdsService.js';
 
-test('ranks Meta low performers by conversions, CPA, then impressions', () => {
+test('ranks Meta low performers by lowest impressions first', () => {
   const ranked = rankMetaLowPerformers([
-    { id: 'high-conversions', metrics: { conversions: 3, cpa: 400, impressions: 900 } },
-    { id: 'low-low-cpa', metrics: { conversions: 0, cpa: 100, impressions: 2000 } },
-    { id: 'low-high-cpa', metrics: { conversions: 0, cpa: 300, impressions: 1000 } },
-    { id: 'low-high-cpa-more-impressions', metrics: { conversions: 0, cpa: 300, impressions: 5000 } },
+    { id: 'high-impressions', metrics: { conversions: 0, cpa: 100, impressions: 5000 } },
+    { id: 'lowest-impressions', metrics: { conversions: 8, cpa: 400, impressions: 300 } },
+    { id: 'middle-impressions', metrics: { conversions: 0, cpa: 300, impressions: 1000 } },
   ]);
 
   assert.deepEqual(
     ranked.map((entry) => entry.id),
-    ['low-high-cpa-more-impressions', 'low-high-cpa', 'low-low-cpa', 'high-conversions'],
+    ['lowest-impressions', 'middle-impressions', 'high-impressions'],
   );
 });
 
@@ -146,22 +145,44 @@ test('builds Meta creative payload by cloning existing link data and replacing o
   assert.equal(creative.object_story_spec.link_data.picture, 'https://example.com/old.png');
 });
 
-test('collects Meta low performers by ranking insights before fetching ad details', async () => {
+test('collects Meta low performers with at least 30 running days by lowest impressions', async () => {
   const calls = [];
   const graphGetImpl = async (endpoint, params) => {
     calls.push({ endpoint, params });
     if (endpoint === '/campaign-1/insights') {
       return {
         data: [
-          { ad_id: 'ad-high', impressions: '5000', clicks: '100', spend: '100', actions: [{ action_type: 'purchase', value: '10' }] },
-          { ad_id: 'ad-low', impressions: '3000', clicks: '50', spend: '300', actions: [{ action_type: 'purchase', value: '0' }] },
+          { ad_id: 'ad-new', impressions: '100', clicks: '10', spend: '20' },
+          { ad_id: 'ad-low-impressions-old', impressions: '300', clicks: '50', spend: '300' },
+          { ad_id: 'ad-high-impressions-old', impressions: '5000', clicks: '100', spend: '100' },
         ],
       };
     }
-    if (endpoint === '/ad-low') {
+    if (endpoint === '/ad-new') {
       return {
-        id: 'ad-low',
+        id: 'ad-new',
+        name: 'New ad',
+        created_time: '2026-03-10T00:00:00+0000',
+        adset: {
+          id: 'adset-new',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-new',
+          image_url: 'https://example.com/new.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-low-impressions-old') {
+      return {
+        id: 'ad-low-impressions-old',
         name: 'Low ad',
+        created_time: '2026-01-01T00:00:00+0000',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -187,11 +208,12 @@ test('collects Meta low performers by ranking insights before fetching ad detail
     limit: 1,
     graphGetImpl,
     resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+    now: new Date('2026-03-20T00:00:00Z'),
   });
 
   assert.equal(assets.length, 1);
-  assert.equal(assets[0].adId, 'ad-low');
-  assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-low']);
+  assert.equal(assets[0].adId, 'ad-low-impressions-old');
+  assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-new', '/ad-low-impressions-old']);
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
 });
 

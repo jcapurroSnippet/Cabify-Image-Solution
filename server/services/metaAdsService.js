@@ -9,7 +9,7 @@ const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 const META_CREATIVE_FIELDS =
   'id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,effective_object_story_id';
 const META_AD_FIELDS =
-  `id,name,effective_status,adset{id,name,campaign{id,name}},creative{${META_CREATIVE_FIELDS}}`;
+  `id,name,created_time,effective_status,adset{id,name,campaign{id,name}},creative{${META_CREATIVE_FIELDS}}`;
 const META_ADS_FIELDS = META_AD_FIELDS;
 const META_INSIGHTS_FIELDS =
   'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,actions,cost_per_action_type';
@@ -327,13 +327,7 @@ export const rankMetaLowPerformers = (assets = []) =>
   [...assets].sort((left, right) => {
     const leftMetrics = left.metrics || {};
     const rightMetrics = right.metrics || {};
-    const conversionDelta = parseNumber(leftMetrics.conversions) - parseNumber(rightMetrics.conversions);
-    if (conversionDelta !== 0) return conversionDelta;
-
-    const cpaDelta = parseNumber(rightMetrics.cpa) - parseNumber(leftMetrics.cpa);
-    if (cpaDelta !== 0) return cpaDelta;
-
-    return parseNumber(rightMetrics.impressions) - parseNumber(leftMetrics.impressions);
+    return parseNumber(leftMetrics.impressions) - parseNumber(rightMetrics.impressions);
   });
 
 const normalizeCampaignIds = (options = {}) => {
@@ -368,6 +362,12 @@ const normalizeInsightCandidate = (insight = {}) => ({
   metrics: buildMetaMetrics(insight),
 });
 
+const getMetaAdRunningDays = (ad = {}, now = new Date()) => {
+  const createdTime = Date.parse(ad.created_time || '');
+  if (!Number.isFinite(createdTime)) return 0;
+  return Math.floor((now.getTime() - createdTime) / (24 * 60 * 60 * 1000));
+};
+
 /**
  * Fetch all active campaigns for an ad account.
  */
@@ -393,6 +393,7 @@ export const collectMetaLowPerformerAssets = async ({
   datePreset = 'last_30d',
   graphGetImpl = graphGet,
   resolveImageResolutionImpl = resolveImageResolution,
+  now = new Date(),
 }) => {
   const maxResults = Math.max(1, Math.min(Number(limit || 100), 500));
   const selectedCampaignIds = normalizeCampaignIds({ campaignIds });
@@ -421,6 +422,8 @@ export const collectMetaLowPerformerAssets = async ({
     const ad = await graphGetImpl(`/${candidate.adId}`, {
       fields: META_AD_FIELDS,
     });
+    if (getMetaAdRunningDays(ad, now) < 30) continue;
+
     const imageUrl = getMetaCreativeImageUrl(ad?.creative || {});
     if (!imageUrl) continue;
 
