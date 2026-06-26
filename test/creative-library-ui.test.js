@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildNoReadyReplacementMessage,
   buildNewAdPermissionMessage,
   describeAdsTargetType,
   describeAdsVisibleContext,
@@ -66,11 +67,52 @@ test('describes replacement status in operational language', () => {
     describeReplacementStatus(operation({
       status: 'skipped',
       creative: null,
+      message: 'CATEGORY_NOT_FOUND',
+      detectedCategory: null,
+    })).label,
+    'No category',
+  );
+  assert.equal(
+    describeReplacementStatus(operation({
+      status: 'skipped',
+      creative: null,
       message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
       requiredAspectRatio: '1.91:1',
     })).label,
     'No 1.91:1 creative',
   );
+});
+
+test('explains plans that have no ready replacements', () => {
+  const message = buildNoReadyReplacementMessage([
+    operation({
+      id: 'missing-category',
+      status: 'skipped',
+      creative: null,
+      message: 'CATEGORY_NOT_FOUND',
+      detectedCategory: null,
+    }),
+    operation({
+      id: 'missing-ratio',
+      status: 'skipped',
+      creative: null,
+      message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
+      requiredAspectRatio: '1:1',
+    }),
+    operation({
+      id: 'manual',
+      status: 'skipped',
+      executableInMode: false,
+      executionPolicy: 'manual_only',
+      blockedMessage: 'Video Meta creatives need a manual review before replacement.',
+    }),
+  ]);
+
+  assert.match(message, /No replacements are ready/);
+  assert.match(message, /1 missing category/);
+  assert.match(message, /1 missing 1:1 creative/);
+  assert.match(message, /1 manual review/);
+  assert.doesNotMatch(message.toLowerCase(), /dry run/);
 });
 
 test('builds new ad permission copy without dry-run language', () => {

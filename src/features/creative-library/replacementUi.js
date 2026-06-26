@@ -1,6 +1,82 @@
 const isExecutable = (operation) =>
   operation?.status === 'planned' && operation?.executableInMode !== false && Boolean(operation?.creative);
 
+const getNoReadyReason = (operation) => {
+  if (isExecutable(operation)) return null;
+
+  if (operation?.executableInMode === false || operation?.executionPolicy === 'manual_only') {
+    return {
+      key: 'manual_review',
+      label: 'manual review',
+      pluralLabel: 'manual reviews',
+      priority: 3,
+    };
+  }
+
+  if (operation?.message === 'CATEGORY_NOT_FOUND') {
+    return {
+      key: 'missing_category',
+      label: 'missing category',
+      pluralLabel: 'missing categories',
+      priority: 1,
+    };
+  }
+
+  if (operation?.message === 'NO_AVAILABLE_CREATIVE_FOR_RATIO') {
+    const ratio = operation.requiredAspectRatio || 'matching';
+    return {
+      key: `missing_${ratio}_creative`,
+      label: `missing ${ratio} creative`,
+      pluralLabel: `missing ${ratio} creatives`,
+      priority: 2,
+    };
+  }
+
+  if (!operation?.creative || operation?.message === 'NO_AVAILABLE_CREATIVE') {
+    return {
+      key: 'missing_creative',
+      label: 'missing creative',
+      pluralLabel: 'missing creatives',
+      priority: 2,
+    };
+  }
+
+  return {
+    key: 'blocked',
+    label: 'blocked item',
+    pluralLabel: 'blocked items',
+    priority: 4,
+  };
+};
+
+const formatReasonCount = (reason) =>
+  `${reason.count} ${reason.count === 1 ? reason.label : reason.pluralLabel}`;
+
+export const summarizeNoReadyReplacementReasons = (operations = []) => {
+  const reasons = new Map();
+
+  for (const operation of operations) {
+    const reason = getNoReadyReason(operation);
+    if (!reason) continue;
+    const existing = reasons.get(reason.key);
+    reasons.set(reason.key, {
+      ...reason,
+      count: (existing?.count || 0) + 1,
+    });
+  }
+
+  return [...reasons.values()].sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label));
+};
+
+export const buildNoReadyReplacementMessage = (operations = []) => {
+  const reasons = summarizeNoReadyReplacementReasons(operations);
+  if (reasons.length === 0) {
+    return 'No replacements are ready. Review the table for missing creatives or manual changes.';
+  }
+
+  return `No replacements are ready: ${reasons.map(formatReasonCount).join(', ')}. Review the table for the detailed reason on each row.`;
+};
+
 const parsePlazas = (value) =>
   (String(value || '').match(/[a-z0-9]+/gi) || [])
     .map((plaza) => plaza.trim().toUpperCase())
@@ -153,6 +229,14 @@ export const describeReplacementStatus = (operation) => {
     return {
       label: `No ${ratio} creative`,
       description: `Generate or sync a ${ratio} creative before replacing.`,
+      tone: 'warning',
+    };
+  }
+
+  if (operation?.message === 'CATEGORY_NOT_FOUND') {
+    return {
+      label: 'No category',
+      description: 'Choose a category before replacing this creative.',
       tone: 'warning',
     };
   }

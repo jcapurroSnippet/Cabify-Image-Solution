@@ -34,6 +34,7 @@ import {
   syncCreativeLibrary,
 } from './services/creativeLibraryApi';
 import {
+  buildNoReadyReplacementMessage,
   buildNewAdPermissionMessage,
   buildReplacementCompletedItems,
   describeAdsTargetType,
@@ -426,7 +427,28 @@ export default function CreativeLibraryTab() {
 
       if (selectedIds.length === 0) {
         setExecution(null);
-        throw new Error('No replacements are ready. Review the table for missing creatives or manual changes.');
+        console.info('[Creative Library] Replacement plan has no ready operations', {
+          source: adsSource,
+          selections: adsSelections,
+          summary: nextPlan.summary,
+          operations: nextPlan.operations.map((operation) => ({
+            id: operation.id,
+            platform: operation.platform,
+            adName: operation.adName,
+            campaignName: operation.campaignName,
+            status: operation.status,
+            message: operation.message,
+            executionPolicy: operation.executionPolicy,
+            executableInMode: operation.executableInMode,
+            detectedCategory: operation.detectedCategory,
+            detectedPlazas: operation.detectedPlazas,
+            requiredAspectRatio: operation.requiredAspectRatio,
+            creativeId: operation.creative?.creative_id || null,
+            blockedReason: operation.blockedReason,
+            blockedMessage: operation.blockedMessage,
+          })),
+        });
+        throw new Error(buildNoReadyReplacementMessage(nextPlan.operations));
       }
 
       const selectedNewAdOperations = executableOperations.filter((operation) => operation.requiresNewAd);
