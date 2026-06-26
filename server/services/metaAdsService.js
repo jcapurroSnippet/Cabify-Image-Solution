@@ -160,6 +160,55 @@ const getMetaCreativePreviewUrl = (creative = {}) =>
 
 const hasListEntries = (value) => Array.isArray(value) && value.length > 0;
 
+const getMetaAssetFeedImages = (creative = {}) =>
+  Array.isArray(creative.asset_feed_spec?.images) ? creative.asset_feed_spec.images : [];
+
+const getMetaImageAssetKey = (imageAsset = {}) => {
+  if (typeof imageAsset === 'string') return imageAsset.trim();
+  if (!imageAsset || typeof imageAsset !== 'object') return '';
+  return String(
+    imageAsset.hash ||
+    imageAsset.image_hash ||
+    imageAsset.imageHash ||
+    imageAsset.id ||
+    imageAsset.asset_id ||
+    imageAsset.url ||
+    imageAsset.image_url ||
+    '',
+  ).trim();
+};
+
+const getMetaInsightImageAssetKey = (insight = {}) => getMetaImageAssetKey(insight.image_asset);
+
+const findMetaAssetFeedImage = (creative = {}, imageAssetKey = '') => {
+  const selectedKey = String(imageAssetKey || '').trim();
+  if (!selectedKey) return null;
+  return getMetaAssetFeedImages(creative).find((image) => getMetaImageAssetKey(image) === selectedKey) || null;
+};
+
+const getMetaAssetFeedImageUrl = (imageAsset = {}) =>
+  imageAsset?.url ||
+  imageAsset?.image_url ||
+  '';
+
+const getSelectedMetaImageAssetKey = (creative = {}, imageAssetKey = '') => {
+  const explicitKey = String(imageAssetKey || '').trim();
+  if (explicitKey) return explicitKey;
+  const images = getMetaAssetFeedImages(creative);
+  return images.length === 1 ? getMetaImageAssetKey(images[0]) : '';
+};
+
+const getSelectedMetaImageAsset = (creative = {}, imageAssetKey = '') =>
+  findMetaAssetFeedImage(creative, getSelectedMetaImageAssetKey(creative, imageAssetKey));
+
+const getMetaCreativeImageAssetUrl = (creative = {}, imageAssetKey = '') =>
+  creative.asset_feed_spec
+    ? getMetaAssetFeedImageUrl(getSelectedMetaImageAsset(creative, imageAssetKey))
+    : getMetaCreativeImageUrl(creative);
+
+const getMetaCreativeImageAssetPreviewUrl = (creative = {}, imageAssetKey = '') =>
+  getMetaCreativeImageAssetUrl(creative, imageAssetKey) || creative.thumbnail_url || '';
+
 const isMetaVideoCreative = (creative = {}) => {
   const objectStorySpec = creative.object_story_spec || {};
   const assetFeedSpec = creative.asset_feed_spec || {};
@@ -172,7 +221,7 @@ const isMetaVideoCreative = (creative = {}) => {
   );
 };
 
-export const isSafeMetaCreativeForImageClone = (creative = {}) => {
+export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => {
   if (!creative || typeof creative !== 'object') {
     return {
       supported: false,
@@ -181,15 +230,58 @@ export const isSafeMetaCreativeForImageClone = (creative = {}) => {
     };
   }
 
+  const objectStorySpec = creative.object_story_spec || {};
+  const assetFeedImages = getMetaAssetFeedImages(creative);
+
   if (creative.asset_feed_spec) {
+    if (isMetaVideoCreative(creative)) {
+      return {
+        supported: false,
+        reason: 'META_VIDEO_CREATIVE',
+        message: 'Video Meta creatives need a manual review before replacement.',
+      };
+    }
+
+    if (assetFeedImages.length === 0) {
+      return {
+        supported: false,
+        reason: 'META_DYNAMIC_CREATIVE_WITHOUT_IMAGES',
+        message: 'This Meta creative has no image asset to replace.',
+      };
+    }
+
+    const selectedImageAssetKey = getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
+    if (!selectedImageAssetKey) {
+      return {
+        supported: false,
+        reason: 'META_IMAGE_ASSET_NOT_SELECTED',
+        message: 'Meta returned multiple image assets but no image-level metric to choose the replacement.',
+      };
+    }
+
+    if (!findMetaAssetFeedImage(creative, selectedImageAssetKey)) {
+      return {
+        supported: false,
+        reason: 'META_IMAGE_ASSET_NOT_FOUND',
+        message: 'The selected Meta image asset was not found in the creative.',
+      };
+    }
+
+    if (!objectStorySpec.page_id) {
+      return {
+        supported: false,
+        reason: 'META_PAGE_ID_NOT_FOUND',
+        message: 'This Meta creative is missing the Page context needed for replacement.',
+      };
+    }
+
     return {
-      supported: false,
-      reason: 'META_DYNAMIC_CREATIVE',
-      message: 'Flexible Meta creatives need a manual review before replacement.',
+      supported: true,
+      reason: null,
+      message: null,
     };
   }
 
-  const objectStorySpec = creative.object_story_spec || {};
   if (isMetaVideoCreative(creative)) {
     return {
       supported: false,
@@ -230,12 +322,64 @@ export const isSafeMetaCreativeForImageClone = (creative = {}) => {
   };
 };
 
-export const buildMetaCreativeClonePayload = (creative, imageHash, name) => {
-  const safety = isSafeMetaCreativeForImageClone(creative);
+const buildMetaDynamicCreativeClonePayload = (creative, imageHash, name, options = {}) => {
+  const selectedImageAssetKey = getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
+  const safety = isSafeMetaCreativeForImageClone(creative, { selectedImageAssetKey });
+  if (!safety.supported) {
+    throw new Error(safety.message || 'Meta creative cannot be cloned safely.');
+  }
+
+  const assetFeedSpec = deepClone(creative.asset_feed_spec);
+  let replaced = false;
+  assetFeedSpec.images = getMetaAssetFeedImages({ asset_feed_spec: assetFeedSpec }).map((image) => {
+    if (getMetaImageAssetKey(image) !== selectedImageAssetKey) return image;
+    replaced = true;
+    const nextImage = deepClone(image);
+    if ('image_hash' in nextImage && !('hash' in nextImage)) {
+      nextImage.image_hash = imageHash;
+    } else {
+      nextImage.hash = imageHash;
+    }
+    delete nextImage.id;
+    delete nextImage.asset_id;
+    delete nextImage.url;
+    delete nextImage.image_url;
+    delete nextImage.image_crops;
+    return nextImage;
+  });
+
+  if (!replaced) {
+    throw new Error('The selected Meta image asset was not found in the creative.');
+  }
+
+  const payload = {
+    name: name || `${creative.name || 'Creative'} replacement`,
+    asset_feed_spec: assetFeedSpec,
+  };
+
+  if (creative.object_story_spec) {
+    payload.object_story_spec = deepClone(creative.object_story_spec);
+  }
+  if (creative.degrees_of_freedom_spec) {
+    payload.degrees_of_freedom_spec = deepClone(creative.degrees_of_freedom_spec);
+  }
+  if (creative.url_tags) {
+    payload.url_tags = creative.url_tags;
+  }
+
+  return payload;
+};
+
+export const buildMetaCreativeClonePayload = (creative, imageHash, name, options = {}) => {
+  const safety = isSafeMetaCreativeForImageClone(creative, options);
   if (!safety.supported) {
     throw new Error(safety.message || 'Meta creative cannot be cloned safely.');
   }
   if (!imageHash) throw new Error('imageHash is required.');
+
+  if (creative.asset_feed_spec) {
+    return buildMetaDynamicCreativeClonePayload(creative, imageHash, name, options);
+  }
 
   const objectStorySpec = deepClone(creative.object_story_spec);
   objectStorySpec.link_data = {
@@ -279,8 +423,11 @@ export const normalizeMetaLowPerformerAd = ({
   ad,
   insight = {},
   imageResolution = {},
+  selectedImageAssetKey = '',
 }) => {
   const creative = ad?.creative || {};
+  const effectiveImageAssetKey = getSelectedMetaImageAssetKey(creative, selectedImageAssetKey);
+  const selectedImageAsset = getSelectedMetaImageAsset(creative, effectiveImageAssetKey);
   const campaign = ad?.adset?.campaign || {};
   const campaignId = String(campaign.id || insight.campaign_id || '');
   const campaignName = campaign.name || insight.campaign_name || 'Unknown Campaign';
@@ -288,12 +435,15 @@ export const normalizeMetaLowPerformerAd = ({
   const adsetName = ad?.adset?.name || insight.adset_name || 'Unknown Ad Set';
   const adId = String(ad?.id || insight.ad_id || '');
   const creativeId = String(creative.id || '');
-  const imageUrl = getMetaCreativeImageUrl(creative);
-  const previewUrl = getMetaCreativePreviewUrl(creative);
+  const imageUrl = getMetaCreativeImageAssetUrl(creative, effectiveImageAssetKey);
+  const previewUrl = getMetaCreativeImageAssetPreviewUrl(creative, effectiveImageAssetKey);
   const width = parseNumber(imageResolution.width);
   const height = parseNumber(imageResolution.height);
-  const safety = isSafeMetaCreativeForImageClone(creative);
+  const safety = isSafeMetaCreativeForImageClone(creative, {
+    selectedImageAssetKey: effectiveImageAssetKey,
+  });
   const hasRealImageUrl = Boolean(imageUrl);
+  const assetId = effectiveImageAssetKey || creativeId;
 
   return {
     id: buildMetaLowPerformerId({
@@ -302,7 +452,7 @@ export const normalizeMetaLowPerformerAd = ({
       adsetId,
       adId,
       creativeId,
-      imageUrl: imageUrl || previewUrl,
+      imageUrl: effectiveImageAssetKey || imageUrl || previewUrl,
     }),
     platform: 'meta',
     platformLabel: 'Meta Ads',
@@ -318,9 +468,9 @@ export const normalizeMetaLowPerformerAd = ({
     adName: ad?.name || `Ad ${adId}`,
     adType: 'META_IMAGE_AD',
     adResourceName: adId,
-    assetId: creativeId,
-    assetResourceName: creativeId,
-    assetName: creative.name || ad?.name || `Ad ${adId}`,
+    assetId,
+    assetResourceName: assetId,
+    assetName: selectedImageAsset?.name || selectedImageAsset?.hash || creative.name || ad?.name || `Ad ${adId}`,
     assetUrl: imageUrl,
     assetPreviewUrl: previewUrl,
     imageWidth: hasRealImageUrl && width > 0 ? width : 0,
@@ -340,6 +490,7 @@ export const normalizeMetaLowPerformerAd = ({
     replacementSupportMessage: safety.supported ? null : safety.message,
     replacementStrategy: safety.supported ? 'META_CREATIVE_CLONE' : 'META_MANUAL_REVIEW',
     metaCreative: creative,
+    selectedMetaImageAssetKey: effectiveImageAssetKey,
   };
 };
 
@@ -380,7 +531,22 @@ const normalizeInsightCandidate = (insight = {}) => ({
   adId: String(insight.ad_id || '').trim(),
   insight,
   metrics: buildMetaMetrics(insight),
+  imageAssetKey: getMetaInsightImageAssetKey(insight),
 });
+
+const selectLowestImpressionMetaImageAssetPerAd = (candidates = []) => {
+  const selectedByAd = new Map();
+
+  for (const candidate of candidates) {
+    if (!candidate.adId) continue;
+    const current = selectedByAd.get(candidate.adId);
+    if (!current || parseNumber(candidate.metrics?.impressions) < parseNumber(current.metrics?.impressions)) {
+      selectedByAd.set(candidate.adId, candidate);
+    }
+  }
+
+  return [...selectedByAd.values()];
+};
 
 const getMetaAdRunningDays = (ad = {}, now = new Date()) => {
   const createdTime = Date.parse(ad.created_time || '');
@@ -422,7 +588,8 @@ export const collectMetaLowPerformerAssets = async ({
   for (const campaignId of selectedCampaignIds) {
     const insightsResponse = await graphGetImpl(`/${campaignId}/insights`, {
       level: 'ad',
-      fields: META_INSIGHTS_FIELDS,
+      fields: `${META_INSIGHTS_FIELDS},image_asset`,
+      breakdowns: 'image_asset',
       date_preset: datePreset,
       limit: 500,
     });
@@ -430,9 +597,11 @@ export const collectMetaLowPerformerAssets = async ({
   }
 
   const rankedCandidates = rankMetaLowPerformers(
-    insights
-      .map(normalizeInsightCandidate)
-      .filter((candidate) => candidate.adId),
+    selectLowestImpressionMetaImageAssetPerAd(
+      insights
+        .map(normalizeInsightCandidate)
+        .filter((candidate) => candidate.adId),
+    ),
   ).slice(0, Math.min(Math.max(maxResults * 5, maxResults), 100));
   const assets = [];
 
@@ -447,8 +616,8 @@ export const collectMetaLowPerformerAssets = async ({
     const creative = ad?.creative || {};
     if (isMetaVideoCreative(creative)) continue;
 
-    const imageUrl = getMetaCreativeImageUrl(creative);
-    const previewUrl = getMetaCreativePreviewUrl(creative);
+    const imageUrl = getMetaCreativeImageAssetUrl(creative, candidate.imageAssetKey);
+    const previewUrl = getMetaCreativeImageAssetPreviewUrl(creative, candidate.imageAssetKey);
     if (!imageUrl && !previewUrl) continue;
 
     const imageResolution = imageUrl ? await resolveImageResolutionImpl(imageUrl) : {};
@@ -457,6 +626,7 @@ export const collectMetaLowPerformerAssets = async ({
       ad,
       insight: candidate.insight,
       imageResolution,
+      selectedImageAssetKey: candidate.imageAssetKey,
     }));
   }
 
@@ -664,6 +834,7 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
     existingCreative,
     imageHash,
     `${existingCreative?.name || operation.assetName || 'Meta creative'} replacement`,
+    { selectedImageAssetKey: operation.selectedMetaImageAssetKey },
   );
 
   let creativeResponse;

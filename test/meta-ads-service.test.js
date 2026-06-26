@@ -183,6 +183,37 @@ test('builds Meta creative payload by cloning existing link data and replacing o
   assert.equal(creative.object_story_spec.link_data.picture, 'https://example.com/old.png');
 });
 
+test('builds Meta dynamic creative payload by replacing only the selected image asset', () => {
+  const creative = {
+    id: 'creative-dynamic',
+    name: 'Dynamic Creative',
+    object_story_spec: { page_id: 'page-1' },
+    asset_feed_spec: {
+      images: [
+        { hash: 'high-hash', url: 'https://example.com/high.png' },
+        { hash: 'low-hash', url: 'https://example.com/low.png' },
+      ],
+      bodies: [{ text: 'Ride now' }],
+    },
+  };
+
+  const payload = buildMetaCreativeClonePayload(
+    creative,
+    'new-hash',
+    'Replacement Creative',
+    { selectedImageAssetKey: 'low-hash' },
+  );
+
+  assert.equal(payload.name, 'Replacement Creative');
+  assert.equal(payload.object_story_spec.page_id, 'page-1');
+  assert.deepEqual(payload.asset_feed_spec.images, [
+    { hash: 'high-hash', url: 'https://example.com/high.png' },
+    { hash: 'new-hash' },
+  ]);
+  assert.deepEqual(payload.asset_feed_spec.bodies, [{ text: 'Ride now' }]);
+  assert.equal(creative.asset_feed_spec.images[1].hash, 'low-hash');
+});
+
 test('collects Meta low performers with at least 30 running days by lowest impressions', async () => {
   const calls = [];
   const graphGetImpl = async (endpoint, params) => {
@@ -253,6 +284,141 @@ test('collects Meta low performers with at least 30 running days by lowest impre
   assert.equal(assets[0].adId, 'ad-low-impressions-old');
   assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-new', '/ad-low-impressions-old']);
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
+});
+
+test('collects the lowest-impression Meta image asset for each ad', async () => {
+  const calls = [];
+  const graphGetImpl = async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          {
+            ad_id: 'ad-1',
+            impressions: '900',
+            clicks: '90',
+            spend: '90',
+            image_asset: { hash: 'high-hash' },
+          },
+          {
+            ad_id: 'ad-1',
+            impressions: '100',
+            clicks: '10',
+            spend: '10',
+            image_asset: { hash: 'low-hash' },
+          },
+        ],
+      };
+    }
+    if (endpoint === '/ad-1') {
+      return {
+        id: 'ad-1',
+        name: 'Dynamic image ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-dynamic',
+          name: 'Dynamic Creative',
+          thumbnail_url: 'https://example.com/preview.jpg',
+          object_story_spec: { page_id: 'page-1' },
+          asset_feed_spec: {
+            images: [
+              { hash: 'high-hash', url: 'https://example.com/high.png' },
+              { hash: 'low-hash', url: 'https://example.com/low.png' },
+            ],
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async (url) => {
+      assert.equal(url, 'https://example.com/low.png');
+      return { width: 1080, height: 1080 };
+    },
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].adId, 'ad-1');
+  assert.equal(assets[0].assetId, 'low-hash');
+  assert.equal(assets[0].assetUrl, 'https://example.com/low.png');
+  assert.equal(assets[0].selectedMetaImageAssetKey, 'low-hash');
+  assert.equal(assets[0].metrics.impressions, 100);
+  assert.equal(assets[0].supportedReplacement, true);
+  assert.equal(calls[0].params.breakdowns, 'image_asset');
+  assert.match(calls[0].params.fields, /image_asset/);
+});
+
+test('does not use generic Meta creative image URL for hash-only dynamic image assets', async () => {
+  const resolvedUrls = [];
+  const graphGetImpl = async (endpoint) => {
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          {
+            ad_id: 'ad-1',
+            impressions: '100',
+            clicks: '10',
+            spend: '10',
+            image_asset: { hash: 'low-hash' },
+          },
+        ],
+      };
+    }
+    if (endpoint === '/ad-1') {
+      return {
+        id: 'ad-1',
+        name: 'Dynamic image ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-dynamic',
+          name: 'Dynamic Creative',
+          image_url: 'https://example.com/generic-preview.png',
+          thumbnail_url: 'https://example.com/thumbnail.jpg',
+          object_story_spec: { page_id: 'page-1' },
+          asset_feed_spec: {
+            images: [{ hash: 'low-hash' }],
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async (url) => {
+      resolvedUrls.push(url);
+      return { width: 1080, height: 1080 };
+    },
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].assetId, 'low-hash');
+  assert.equal(assets[0].assetUrl, '');
+  assert.equal(assets[0].assetPreviewUrl, 'https://example.com/thumbnail.jpg');
+  assert.equal(assets[0].imageResolution, '');
+  assert.deepEqual(resolvedUrls, []);
 });
 
 test('collects only Meta image low performers and skips video thumbnails', async () => {

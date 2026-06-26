@@ -127,6 +127,7 @@ export interface LowPerformer {
   supportedReplacement: boolean;
   replacementSupportReason?: string | null;
   replacementSupportMessage?: string | null;
+  selectedMetaImageAssetKey?: string;
   metrics: {
     impressions: number;
     clicks: number;
@@ -164,6 +165,7 @@ export interface ReplacementOperation {
   executionPolicy?: string;
   blockedReason?: string | null;
   blockedMessage?: string | null;
+  selectedMetaImageAssetKey?: string;
   associationResourceName?: string;
   reason: string;
   detectedCategory: string | null;

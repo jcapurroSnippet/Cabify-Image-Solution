@@ -207,6 +207,7 @@ export const buildMetaReplacementPlan = async ({
         ? null
         : asset.replacementSupportMessage || 'Review this Meta creative before replacing it.',
       metaCreative: asset.metaCreative || null,
+      selectedMetaImageAssetKey: asset.selectedMetaImageAssetKey || '',
       creative: null,
       message: '',
     };
