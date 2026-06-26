@@ -958,8 +958,8 @@ export default function CreativeLibraryTab() {
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
                             <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
-                              {operation.oldAssetUrl ? (
-                                <img src={getPreviewSrc(operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
+                              {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
+                                <img src={getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
                               )}
@@ -1065,8 +1065,8 @@ export default function CreativeLibraryTab() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
-                          {asset.assetUrl ? (
-                            <img src={getPreviewSrc(asset.assetUrl)} alt="Low performer" className="h-full w-full object-cover" />
+                          {asset.assetPreviewUrl || asset.assetUrl ? (
+                            <img src={getPreviewSrc(asset.assetPreviewUrl || asset.assetUrl)} alt="Low performer" className="h-full w-full object-cover" />
                           ) : (
                             <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
                           )}

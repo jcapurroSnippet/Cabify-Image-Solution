@@ -62,6 +62,7 @@ test('normalizes Meta ads into Creative Library low performer assets', () => {
   assert.equal(asset.adName, 'Promo BUE image');
   assert.equal(asset.assetId, 'creative-1');
   assert.equal(asset.assetUrl, 'https://example.com/current.png');
+  assert.equal(asset.assetPreviewUrl, 'https://example.com/current.png');
   assert.equal(asset.imageResolution, '1080x1080');
   assert.equal(asset.supportedReplacement, true);
   assert.equal(asset.replacementStrategy, 'META_CREATIVE_CLONE');
@@ -75,6 +76,42 @@ test('normalizes Meta ads into Creative Library low performer assets', () => {
     cost: 240.5,
     cpa: 120.25,
   });
+});
+
+test('keeps Meta thumbnails out of asset url and resolution', () => {
+  const asset = normalizeMetaLowPerformerAd({
+    adAccountId: 'act_123456',
+    ad: {
+      id: 'ad-thumb-only',
+      name: 'Promo BUE thumbnail only',
+      adset: {
+        id: 'adset-1',
+        name: 'AR | Beneficios | BUE',
+        campaign: { id: 'campaign-1', name: 'AR | BUE | Always On' },
+      },
+      creative: {
+        id: 'creative-thumb-only',
+        name: 'Creative thumbnail only',
+        thumbnail_url: 'https://example.com/thumbnail-64x64.jpg',
+        object_story_spec: {
+          page_id: 'page-1',
+          link_data: { link: 'https://cabify.com', message: 'Ride now', image_hash: 'old-hash' },
+        },
+      },
+    },
+    insight: {
+      impressions: '1200',
+      clicks: '60',
+      spend: '240.50',
+    },
+    imageResolution: { width: 64, height: 64 },
+  });
+
+  assert.equal(asset.assetUrl, '');
+  assert.equal(asset.assetPreviewUrl, 'https://example.com/thumbnail-64x64.jpg');
+  assert.equal(asset.imageWidth, 0);
+  assert.equal(asset.imageHeight, 0);
+  assert.equal(asset.imageResolution, '');
 });
 
 test('detects Meta creatives that can be cloned by swapping one image', () => {
@@ -288,6 +325,59 @@ test('collects only Meta image low performers and skips video thumbnails', async
 
   assert.deepEqual(assets.map((asset) => asset.adId), ['ad-image']);
   assert.deepEqual(resolvedUrls, ['https://example.com/image.png']);
+});
+
+test('does not resolve Meta thumbnail-only creatives as image assets', async () => {
+  const resolvedUrls = [];
+  const graphGetImpl = async (endpoint) => {
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          { ad_id: 'ad-thumb-only', impressions: '100', clicks: '10', spend: '20' },
+        ],
+      };
+    }
+    if (endpoint === '/ad-thumb-only') {
+      return {
+        id: 'ad-thumb-only',
+        name: 'Image ad with thumbnail only',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-image',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-thumb-only',
+          name: 'Creative thumbnail only',
+          thumbnail_url: 'https://example.com/thumbnail-64x64.jpg',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async (url) => {
+      resolvedUrls.push(url);
+      return { width: 64, height: 64 };
+    },
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].assetUrl, '');
+  assert.equal(assets[0].assetPreviewUrl, 'https://example.com/thumbnail-64x64.jpg');
+  assert.equal(assets[0].imageResolution, '');
+  assert.deepEqual(resolvedUrls, []);
 });
 
 test('formats Meta Graph API rate limit errors for the UI', () => {

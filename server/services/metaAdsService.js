@@ -152,9 +152,11 @@ const buildMetaAdsUrl = (adAccountId, adId) => {
 
 const getMetaCreativeImageUrl = (creative = {}) =>
   creative.image_url ||
-  creative.thumbnail_url ||
   creative.object_story_spec?.link_data?.picture ||
   '';
+
+const getMetaCreativePreviewUrl = (creative = {}) =>
+  getMetaCreativeImageUrl(creative) || creative.thumbnail_url || '';
 
 const hasListEntries = (value) => Array.isArray(value) && value.length > 0;
 
@@ -287,9 +289,11 @@ export const normalizeMetaLowPerformerAd = ({
   const adId = String(ad?.id || insight.ad_id || '');
   const creativeId = String(creative.id || '');
   const imageUrl = getMetaCreativeImageUrl(creative);
+  const previewUrl = getMetaCreativePreviewUrl(creative);
   const width = parseNumber(imageResolution.width);
   const height = parseNumber(imageResolution.height);
   const safety = isSafeMetaCreativeForImageClone(creative);
+  const hasRealImageUrl = Boolean(imageUrl);
 
   return {
     id: buildMetaLowPerformerId({
@@ -298,7 +302,7 @@ export const normalizeMetaLowPerformerAd = ({
       adsetId,
       adId,
       creativeId,
-      imageUrl,
+      imageUrl: imageUrl || previewUrl,
     }),
     platform: 'meta',
     platformLabel: 'Meta Ads',
@@ -318,9 +322,10 @@ export const normalizeMetaLowPerformerAd = ({
     assetResourceName: creativeId,
     assetName: creative.name || ad?.name || `Ad ${adId}`,
     assetUrl: imageUrl,
-    imageWidth: width,
-    imageHeight: height,
-    imageResolution: width > 0 && height > 0 ? `${width}x${height}` : '',
+    assetPreviewUrl: previewUrl,
+    imageWidth: hasRealImageUrl && width > 0 ? width : 0,
+    imageHeight: hasRealImageUrl && height > 0 ? height : 0,
+    imageResolution: hasRealImageUrl && width > 0 && height > 0 ? `${width}x${height}` : '',
     targetType: 'META_AD',
     associationResourceName: adId,
     assetFieldType: '',
@@ -443,9 +448,10 @@ export const collectMetaLowPerformerAssets = async ({
     if (isMetaVideoCreative(creative)) continue;
 
     const imageUrl = getMetaCreativeImageUrl(creative);
-    if (!imageUrl) continue;
+    const previewUrl = getMetaCreativePreviewUrl(creative);
+    if (!imageUrl && !previewUrl) continue;
 
-    const imageResolution = await resolveImageResolutionImpl(imageUrl);
+    const imageResolution = imageUrl ? await resolveImageResolutionImpl(imageUrl) : {};
     assets.push(normalizeMetaLowPerformerAd({
       adAccountId,
       ad,
@@ -517,8 +523,7 @@ export const getWorstPerformers = async (adAccountId, campaignId, days = 30) => 
 
         if (isMetaVideoCreative(ad.creative || {})) return null;
 
-        const imageUrl =
-          ad.creative?.image_url || ad.creative?.thumbnail_url || null;
+        const imageUrl = getMetaCreativeImageUrl(ad.creative || {});
 
         if (!imageUrl) return null;
 

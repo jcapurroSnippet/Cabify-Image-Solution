@@ -107,6 +107,7 @@ export interface LowPerformer {
   adResourceName?: string;
   assetName: string;
   assetUrl: string;
+  assetPreviewUrl?: string;
   imageWidth: number;
   imageHeight: number;
   imageResolution: string;
@@ -172,6 +173,7 @@ export interface ReplacementOperation {
   oldAssetUrl: string;
   oldAssetId?: string;
   oldAssetResourceName?: string;
+  oldAssetPreviewUrl?: string;
   oldImageResolution?: string;
   requiredAspectRatio?: string | null;
   googleAdsUrl?: string;

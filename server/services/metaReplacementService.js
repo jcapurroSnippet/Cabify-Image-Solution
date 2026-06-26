@@ -182,6 +182,7 @@ export const buildMetaReplacementPlan = async ({
       oldAssetId: asset.assetId,
       oldAssetResourceName: asset.assetResourceName,
       oldAssetUrl: asset.assetUrl,
+      oldAssetPreviewUrl: asset.assetPreviewUrl || asset.assetUrl || '',
       oldImageResolution: asset.imageResolution || '',
       requiredAspectRatio,
       adsUrl: asset.adsUrl || '',
