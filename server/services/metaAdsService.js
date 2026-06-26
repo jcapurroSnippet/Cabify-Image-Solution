@@ -588,7 +588,7 @@ export const collectMetaLowPerformerAssets = async ({
   for (const campaignId of selectedCampaignIds) {
     const insightsResponse = await graphGetImpl(`/${campaignId}/insights`, {
       level: 'ad',
-      fields: `${META_INSIGHTS_FIELDS},image_asset`,
+      fields: META_INSIGHTS_FIELDS,
       breakdowns: 'image_asset',
       date_preset: datePreset,
       limit: 500,

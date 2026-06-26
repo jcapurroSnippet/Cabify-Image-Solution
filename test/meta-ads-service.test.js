@@ -357,7 +357,7 @@ test('collects the lowest-impression Meta image asset for each ad', async () => 
   assert.equal(assets[0].metrics.impressions, 100);
   assert.equal(assets[0].supportedReplacement, true);
   assert.equal(calls[0].params.breakdowns, 'image_asset');
-  assert.match(calls[0].params.fields, /image_asset/);
+  assert.doesNotMatch(calls[0].params.fields, /image_asset/);
 });
 
 test('does not use generic Meta creative image URL for hash-only dynamic image assets', async () => {
