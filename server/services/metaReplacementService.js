@@ -91,6 +91,57 @@ const getConfigForReplacement = async (sheetsUrl) => {
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
 };
 
+export const getMetaReplacementFamilyCreatives = (operation = {}) => {
+  const byId = new Map();
+  const addCreative = (creative) => {
+    const creativeId = String(creative?.creative_id || '').trim();
+    if (!creativeId || byId.has(creativeId)) return;
+    byId.set(creativeId, creative);
+  };
+
+  addCreative(operation.creative);
+  for (const familyCreative of operation.creativeFamilyCreatives || []) {
+    addCreative(familyCreative);
+  }
+
+  return [...byId.values()];
+};
+
+const buildReplacementImageDataUrlsByRatio = async (familyCreatives, reservedCreativesById) => {
+  const imageDataUrlsByRatio = {};
+  const imageDataUrlsByCreativeId = new Map();
+  const imageResolutionsByCreativeId = new Map();
+
+  for (const familyCreative of familyCreatives) {
+    const creativeId = String(familyCreative?.creative_id || '').trim();
+    if (!creativeId) continue;
+
+    const reserved = reservedCreativesById.get(creativeId) || {};
+    const creativeUrl = reserved.drive_url || familyCreative.drive_url;
+    const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
+    const imageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
+    const normalizedRatio = normalizeAspectRatio(familyCreative.aspect_ratio);
+
+    if (normalizedRatio) {
+      assertReplacementImageAspectRatio({
+        expectedAspectRatio: normalizedRatio,
+        replacementResolution: imageResolution,
+        creativeId,
+      });
+      imageDataUrlsByRatio[normalizedRatio] = imageDataUrl;
+    }
+
+    imageDataUrlsByCreativeId.set(creativeId, imageDataUrl);
+    imageResolutionsByCreativeId.set(creativeId, imageResolution);
+  }
+
+  return {
+    imageDataUrlsByRatio,
+    imageDataUrlsByCreativeId,
+    imageResolutionsByCreativeId,
+  };
+};
+
 export const getMetaLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
@@ -441,11 +492,27 @@ export const executeMetaReplacements = async ({
       continue;
     }
 
+    const reservedCreatives = [];
     try {
-      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id, 'meta');
-      const creativeUrl = reserved.drive_url || operation.creative.drive_url;
-      const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
-      const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
+      const familyCreatives = getMetaReplacementFamilyCreatives(operation);
+      for (const familyCreative of familyCreatives) {
+        const familyCreativeId = familyCreative.creative_id;
+        const reserved = await reserveCreative(spreadsheetId, familyCreativeId, operation.id, 'meta');
+        reservedCreatives.push(reserved);
+      }
+
+      const reservedCreativesById = new Map(
+        reservedCreatives.map((reserved) => [String(reserved.creative_id), reserved]),
+      );
+      const {
+        imageDataUrlsByRatio: replacementImageDataUrlsByRatio,
+        imageDataUrlsByCreativeId,
+        imageResolutionsByCreativeId,
+      } = await buildReplacementImageDataUrlsByRatio(familyCreatives, reservedCreativesById);
+      const imageDataUrl = imageDataUrlsByCreativeId.get(String(creativeId));
+      if (!imageDataUrl) throw new Error(`Replacement image for creative ${creativeId} could not be loaded.`);
+
+      const replacementImageResolution = imageResolutionsByCreativeId.get(String(creativeId));
       const imageAspectRatioValidation = assertReplacementImageAspectRatio({
         expectedResolution: operation.oldImageResolution,
         expectedAspectRatio: operation.requiredAspectRatio,
@@ -456,21 +523,24 @@ export const executeMetaReplacements = async ({
         accountId,
         operation,
         imageDataUrl,
+        { replacementImageDataUrlsByRatio },
       );
       const replacementResourceName = replacement.newCreativeId || replacement.assetResourceName || '';
 
-      await markCreativeUsed(spreadsheetId, creativeId, {
-        adsPlatform: 'meta',
-        adsResourceName: replacementResourceName,
-        operationId: operation.id,
-        notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
-      });
+      for (const reserved of reservedCreatives) {
+        await markCreativeUsed(spreadsheetId, reserved.creative_id, {
+          adsPlatform: 'meta',
+          adsResourceName: replacementResourceName,
+          operationId: operation.id,
+          notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
+        });
+      }
 
       await appendAuditLog(spreadsheetId, [
         {
           event: 'ASSET_REPLACED',
           creative_id: creativeId,
-          category: reserved.category || operation.detectedCategory || '',
+          category: reservedCreativesById.get(String(creativeId))?.category || operation.detectedCategory || '',
           customer_id: accountId,
           campaign_id: operation.campaignId,
           ad_group_id: operation.adGroupId,
@@ -479,7 +549,15 @@ export const executeMetaReplacements = async ({
           new_asset_resource_name: replacementResourceName,
           status: 'success',
           message: 'Replacement completed.',
-          payload_json: { platform: 'meta', operation, replacement, replacementImageResolution, imageAspectRatioValidation },
+          payload_json: {
+            platform: 'meta',
+            operation,
+            replacement,
+            replacementImageResolution,
+            imageAspectRatioValidation,
+            replacementImageRatios: Object.keys(replacementImageDataUrlsByRatio),
+            replacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
+          },
         },
       ]);
 
@@ -488,12 +566,18 @@ export const executeMetaReplacements = async ({
         executionStatus: 'success',
         replacementImageResolution: formatResolution(replacementImageResolution),
         replacementAspectRatio: imageAspectRatioValidation?.replacementAspectRatio || null,
+        replacementImageRatios: Object.keys(replacementImageDataUrlsByRatio),
+        replacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
         replacement,
       });
     } catch (error) {
       const executionError = getExecutionErrorDetails(error);
       logReplacementFailure({ operation, creativeId, executionError });
-      await releaseCreativeReservation(spreadsheetId, creativeId, error.message);
+      await Promise.all(
+        reservedCreatives.map((reserved) =>
+          releaseCreativeReservation(spreadsheetId, reserved.creative_id, error.message),
+        ),
+      );
       await appendAuditLog(spreadsheetId, [
         {
           event: 'REPLACEMENT_FAILED',
