@@ -12,7 +12,7 @@ import {
   detectCategoryFromName,
   detectPlazasFromName,
   normalizeCategory,
-  selectCreativeForCategory,
+  selectCreativeSetForCategoryRatios,
 } from './creativeLibraryCore.js';
 import {
   getLowPerformingImageAssets,
@@ -24,10 +24,12 @@ import {
   formatResolution,
   getImageResolutionFromDataUrl,
   getRequiredAspectRatio,
+  normalizeAspectRatio,
 } from './imageRatio.js';
 
 export const buildMetaTargetCategoryName = (asset) => asset.adName || asset.assetName || '';
 const buildTargetPlazasName = (asset) => asset.campaignName || '';
+const META_CONSISTENT_REPLACEMENT_RATIOS = ['1:1', '9:16', '16:9'];
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
   const rawIds = Array.isArray(campaignIds)
@@ -70,6 +72,19 @@ const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) =
 };
 
 const buildPlazasMatch = (asset, config) => detectPlazasFromName(buildTargetPlazasName(asset), config);
+
+const buildMetaCreativeReplacementGroupKey = (asset = {}) =>
+  String(asset.metaCreative?.id || asset.adId || asset.id || '').trim();
+
+const getMetaCreativeSetRequiredRatios = (requiredAspectRatio) => [
+  ...new Set(
+    [requiredAspectRatio, ...META_CONSISTENT_REPLACEMENT_RATIOS]
+      .map((ratio) => normalizeAspectRatio(ratio))
+      .filter(Boolean),
+  ),
+];
+
+const formatRatioList = (ratios = []) => ratios.filter(Boolean).join(', ');
 
 const getConfigForReplacement = async (sheetsUrl) => {
   if (!sheetsUrl) return getCreativeLibraryConfig();
@@ -148,6 +163,7 @@ export const buildMetaReplacementPlan = async ({
     selectedLowPerformerIds: selectedLowIds,
   });
   const reservedCreativeIds = new Set(excludedCreativeIds.map((id) => String(id)).filter(Boolean));
+  const metaCreativeSetSelections = new Map();
   const operations = [];
 
   for (const asset of lowPerformers) {
@@ -228,29 +244,70 @@ export const buildMetaReplacementPlan = async ({
       continue;
     }
 
-    const creative = selectCreativeForCategory(
-      library.creatives,
-      categoryMatch.category,
-      config.selectionStrategy,
-      reservedCreativeIds,
-      plazasMatch.plazas,
-      requiredAspectRatio,
-      'meta',
-    );
+    const metaCreativeGroupKey = buildMetaCreativeReplacementGroupKey(asset);
+    const metaCreativeSetRequiredRatios = getMetaCreativeSetRequiredRatios(requiredAspectRatio);
+    let metaCreativeSetSelection = metaCreativeSetSelections.get(metaCreativeGroupKey);
+
+    if (!metaCreativeSetSelection) {
+      const creativeSet = selectCreativeSetForCategoryRatios(
+        library.creatives,
+        categoryMatch.category,
+        metaCreativeSetRequiredRatios,
+        config.selectionStrategy,
+        reservedCreativeIds,
+        plazasMatch.plazas,
+        'meta',
+      );
+      if (creativeSet) {
+        creativeSet.creatives.forEach((familyCreative) => reservedCreativeIds.add(familyCreative.creative_id));
+      }
+      metaCreativeSetSelection = {
+        creativeSet,
+        requiredRatios: metaCreativeSetRequiredRatios,
+        usedRatios: new Set(),
+      };
+      metaCreativeSetSelections.set(metaCreativeGroupKey, metaCreativeSetSelection);
+    }
+
+    const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
+    const creative = normalizedRequiredAspectRatio
+      ? metaCreativeSetSelection.creativeSet?.creativesByRatio?.[normalizedRequiredAspectRatio]
+      : metaCreativeSetSelection.creativeSet?.creatives?.[0];
 
     if (!creative) {
       operations.push({
         ...baseOperation,
-        message: requiredAspectRatio ? 'NO_AVAILABLE_CREATIVE_FOR_RATIO' : 'NO_AVAILABLE_CREATIVE',
-        blockedMessage: requiredAspectRatio ? `No ${requiredAspectRatio} creative` : undefined,
+        message: 'NO_AVAILABLE_META_CREATIVE_SET',
+        blockedMessage:
+          `No complete Meta creative set available for ratios ${formatRatioList(metaCreativeSetRequiredRatios)}.`,
       });
       continue;
     }
 
-    reservedCreativeIds.add(creative.creative_id);
+    if (normalizedRequiredAspectRatio && metaCreativeSetSelection.usedRatios.has(normalizedRequiredAspectRatio)) {
+      operations.push({
+        ...baseOperation,
+        message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
+        blockedMessage: `No additional ${normalizedRequiredAspectRatio} creative in the selected Meta set.`,
+      });
+      continue;
+    }
+    if (normalizedRequiredAspectRatio) metaCreativeSetSelection.usedRatios.add(normalizedRequiredAspectRatio);
+
     operations.push({
       ...baseOperation,
       status: 'planned',
+      creativeFamilyKey: metaCreativeSetSelection.creativeSet?.familyKey || '',
+      creativeFamilyRequiredRatios: metaCreativeSetSelection.requiredRatios,
+      creativeFamilyCreatives: (metaCreativeSetSelection.creativeSet?.creatives || []).map((familyCreative) => ({
+        creative_id: familyCreative.creative_id,
+        category: familyCreative.category,
+        plazas: familyCreative.plazas || '',
+        drive_url: familyCreative.drive_url,
+        aspect_ratio: familyCreative.aspect_ratio || '',
+        image_resolution: familyCreative.image_resolution || '',
+        created_at: familyCreative.created_at,
+      })),
       creative: {
         creative_id: creative.creative_id,
         category: creative.category,

@@ -81,6 +81,14 @@ test('describes replacement status in operational language', () => {
     })).label,
     'No 1.91:1 creative',
   );
+  assert.equal(
+    describeReplacementStatus(operation({
+      status: 'skipped',
+      creative: null,
+      message: 'NO_AVAILABLE_META_CREATIVE_SET',
+    })).label,
+    'No Meta set',
+  );
 });
 
 test('explains plans that have no ready replacements', () => {
@@ -106,11 +114,18 @@ test('explains plans that have no ready replacements', () => {
       executionPolicy: 'manual_only',
       blockedMessage: 'Video Meta creatives need a manual review before replacement.',
     }),
+    operation({
+      id: 'missing-meta-set',
+      status: 'skipped',
+      creative: null,
+      message: 'NO_AVAILABLE_META_CREATIVE_SET',
+    }),
   ]);
 
   assert.match(message, /No replacements are ready/);
   assert.match(message, /1 missing category/);
   assert.match(message, /1 missing 1:1 creative/);
+  assert.match(message, /1 missing Meta creative set/);
   assert.match(message, /1 manual review/);
   assert.doesNotMatch(message.toLowerCase(), /dry run/);
 });

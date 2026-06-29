@@ -13,6 +13,7 @@ import {
   normalizeGooglePerformanceLabel,
   requiresNewAdCreationPermission,
   selectCreativeForCategory,
+  selectCreativeSetForCategoryRatios,
 } from '../server/services/creativeLibraryCore.js';
 import {
   CREATIVE_LIBRARY_HEADERS,
@@ -249,6 +250,93 @@ test('selects creatives by required aspect ratio', () => {
   );
   assert.equal(
     selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(['landscape']), 'BUE', '1.91:1'),
+    null,
+  );
+});
+
+test('selects complete creative families by required ratios', () => {
+  const creatives = [
+    {
+      creative_id: 'family-a-square',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '1:1',
+      source_sheet_id: 'sheet-1',
+      source_tab: 'Riders | AR',
+      source_row: '10',
+      created_at: '2026-01-01T00:00:00Z',
+    },
+    {
+      creative_id: 'family-a-portrait',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '9:16',
+      source_sheet_id: 'sheet-1',
+      source_tab: 'Riders | AR',
+      source_row: '10',
+      created_at: '2026-01-01T00:00:01Z',
+    },
+    {
+      creative_id: 'family-a-video',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '16:9',
+      source_sheet_id: 'sheet-1',
+      source_tab: 'Riders | AR',
+      source_row: '10',
+      created_at: '2026-01-01T00:00:02Z',
+    },
+    {
+      creative_id: 'family-b-square',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '1:1',
+      source_sheet_id: 'sheet-1',
+      source_tab: 'Riders | AR',
+      source_row: '11',
+      created_at: '2026-01-02T00:00:00Z',
+    },
+    {
+      creative_id: 'family-b-portrait',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '9:16',
+      source_sheet_id: 'sheet-1',
+      source_tab: 'Riders | AR',
+      source_row: '11',
+      created_at: '2026-01-02T00:00:01Z',
+    },
+  ];
+
+  const set = selectCreativeSetForCategoryRatios(
+    creatives,
+    'Promo',
+    ['1:1', '9:16', '16:9'],
+    'oldest_first',
+    new Set(),
+    'BUE',
+    'meta',
+  );
+
+  assert.equal(set.familyKey, 'sheet-1::Riders | AR::10');
+  assert.equal(set.creativesByRatio['1:1'].creative_id, 'family-a-square');
+  assert.equal(set.creativesByRatio['9:16'].creative_id, 'family-a-portrait');
+  assert.equal(set.creativesByRatio['16:9'].creative_id, 'family-a-video');
+  assert.equal(
+    selectCreativeSetForCategoryRatios(
+      creatives,
+      'Promo',
+      ['1:1', '9:16', '16:9'],
+      'oldest_first',
+      new Set(['family-a-video']),
+      'BUE',
+      'meta',
+    ),
     null,
   );
 });

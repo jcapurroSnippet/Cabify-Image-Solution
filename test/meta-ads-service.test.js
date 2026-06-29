@@ -163,6 +163,7 @@ test('builds Meta creative payload by cloning existing link data and replacing o
     degrees_of_freedom_spec: {
       creative_features_spec: {
         standard_enhancements: { enroll_status: 'OPT_OUT' },
+        text_optimizations: { enroll_status: 'OPT_OUT' },
       },
     },
     url_tags: 'utm_source=meta',
@@ -177,10 +178,17 @@ test('builds Meta creative payload by cloning existing link data and replacing o
   assert.equal(payload.object_story_spec.link_data.picture, undefined);
   assert.equal(payload.object_story_spec.link_data.message, 'Ride now');
   assert.deepEqual(payload.object_story_spec.link_data.call_to_action, { type: 'LEARN_MORE' });
-  assert.deepEqual(payload.degrees_of_freedom_spec, creative.degrees_of_freedom_spec);
+  assert.deepEqual(payload.degrees_of_freedom_spec, {
+    creative_features_spec: {
+      text_optimizations: { enroll_status: 'OPT_OUT' },
+    },
+  });
   assert.equal(payload.url_tags, 'utm_source=meta');
   assert.equal(creative.object_story_spec.link_data.image_hash, 'old-hash');
   assert.equal(creative.object_story_spec.link_data.picture, 'https://example.com/old.png');
+  assert.deepEqual(creative.degrees_of_freedom_spec.creative_features_spec.standard_enhancements, {
+    enroll_status: 'OPT_OUT',
+  });
 });
 
 test('builds Meta dynamic creative payload by replacing only the selected image asset', () => {
@@ -194,6 +202,11 @@ test('builds Meta dynamic creative payload by replacing only the selected image 
         { hash: 'low-hash', url: 'https://example.com/low.png' },
       ],
       bodies: [{ text: 'Ride now' }],
+    },
+    degrees_of_freedom_spec: {
+      creative_features_spec: {
+        standard_enhancements: { enroll_status: 'OPT_OUT' },
+      },
     },
   };
 
@@ -211,6 +224,7 @@ test('builds Meta dynamic creative payload by replacing only the selected image 
     { hash: 'new-hash' },
   ]);
   assert.deepEqual(payload.asset_feed_spec.bodies, [{ text: 'Ride now' }]);
+  assert.equal(payload.degrees_of_freedom_spec, undefined);
   assert.equal(creative.asset_feed_spec.images[1].hash, 'low-hash');
 });
 

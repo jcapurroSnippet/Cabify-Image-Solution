@@ -2,7 +2,7 @@ import axios from 'axios';
 import crypto from 'node:crypto';
 import FormData from 'form-data';
 import { downloadAdImage } from './adImageDownloader.js';
-import { getImageResolutionFromDataUrl } from './imageRatio.js';
+import { classifyAspectRatio, getImageResolutionFromDataUrl, normalizeAspectRatio } from './imageRatio.js';
 
 const GRAPH_API_VERSION = 'v25.0';
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -128,6 +128,30 @@ const parseNumber = (value) => {
 const deepClone = (value) =>
   value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 
+const META_DEPRECATED_CREATIVE_SPEC_FIELDS = new Set(['standard_enhancements']);
+
+const sanitizeMetaCreativeSpec = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeMetaCreativeSpec(item))
+      .filter((item) => item !== undefined);
+  }
+
+  if (!value || typeof value !== 'object') return value;
+
+  const sanitized = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (META_DEPRECATED_CREATIVE_SPEC_FIELDS.has(key)) continue;
+    const nextItem = sanitizeMetaCreativeSpec(item);
+    if (nextItem !== undefined) sanitized[key] = nextItem;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+};
+
+const sanitizeMetaDegreesOfFreedomSpec = (degreesOfFreedomSpec) =>
+  sanitizeMetaCreativeSpec(deepClone(degreesOfFreedomSpec));
+
 const buildMetaLowPerformerId = ({
   adAccountId,
   campaignId,
@@ -201,6 +225,13 @@ const getSelectedMetaImageAssetKey = (creative = {}, imageAssetKey = '') => {
 const getSelectedMetaImageAsset = (creative = {}, imageAssetKey = '') =>
   findMetaAssetFeedImage(creative, getSelectedMetaImageAssetKey(creative, imageAssetKey));
 
+const normalizeMetaImageHashByAssetKey = (value = {}) =>
+  Object.fromEntries(
+    Object.entries(value || {})
+      .map(([key, hash]) => [String(key || '').trim(), String(hash || '').trim()])
+      .filter(([key, hash]) => key && hash),
+  );
+
 const getMetaCreativeImageAssetUrl = (creative = {}, imageAssetKey = '') =>
   creative.asset_feed_spec
     ? getMetaAssetFeedImageUrl(getSelectedMetaImageAsset(creative, imageAssetKey))
@@ -250,7 +281,11 @@ export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => 
       };
     }
 
-    const selectedImageAssetKey = getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
+    const imageHashByAssetKey = normalizeMetaImageHashByAssetKey(options.imageHashByAssetKey);
+    const replacementAssetKeys = Object.keys(imageHashByAssetKey);
+    const selectedImageAssetKey = replacementAssetKeys.length > 0
+      ? replacementAssetKeys[0]
+      : getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
     if (!selectedImageAssetKey) {
       return {
         supported: false,
@@ -259,7 +294,8 @@ export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => 
       };
     }
 
-    if (!findMetaAssetFeedImage(creative, selectedImageAssetKey)) {
+    const missingAssetKey = replacementAssetKeys.find((assetKey) => !findMetaAssetFeedImage(creative, assetKey));
+    if (missingAssetKey || !findMetaAssetFeedImage(creative, selectedImageAssetKey)) {
       return {
         supported: false,
         reason: 'META_IMAGE_ASSET_NOT_FOUND',
@@ -322,9 +358,28 @@ export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => 
   };
 };
 
+const applyMetaImageHash = (image, imageHash) => {
+  const nextImage = deepClone(image);
+  if ('image_hash' in nextImage && !('hash' in nextImage)) {
+    nextImage.image_hash = imageHash;
+  } else {
+    nextImage.hash = imageHash;
+  }
+  delete nextImage.id;
+  delete nextImage.asset_id;
+  delete nextImage.url;
+  delete nextImage.image_url;
+  delete nextImage.image_crops;
+  return nextImage;
+};
+
 const buildMetaDynamicCreativeClonePayload = (creative, imageHash, name, options = {}) => {
+  const imageHashByAssetKey = normalizeMetaImageHashByAssetKey(options.imageHashByAssetKey);
+  const hasMultiImageReplacement = Object.keys(imageHashByAssetKey).length > 0;
   const selectedImageAssetKey = getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
-  const safety = isSafeMetaCreativeForImageClone(creative, { selectedImageAssetKey });
+  const safety = isSafeMetaCreativeForImageClone(creative, hasMultiImageReplacement
+    ? { imageHashByAssetKey }
+    : { selectedImageAssetKey });
   if (!safety.supported) {
     throw new Error(safety.message || 'Meta creative cannot be cloned safely.');
   }
@@ -332,20 +387,11 @@ const buildMetaDynamicCreativeClonePayload = (creative, imageHash, name, options
   const assetFeedSpec = deepClone(creative.asset_feed_spec);
   let replaced = false;
   assetFeedSpec.images = getMetaAssetFeedImages({ asset_feed_spec: assetFeedSpec }).map((image) => {
-    if (getMetaImageAssetKey(image) !== selectedImageAssetKey) return image;
+    const imageAssetKey = getMetaImageAssetKey(image);
+    const nextImageHash = hasMultiImageReplacement ? imageHashByAssetKey[imageAssetKey] : imageHash;
+    if (!nextImageHash || (!hasMultiImageReplacement && imageAssetKey !== selectedImageAssetKey)) return image;
     replaced = true;
-    const nextImage = deepClone(image);
-    if ('image_hash' in nextImage && !('hash' in nextImage)) {
-      nextImage.image_hash = imageHash;
-    } else {
-      nextImage.hash = imageHash;
-    }
-    delete nextImage.id;
-    delete nextImage.asset_id;
-    delete nextImage.url;
-    delete nextImage.image_url;
-    delete nextImage.image_crops;
-    return nextImage;
+    return applyMetaImageHash(image, nextImageHash);
   });
 
   if (!replaced) {
@@ -361,7 +407,8 @@ const buildMetaDynamicCreativeClonePayload = (creative, imageHash, name, options
     payload.object_story_spec = deepClone(creative.object_story_spec);
   }
   if (creative.degrees_of_freedom_spec) {
-    payload.degrees_of_freedom_spec = deepClone(creative.degrees_of_freedom_spec);
+    const degreesOfFreedomSpec = sanitizeMetaDegreesOfFreedomSpec(creative.degrees_of_freedom_spec);
+    if (degreesOfFreedomSpec) payload.degrees_of_freedom_spec = degreesOfFreedomSpec;
   }
   if (creative.url_tags) {
     payload.url_tags = creative.url_tags;
@@ -395,7 +442,8 @@ export const buildMetaCreativeClonePayload = (creative, imageHash, name, options
   };
 
   if (creative.degrees_of_freedom_spec) {
-    payload.degrees_of_freedom_spec = deepClone(creative.degrees_of_freedom_spec);
+    const degreesOfFreedomSpec = sanitizeMetaDegreesOfFreedomSpec(creative.degrees_of_freedom_spec);
+    if (degreesOfFreedomSpec) payload.degrees_of_freedom_spec = degreesOfFreedomSpec;
   }
   if (creative.url_tags) {
     payload.url_tags = creative.url_tags;
@@ -814,7 +862,56 @@ const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace }) => {
   return imageHash;
 };
 
-export const replaceAdCreativeFromOperation = async (adAccountId, operation, newImageDataUrl) => {
+const resolveMetaImageAssetRatio = async (imageAsset = {}) => {
+  const imageUrl = getMetaAssetFeedImageUrl(imageAsset);
+  if (!imageUrl) return null;
+  const resolution = await resolveImageResolution(imageUrl);
+  return normalizeAspectRatio(classifyAspectRatio(resolution));
+};
+
+const buildMetaImageHashByAssetKeyForRatios = async ({
+  creative,
+  replacementImageHashByRatio,
+  selectedImageAssetKey,
+}) => {
+  const normalizedReplacementHashes = Object.fromEntries(
+    Object.entries(replacementImageHashByRatio || {})
+      .map(([ratio, hash]) => [normalizeAspectRatio(ratio), String(hash || '').trim()])
+      .filter(([ratio, hash]) => ratio && hash),
+  );
+  const requiredRatios = Object.keys(normalizedReplacementHashes);
+  if (!creative?.asset_feed_spec || requiredRatios.length === 0) return {};
+
+  const imageHashByAssetKey = {};
+  const matchedRatios = new Set();
+  for (const image of getMetaAssetFeedImages(creative)) {
+    const imageAssetKey = getMetaImageAssetKey(image);
+    if (!imageAssetKey) continue;
+
+    const imageRatio = await resolveMetaImageAssetRatio(image);
+    const replacementHash = normalizedReplacementHashes[imageRatio];
+    if (!replacementHash) continue;
+
+    imageHashByAssetKey[imageAssetKey] = replacementHash;
+    matchedRatios.add(imageRatio);
+  }
+
+  if (Object.keys(imageHashByAssetKey).length > 0) {
+    const missingRatios = requiredRatios.filter((ratio) => !matchedRatios.has(ratio));
+    if (missingRatios.length > 0) {
+      throw new Error(`Could not match Meta creative image assets for ratios ${missingRatios.join(', ')}.`);
+    }
+    return imageHashByAssetKey;
+  }
+
+  if (selectedImageAssetKey && requiredRatios.length === 1) {
+    return { [selectedImageAssetKey]: normalizedReplacementHashes[requiredRatios[0]] };
+  }
+
+  return {};
+};
+
+export const replaceAdCreativeFromOperation = async (adAccountId, operation, newImageDataUrl, options = {}) => {
   const metaAdsTrace = [];
 
   if (!adAccountId) {
@@ -830,11 +927,32 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
     metaAdsTrace,
   });
   const existingCreative = operation.metaCreative || await getAdCreativeForReplacement(operation.adId);
+  const replacementImageDataUrlsByRatio = options.replacementImageDataUrlsByRatio || {};
+  const replacementImageHashByRatio = {};
+  for (const [ratio, imageDataUrl] of Object.entries(replacementImageDataUrlsByRatio)) {
+    const normalizedRatio = normalizeAspectRatio(ratio);
+    if (!normalizedRatio || !imageDataUrl) continue;
+    replacementImageHashByRatio[normalizedRatio] = imageDataUrl === newImageDataUrl
+      ? imageHash
+      : await uploadMetaImage({
+          adAccountId,
+          imageDataUrl,
+          metaAdsTrace,
+        });
+  }
+  const imageHashByAssetKey = await buildMetaImageHashByAssetKeyForRatios({
+    creative: existingCreative,
+    replacementImageHashByRatio,
+    selectedImageAssetKey: operation.selectedMetaImageAssetKey,
+  });
   const creativePayload = buildMetaCreativeClonePayload(
     existingCreative,
     imageHash,
     `${existingCreative?.name || operation.assetName || 'Meta creative'} replacement`,
-    { selectedImageAssetKey: operation.selectedMetaImageAssetKey },
+    {
+      selectedImageAssetKey: operation.selectedMetaImageAssetKey,
+      imageHashByAssetKey,
+    },
   );
 
   let creativeResponse;

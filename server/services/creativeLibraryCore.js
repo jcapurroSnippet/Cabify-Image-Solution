@@ -489,6 +489,63 @@ export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
   return !hasUsageValue(getCreativeUsedAtForPlatform(creative, platform));
 };
 
+export const getCreativeFamilyKey = (creative = {}) => {
+  const sourceSheetId = String(creative.source_sheet_id || '').trim();
+  const sourceTab = String(creative.source_tab || '').trim();
+  const sourceRow = String(creative.source_row || '').trim();
+
+  if (sourceSheetId && sourceTab && sourceRow) {
+    return [sourceSheetId, sourceTab, sourceRow].join('::');
+  }
+  if (sourceTab && sourceRow) {
+    return [sourceTab, sourceRow].join('::');
+  }
+  return '';
+};
+
+const sortCreativesBySelectionStrategy = (creatives, strategy) =>
+  [...creatives].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || '') || 0;
+    const rightTime = Date.parse(right.created_at || '') || 0;
+    return strategy === 'newest_first' ? rightTime - leftTime : leftTime - rightTime;
+  });
+
+const filterCreativesByPlazaPreference = (candidates, plazas) => {
+  const requestedPlazas = plazasToSet(plazas);
+  const wantsAll = requestedPlazas.has('all');
+  const allMatches = candidates.filter((creative) => plazasToSet(creative.plazas).has('all'));
+
+  if (requestedPlazas.size > 0) {
+    const exactMatches = wantsAll
+      ? []
+      : candidates.filter((creative) => {
+          const creativePlazas = plazasToSet(creative.plazas);
+          return [...creativePlazas].some((plaza) => requestedPlazas.has(plaza));
+        });
+    return exactMatches.length > 0 ? exactMatches : allMatches.length > 0 ? allMatches : candidates;
+  }
+
+  return allMatches.length > 0 ? allMatches : candidates;
+};
+
+const getCreativeSelectionCandidates = (
+  creatives,
+  category,
+  reservedIds = new Set(),
+  plazas = '',
+  adsPlatform = '',
+) => {
+  const normalizedCategory = String(category || '').toLowerCase();
+  const candidates = creatives.filter(
+    (creative) =>
+      String(creative.category || '').toLowerCase() === normalizedCategory &&
+      isCreativeAvailableForPlatform(creative, adsPlatform) &&
+      !reservedIds.has(creative.creative_id),
+  );
+
+  return filterCreativesByPlazaPreference(candidates, plazas);
+};
+
 export const selectCreativeForCategory = (
   creatives,
   category,
@@ -498,31 +555,13 @@ export const selectCreativeForCategory = (
   requiredAspectRatio = null,
   adsPlatform = '',
 ) => {
-  const normalizedCategory = String(category || '').toLowerCase();
   const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
-  const candidates = creatives.filter(
-    (creative) =>
-      String(creative.category || '').toLowerCase() === normalizedCategory &&
-      isCreativeAvailableForPlatform(creative, adsPlatform) &&
-      !reservedIds.has(creative.creative_id) &&
-      (!normalizedRequiredAspectRatio ||
-        normalizeAspectRatio(creative.aspect_ratio) === normalizedRequiredAspectRatio),
-  );
-  const requestedPlazas = plazasToSet(plazas);
-  const wantsAll = requestedPlazas.has('all');
-  const allMatches = candidates.filter((creative) => plazasToSet(creative.plazas).has('all'));
-  let available = candidates;
-  if (requestedPlazas.size > 0) {
-    const exactMatches = wantsAll
-      ? []
-      : candidates.filter((creative) => {
-          const creativePlazas = plazasToSet(creative.plazas);
-          return [...creativePlazas].some((plaza) => requestedPlazas.has(plaza));
-        });
-    available = exactMatches.length > 0 ? exactMatches : allMatches.length > 0 ? allMatches : candidates;
-  } else if (allMatches.length > 0) {
-    available = allMatches;
-  }
+  const available = getCreativeSelectionCandidates(creatives, category, reservedIds, plazas, adsPlatform)
+    .filter(
+      (creative) =>
+        !normalizedRequiredAspectRatio ||
+        normalizeAspectRatio(creative.aspect_ratio) === normalizedRequiredAspectRatio,
+    );
 
   if (available.length === 0) return null;
 
@@ -530,11 +569,94 @@ export const selectCreativeForCategory = (
     return available[Math.floor(Math.random() * available.length)];
   }
 
-  return [...available].sort((left, right) => {
-    const leftTime = Date.parse(left.created_at || '') || 0;
-    const rightTime = Date.parse(right.created_at || '') || 0;
-    return strategy === 'newest_first' ? rightTime - leftTime : leftTime - rightTime;
-  })[0];
+  return sortCreativesBySelectionStrategy(available, strategy)[0];
+};
+
+export const selectCreativeSetForCategoryRatios = (
+  creatives,
+  category,
+  requiredAspectRatios = [],
+  strategy = 'oldest_first',
+  reservedIds = new Set(),
+  plazas = '',
+  adsPlatform = '',
+) => {
+  const normalizedRequiredRatios = [
+    ...new Set(
+      (Array.isArray(requiredAspectRatios) ? requiredAspectRatios : [requiredAspectRatios])
+        .map((ratio) => normalizeAspectRatio(ratio))
+        .filter(Boolean),
+    ),
+  ];
+
+  if (normalizedRequiredRatios.length === 0) {
+    const creative = selectCreativeForCategory(
+      creatives,
+      category,
+      strategy,
+      reservedIds,
+      plazas,
+      null,
+      adsPlatform,
+    );
+    return creative ? { familyKey: getCreativeFamilyKey(creative), creativesByRatio: {}, creatives: [creative] } : null;
+  }
+
+  const candidates = getCreativeSelectionCandidates(creatives, category, reservedIds, plazas, adsPlatform)
+    .filter((creative) => getCreativeFamilyKey(creative));
+  const families = new Map();
+
+  for (const creative of candidates) {
+    const familyKey = getCreativeFamilyKey(creative);
+    if (!families.has(familyKey)) families.set(familyKey, []);
+    families.get(familyKey).push(creative);
+  }
+
+  const options = [];
+  for (const [familyKey, familyCreatives] of families) {
+    const creativesByRatio = {};
+    let isComplete = true;
+
+    for (const ratio of normalizedRequiredRatios) {
+      const ratioCreatives = sortCreativesBySelectionStrategy(
+        familyCreatives.filter((creative) => normalizeAspectRatio(creative.aspect_ratio) === ratio),
+        strategy,
+      );
+      if (ratioCreatives.length === 0) {
+        isComplete = false;
+        break;
+      }
+      creativesByRatio[ratio] = ratioCreatives[0];
+    }
+
+    if (!isComplete) continue;
+
+    const selectedCreatives = normalizedRequiredRatios.map((ratio) => creativesByRatio[ratio]);
+    const times = selectedCreatives
+      .map((creative) => Date.parse(creative.created_at || '') || 0)
+      .filter((time) => Number.isFinite(time));
+    const familyTime = times.length > 0
+      ? strategy === 'newest_first'
+        ? Math.max(...times)
+        : Math.min(...times)
+      : 0;
+
+    options.push({
+      familyKey,
+      creativesByRatio,
+      creatives: selectedCreatives,
+      familyTime,
+    });
+  }
+
+  if (options.length === 0) return null;
+  if (strategy === 'random') return options[Math.floor(Math.random() * options.length)];
+
+  return [...options].sort((left, right) =>
+    strategy === 'newest_first'
+      ? right.familyTime - left.familyTime
+      : left.familyTime - right.familyTime,
+  )[0];
 };
 
 export const canTransitionCreativeStatus = (from, to) => {

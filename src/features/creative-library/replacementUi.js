@@ -32,6 +32,15 @@ const getNoReadyReason = (operation) => {
     };
   }
 
+  if (operation?.message === 'NO_AVAILABLE_META_CREATIVE_SET') {
+    return {
+      key: 'missing_meta_creative_set',
+      label: 'missing Meta creative set',
+      pluralLabel: 'missing Meta creative sets',
+      priority: 2,
+    };
+  }
+
   if (!operation?.creative || operation?.message === 'NO_AVAILABLE_CREATIVE') {
     return {
       key: 'missing_creative',
@@ -229,6 +238,14 @@ export const describeReplacementStatus = (operation) => {
     return {
       label: `No ${ratio} creative`,
       description: `Generate or sync a ${ratio} creative before replacing.`,
+      tone: 'warning',
+    };
+  }
+
+  if (operation?.message === 'NO_AVAILABLE_META_CREATIVE_SET') {
+    return {
+      label: 'No Meta set',
+      description: 'Sync a complete Meta creative set before replacing.',
       tone: 'warning',
     };
   }
