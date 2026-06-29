@@ -684,18 +684,31 @@ const loadSourceGrid = async (sheets, spreadsheetId, sourceSheetName) => {
   return response.data.sheets?.[0]?.data?.[0]?.rowData || [];
 };
 
+const normalizeOutputHeader = (header) =>
+  normalizeHeader(header)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isRatioOutputHeader = (header, width, height) =>
+  new RegExp(`(^|[^0-9])${width}[:.x/_-]+${height}([^0-9]|$)`, 'i').test(normalizeOutputHeader(header));
+
+const isSixteenNineOutputHeader = (header) => {
+  const normalized = normalizeOutputHeader(header);
+  return (
+    isRatioOutputHeader(normalized, 16, 9) ||
+    normalized.includes('1920x1080') ||
+    normalized.includes('video')
+  );
+};
+
 const isOutputImageHeader = (header) =>
-  header.includes('1:1') ||
-  header.includes('9:16') ||
-  header.includes('16:9') ||
-  header.includes('16.9') ||
-  header.includes('16x9') ||
+  isRatioOutputHeader(header, 1, 1) ||
+  isRatioOutputHeader(header, 9, 16) ||
+  isSixteenNineOutputHeader(header) ||
   header.includes('1.91:1') ||
   header.includes('1.91') ||
   header.includes('1200x628') ||
-  header.includes('1920x1080') ||
-  header.includes('landscape') ||
-  header.includes('video');
+  header.includes('landscape');
 
 export const findOutputColumns = (headers) => {
   const outputColumns = new Set();
@@ -713,6 +726,15 @@ export const findOutputColumns = (headers) => {
   });
 
   return [...outputColumns].sort((left, right) => left - right);
+};
+
+export const resolveOutputReviewStatus = ({ cell, columnHeader, rowHasAcceptedOutput, config }) => {
+  const reviewStatus = classifyBackgroundColor(cell, config);
+  if (reviewStatus === 'PENDING' && rowHasAcceptedOutput && isSixteenNineOutputHeader(columnHeader)) {
+    return 'ACCEPTED';
+  }
+
+  return reviewStatus;
 };
 
 const readLibraryRows = async (sheets, spreadsheetId) => {
@@ -1276,6 +1298,10 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     const creativeIds = [];
     const notes = [];
     let rowHasOutput = false;
+    const rowHasAcceptedOutput = outputColumns.some((columnIndex) => {
+      const cell = cells[columnIndex];
+      return getCellUrl(cell) && classifyBackgroundColor(cell, config) === 'ACCEPTED';
+    });
 
     for (const columnIndex of outputColumns) {
       const cell = cells[columnIndex];
@@ -1283,7 +1309,12 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       if (!resizedImageUrl) continue;
 
       rowHasOutput = true;
-      const reviewStatus = classifyBackgroundColor(cell, config);
+      const reviewStatus = resolveOutputReviewStatus({
+        cell,
+        columnHeader: headers[columnIndex],
+        rowHasAcceptedOutput,
+        config,
+      });
       const sourceCell = `${columnIndexToLetter(columnIndex)}${rowNumber}`;
 
       if (reviewStatus === 'REJECTED') {
