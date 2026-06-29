@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildSourceColumnIndex,
+  findOutputColumns,
   migrateRowsToHeaders,
   resolveCreativePlazas,
 } from '../server/services/creativeLibraryService.js';
@@ -34,6 +35,12 @@ test('resolves plazas from plaza-like source row columns when no explicit plazas
   });
 
   assert.equal(plazas, 'BUE');
+});
+
+test('detects 16.9 IMG source output columns for library sync', () => {
+  const columns = findOutputColumns(['Copy', '1:1 IMG', '9:16 IMG', '16.9 IMG', 'category']);
+
+  assert.deepEqual(columns, [1, 2, 3]);
 });
 
 test('migrates legacy used_at values into used_at_google', () => {

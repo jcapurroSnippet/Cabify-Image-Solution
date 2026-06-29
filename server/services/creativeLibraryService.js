@@ -684,20 +684,26 @@ const loadSourceGrid = async (sheets, spreadsheetId, sourceSheetName) => {
   return response.data.sheets?.[0]?.data?.[0]?.rowData || [];
 };
 
-const findOutputColumns = (headers) => {
+const isOutputImageHeader = (header) =>
+  header.includes('1:1') ||
+  header.includes('9:16') ||
+  header.includes('16:9') ||
+  header.includes('16.9') ||
+  header.includes('16x9') ||
+  header.includes('1.91:1') ||
+  header.includes('1.91') ||
+  header.includes('1200x628') ||
+  header.includes('1920x1080') ||
+  header.includes('landscape') ||
+  header.includes('video');
+
+export const findOutputColumns = (headers) => {
   const outputColumns = new Set();
   const normalizedHeaders = headers.map(normalizeHeader);
   const isBlankOrGeneratedHeader = (header) => !header || /^column[a-z]+$/i.test(header);
 
   normalizedHeaders.forEach((header, index) => {
-    if (
-      !header.includes('1:1') &&
-      !header.includes('9:16') &&
-      !header.includes('1.91:1') &&
-      !header.includes('1.91') &&
-      !header.includes('1200x628') &&
-      !header.includes('landscape')
-    ) return;
+    if (!isOutputImageHeader(header)) return;
 
     outputColumns.add(index);
     for (let nextIndex = index + 1; nextIndex < normalizedHeaders.length; nextIndex++) {
@@ -1202,7 +1208,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
 
   const outputColumns = findOutputColumns(headers);
   if (outputColumns.length === 0) {
-    throw new Error('No output columns found. Expected headers containing "1:1", "9:16", or "1.91:1".');
+    throw new Error('No output columns found. Expected headers containing "1:1", "9:16", "16:9", "16.9", or "1.91:1".');
   }
   const inferredCategory = detectCategoryFromName(sourceSheetName, config).category;
   const inferredPlazas = '';
