@@ -1027,6 +1027,79 @@ const normalizeLibraryRowPlazas = async (sheets, spreadsheetId, libraryRows, con
   });
 };
 
+const normalizeLibraryRowCreativeFamilies = async (sheets, spreadsheetId, libraryRows) => {
+  const familyColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('creative_family_id');
+  if (familyColumnIndex < 0) return;
+
+  const updates = [];
+  const sourceGridCache = new Map();
+  const sourceHeaderCache = new Map();
+
+  const getSourceContext = async (sourceTab) => {
+    if (!sourceTab) return { rowData: [], headers: [], headerRowIndex: -1, columnIndexes: new Map() };
+    if (!sourceGridCache.has(sourceTab)) {
+      const rowData = await loadSourceGrid(sheets, spreadsheetId, sourceTab);
+      const headerRowIndex = findHeaderRowIndex(rowData);
+      const headers =
+        headerRowIndex >= 0
+          ? (rowData[headerRowIndex]?.values || []).map((cell) => getCellText(cell))
+          : [];
+      sourceGridCache.set(sourceTab, rowData);
+      sourceHeaderCache.set(sourceTab, { headers, headerRowIndex, columnIndexes: buildSourceColumnIndex(headers) });
+    }
+
+    return {
+      rowData: sourceGridCache.get(sourceTab),
+      ...sourceHeaderCache.get(sourceTab),
+    };
+  };
+
+  for (const row of libraryRows) {
+    const currentFamilyId = normalizeCreativeFamilyId(row.creative_family_id);
+    let explicitFamilyId = currentFamilyId;
+
+    if (!explicitFamilyId && row.source_tab && row.source_row) {
+      try {
+        const { rowData, columnIndexes } = await getSourceContext(row.source_tab);
+        const sourceRowIndex = Number(row.source_row) - 1;
+        const sourceCells = rowData?.[sourceRowIndex]?.values || [];
+        const sourceFamilyColumnIndex = columnIndexes.get('creative_family_id');
+        explicitFamilyId = sourceFamilyColumnIndex !== undefined
+          ? getCellText(sourceCells[sourceFamilyColumnIndex])
+          : '';
+      } catch {
+        explicitFamilyId = '';
+      }
+    }
+
+    const nextFamilyId = buildSourceCreativeFamilyId({
+      explicitFamilyId,
+      spreadsheetId: row.source_sheet_id || spreadsheetId,
+      sourceSheetName: row.source_tab || '',
+      rowNumber: row.source_row || row.__rowNumber,
+      imageUrl: row.resized_image_url || row.drive_url,
+    });
+
+    if (!nextFamilyId || row.creative_family_id === nextFamilyId) continue;
+
+    row.creative_family_id = nextFamilyId;
+    updates.push({
+      range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(familyColumnIndex)}${row.__rowNumber}`),
+      values: [[nextFamilyId]],
+    });
+  }
+
+  if (updates.length === 0) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: updates,
+    },
+  });
+};
+
 const normalizeLibraryRowImageMetadata = async (sheets, spreadsheetId, libraryRows) => {
   const aspectRatioColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('aspect_ratio');
   const imageResolutionColumnIndex = CREATIVE_LIBRARY_HEADERS.indexOf('image_resolution');
@@ -1148,11 +1221,51 @@ const normalizeCreativeFamilyId = (value) =>
   String(value || '')
     .trim()
     .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9_.:-]/g, '')
+    .replace(/[^a-zA-Z0-9_.:-]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^[_:.-]+|[_:.-]+$/g, '')
     .slice(0, 160);
 
-const buildSourceCreativeFamilyId = ({ explicitFamilyId, spreadsheetId, sourceSheetName, rowNumber }) =>
+const getFileNameFromUrl = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  try {
+    const parsed = new URL(text);
+    const pathName = decodeURIComponent(parsed.pathname || '');
+    const fileName = pathName.split('/').filter(Boolean).pop() || '';
+    return fileName.replace(/\.[a-z0-9]+$/i, '');
+  } catch {
+    return text.split(/[/?#]/)[0].split(/[\\/]/).filter(Boolean).pop()?.replace(/\.[a-z0-9]+$/i, '') || '';
+  }
+};
+
+export const inferCreativeFamilyIdFromImageUrl = (imageUrl, sourceSheetName = '') => {
+  const fileName = getFileNameFromUrl(imageUrl);
+  if (!fileName) return '';
+
+  const ratioTokenPattern = /(?:\d{2,5}\s*[xX]\s*\d{2,5}|1\s*[:._-]\s*1|9\s*[:._-]\s*16|16\s*[:._-]\s*9|1\.91\s*[:._-]\s*1)/i;
+  if (!ratioTokenPattern.test(fileName)) return '';
+
+  const familyBase = fileName
+    .replace(new RegExp(`^${ratioTokenPattern.source}[\\s._-]*`, 'i'), '')
+    .replace(new RegExp(`[\\s._-]*${ratioTokenPattern.source}$`, 'i'), '');
+  const normalizedBase = normalizeCreativeFamilyId(familyBase);
+  if (!normalizedBase) return '';
+
+  const sourcePrefix = normalizeCreativeFamilyId(sourceSheetName);
+  return sourcePrefix ? `${sourcePrefix}::${normalizedBase}` : normalizedBase;
+};
+
+export const buildSourceCreativeFamilyId = ({
+  explicitFamilyId,
+  spreadsheetId,
+  sourceSheetName,
+  rowNumber,
+  imageUrl,
+}) =>
   normalizeCreativeFamilyId(explicitFamilyId) ||
+  inferCreativeFamilyIdFromImageUrl(imageUrl, sourceSheetName) ||
   normalizeCreativeFamilyId(`${spreadsheetId}::${sourceSheetName}::row-${rowNumber}`);
 
 const buildRowSummary = (counts, creativeIds, notes) => {
@@ -1182,6 +1295,7 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
   const creatives = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, creatives, config);
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, creatives, config);
+  await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, creatives);
   await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, creatives);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, creatives);
   const byCategory = {};
@@ -1259,6 +1373,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   const libraryRows = await readLibraryRows(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, libraryRows, config);
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, libraryRows, config);
+  await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, libraryRows);
   await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, libraryRows);
   await formatLibraryHyperlinkColumns(sheets, spreadsheetId, libraryRows);
   const existing = getExistingLibraryIndexes(libraryRows);
@@ -1294,12 +1409,6 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       columnIndexes.creative_family_id !== undefined
         ? getCellText(cells[columnIndexes.creative_family_id])
         : '';
-    const creativeFamilyId = buildSourceCreativeFamilyId({
-      explicitFamilyId: creativeFamilyRaw,
-      spreadsheetId,
-      sourceSheetName,
-      rowNumber,
-    });
     const category = resolveCreativeCategory({
       explicitCategory: categoryRaw,
       cells,
@@ -1329,6 +1438,8 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     const creativeIds = [];
     const notes = [];
     let rowHasOutput = false;
+    let rowFamilyUpdateQueued = false;
+    let rowCreativeFamilyId = normalizeCreativeFamilyId(creativeFamilyRaw);
     const rowHasAcceptedOutput = outputColumns.some((columnIndex) => {
       const cell = cells[columnIndex];
       return getCellUrl(cell) && classifyBackgroundColor(cell, config) === 'ACCEPTED';
@@ -1340,6 +1451,26 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       if (!resizedImageUrl) continue;
 
       rowHasOutput = true;
+      const creativeFamilyId = rowCreativeFamilyId || buildSourceCreativeFamilyId({
+        explicitFamilyId: '',
+        spreadsheetId,
+        sourceSheetName,
+        rowNumber,
+        imageUrl: resizedImageUrl,
+      });
+      if (!rowCreativeFamilyId && creativeFamilyId) rowCreativeFamilyId = creativeFamilyId;
+      if (
+        columnIndexes.creative_family_id !== undefined &&
+        !rowFamilyUpdateQueued &&
+        !String(creativeFamilyRaw || '').trim() &&
+        creativeFamilyId
+      ) {
+        sourceUpdates.push({
+          range: buildRange(sourceSheetName, `${columnIndexToLetter(columnIndexes.creative_family_id)}${rowNumber}`),
+          values: [[creativeFamilyId]],
+        });
+        rowFamilyUpdateQueued = true;
+      }
       const reviewStatus = resolveOutputReviewStatus({
         cell,
         columnHeader: headers[columnIndex],

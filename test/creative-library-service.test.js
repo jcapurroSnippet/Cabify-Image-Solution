@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildSourceCreativeFamilyId,
   buildSourceColumnIndex,
   findOutputColumns,
+  inferCreativeFamilyIdFromImageUrl,
   migrateRowsToHeaders,
   resolveOutputReviewStatus,
   resolveCreativePlazas,
@@ -88,4 +90,49 @@ test('migrates legacy family id columns into creative_family_id', () => {
   );
 
   assert.deepEqual(rows, [['promo-1', 'riders-ar-001', '1:1']]);
+});
+
+test('infers the same creative family from ratio-specific filenames', () => {
+  assert.equal(
+    inferCreativeFamilyIdFromImageUrl('https://cdn.example.com/1080x1080_AR_RIDERS_2025_BUE_12.png', 'Riders | AR'),
+    'Riders_AR::AR_RIDERS_2025_BUE_12',
+  );
+  assert.equal(
+    inferCreativeFamilyIdFromImageUrl('https://cdn.example.com/1080x1920_AR_RIDERS_2025_BUE_12.png', 'Riders | AR'),
+    'Riders_AR::AR_RIDERS_2025_BUE_12',
+  );
+  assert.equal(
+    inferCreativeFamilyIdFromImageUrl('https://cdn.example.com/1920x1080_AR_RIDERS_2025_BUE_12.png', 'Riders | AR'),
+    'Riders_AR::AR_RIDERS_2025_BUE_12',
+  );
+});
+
+test('builds family ids from explicit value, filename, then row fallback', () => {
+  assert.equal(
+    buildSourceCreativeFamilyId({
+      explicitFamilyId: ' Manual Set 01 ',
+      spreadsheetId: 'sheet-1',
+      sourceSheetName: 'Riders | AR',
+      rowNumber: 10,
+      imageUrl: 'https://cdn.example.com/1080x1080_AR_RIDERS_2025_BUE_12.png',
+    }),
+    'Manual_Set_01',
+  );
+  assert.equal(
+    buildSourceCreativeFamilyId({
+      spreadsheetId: 'sheet-1',
+      sourceSheetName: 'Riders | AR',
+      rowNumber: 10,
+      imageUrl: 'https://cdn.example.com/1080x1080_AR_RIDERS_2025_BUE_12.png',
+    }),
+    'Riders_AR::AR_RIDERS_2025_BUE_12',
+  );
+  assert.equal(
+    buildSourceCreativeFamilyId({
+      spreadsheetId: 'sheet-1',
+      sourceSheetName: 'Riders | AR',
+      rowNumber: 10,
+    }),
+    'sheet-1::Riders_AR::row-10',
+  );
 });
