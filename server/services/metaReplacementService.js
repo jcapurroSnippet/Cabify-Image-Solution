@@ -291,6 +291,8 @@ export const buildMetaReplacementPlan = async ({
       operations.push({
         ...baseOperation,
         message: 'CATEGORY_NOT_FOUND',
+        blockedMessage:
+          `No category matched "${buildMetaTargetCategoryName(asset) || 'this Meta ad'}". Select a category for this low performer before replacing.`,
       });
       continue;
     }

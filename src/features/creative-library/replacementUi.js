@@ -80,10 +80,14 @@ export const summarizeNoReadyReplacementReasons = (operations = []) => {
 export const buildNoReadyReplacementMessage = (operations = []) => {
   const reasons = summarizeNoReadyReplacementReasons(operations);
   if (reasons.length === 0) {
-    return 'No replacements are ready. Review the table for missing creatives or manual changes.';
+    return 'No replacements are ready. Each row now shows what is missing and how to fix it.';
   }
 
-  return `No replacements are ready: ${reasons.map(formatReasonCount).join(', ')}. Review the table for the detailed reason on each row.`;
+  const nextAction = reasons.some((reason) => reason.key === 'missing_category')
+    ? 'Assign a category to the selected low performer, then run replacement again.'
+    : 'Review the blocked rows, sync the missing creatives, then run replacement again.';
+
+  return `No replacements are ready: ${reasons.map(formatReasonCount).join(', ')}. ${nextAction}`;
 };
 
 const parsePlazas = (value) =>
@@ -236,32 +240,33 @@ export const describeReplacementStatus = (operation) => {
   if (operation?.message === 'NO_AVAILABLE_CREATIVE_FOR_RATIO') {
     const ratio = operation.requiredAspectRatio || 'matching';
     return {
-      label: `No ${ratio} creative`,
-      description: `Generate or sync a ${ratio} creative before replacing.`,
+      label: `Missing ${ratio}`,
+      description: `No available ${ratio} creative matches this category and plaza. Sync or approve one in the library.`,
       tone: 'warning',
     };
   }
 
   if (operation?.message === 'NO_AVAILABLE_META_CREATIVE_SET') {
     return {
-      label: 'No Meta set',
-      description: 'Sync a complete Meta creative set before replacing.',
+      label: 'Missing Meta family',
+      description: operation.blockedMessage || 'Meta needs a complete family for the selected creative: matching ratios from the same set.',
       tone: 'warning',
     };
   }
 
   if (operation?.message === 'CATEGORY_NOT_FOUND') {
+    const sourceName = operation.adName || operation.assetName || operation.campaignName || 'this ad';
     return {
-      label: 'No category',
-      description: 'Choose a category before replacing this creative.',
+      label: 'Pick category',
+      description: `No category matched "${sourceName}". Select Generic, Promo, or Alianzas for this low performer, then replace again.`,
       tone: 'warning',
     };
   }
 
   if (!operation?.creative) {
     return {
-      label: 'No creative',
-      description: 'There is no available creative for this category and plaza.',
+      label: 'Missing creative',
+      description: 'No available creative matches the detected category, plaza, and ratio.',
       tone: 'warning',
     };
   }

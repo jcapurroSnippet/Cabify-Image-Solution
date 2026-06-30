@@ -70,7 +70,7 @@ test('describes replacement status in operational language', () => {
       message: 'CATEGORY_NOT_FOUND',
       detectedCategory: null,
     })).label,
-    'No category',
+    'Pick category',
   );
   assert.equal(
     describeReplacementStatus(operation({
@@ -79,7 +79,7 @@ test('describes replacement status in operational language', () => {
       message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
       requiredAspectRatio: '1.91:1',
     })).label,
-    'No 1.91:1 creative',
+    'Missing 1.91:1',
   );
   assert.equal(
     describeReplacementStatus(operation({
@@ -87,7 +87,7 @@ test('describes replacement status in operational language', () => {
       creative: null,
       message: 'NO_AVAILABLE_META_CREATIVE_SET',
     })).label,
-    'No Meta set',
+    'Missing Meta family',
   );
 });
 
@@ -127,6 +127,7 @@ test('explains plans that have no ready replacements', () => {
   assert.match(message, /1 missing 1:1 creative/);
   assert.match(message, /1 missing Meta creative set/);
   assert.match(message, /1 manual review/);
+  assert.match(message, /Assign a category/);
   assert.doesNotMatch(message.toLowerCase(), /dry run/);
 });
 

@@ -996,10 +996,15 @@ export default function CreativeLibraryTab() {
                           </div>
                         </td>
                         <td className="px-3 py-2">
-                          <span className={`inline-flex max-w-48 items-center gap-1 rounded-md border px-2 py-1 text-xs ${getReplacementToneClass(status.tone)}`} title={status.description}>
-                            {status.tone === 'ready' ? <CheckCircle className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                            <span className="truncate">{status.label}</span>
-                          </span>
+                          <div className="max-w-56">
+                            <span className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs ${getReplacementToneClass(status.tone)}`} title={status.description}>
+                              {status.tone === 'ready' ? <CheckCircle className="h-3 w-3 shrink-0" /> : <AlertCircle className="h-3 w-3 shrink-0" />}
+                              <span className="truncate">{status.label}</span>
+                            </span>
+                            {status.tone !== 'ready' && (
+                              <p className="mt-1 text-xs leading-snug text-slate-400">{status.description}</p>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-2 text-slate-300">{operation.platformLabel || (operation.platform ? PLATFORM_LABELS[operation.platform] : 'Google Ads')}</td>
                         <td className="px-3 py-2">{renderAdsTargetType(operation)}</td>
