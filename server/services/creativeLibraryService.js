@@ -38,6 +38,7 @@ import {
   formatResolution,
   getImageResolutionFromBuffer,
   getImageResolutionFromDataUrl,
+  normalizeAspectRatio,
 } from './imageRatio.js';
 
 const DEFAULT_MAX_ROWS = Number(process.env.CREATIVE_LIBRARY_MAX_SCAN_ROWS || 500);
@@ -111,10 +112,18 @@ const buildHyperlinkFormula = (url, label) =>
 const getUrlFromSheetValue = (value) =>
   extractUrlFromFormula(value) || normalizeUrl(value) || '';
 
+export const formatLibraryAspectRatioCell = (value) =>
+  value
+    ? String(value).trim().startsWith("'")
+      ? String(value).trim()
+      : `'${String(value).trim()}`
+    : '';
+
 const objectToLibraryRow = (object) =>
   CREATIVE_LIBRARY_HEADERS.map((header) => {
     const hyperlinkColumn = LIBRARY_HYPERLINK_COLUMNS.find((column) => column.header === header);
     const value = object[header] ?? '';
+    if (header === 'aspect_ratio') return formatLibraryAspectRatioCell(value);
     if (!hyperlinkColumn) return value;
 
     const url = getUrlFromSheetValue(value);
@@ -1108,20 +1117,23 @@ const normalizeLibraryRowImageMetadata = async (sheets, spreadsheetId, libraryRo
   const updates = [];
 
   for (const row of libraryRows) {
-    const hasAspectRatio = String(row.aspect_ratio || '').trim();
+    const normalizedAspectRatio = normalizeAspectRatio(row.aspect_ratio);
     const hasResolution = String(row.image_resolution || '').trim();
-    if (hasAspectRatio && hasResolution) continue;
+    if (normalizedAspectRatio && hasResolution) continue;
 
     const imageUrl = row.drive_url || row.resized_image_url;
-    if (!imageUrl) continue;
+    let imageResolutionText = hasResolution;
+    let aspectRatio = hasResolution ? classifyAspectRatio(hasResolution) : '';
 
     try {
-      const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
-      const imageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
-      const imageResolutionText = formatResolution(imageResolution);
-      const aspectRatio = classifyAspectRatio(imageResolution);
+      if ((!aspectRatio || !imageResolutionText) && imageUrl) {
+        const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
+        const imageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
+        imageResolutionText = formatResolution(imageResolution);
+        aspectRatio = classifyAspectRatio(imageResolution);
+      }
 
-      if (!hasAspectRatio) {
+      if (!normalizedAspectRatio && aspectRatio) {
         row.aspect_ratio = aspectRatio || '';
         updates.push({
           range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(aspectRatioColumnIndex)}${row.__rowNumber}`),
@@ -1129,7 +1141,7 @@ const normalizeLibraryRowImageMetadata = async (sheets, spreadsheetId, libraryRo
         });
       }
 
-      if (!hasResolution) {
+      if (!hasResolution && imageResolutionText) {
         row.image_resolution = imageResolutionText;
         updates.push({
           range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(imageResolutionColumnIndex)}${row.__rowNumber}`),

@@ -4,6 +4,7 @@ import {
   buildSourceCreativeFamilyId,
   buildSourceColumnIndex,
   findOutputColumns,
+  formatLibraryAspectRatioCell,
   inferCreativeFamilyIdFromImageUrl,
   migrateRowsToHeaders,
   resolveOutputReviewStatus,
@@ -90,6 +91,14 @@ test('migrates legacy family id columns into creative_family_id', () => {
   );
 
   assert.deepEqual(rows, [['promo-1', 'riders-ar-001', '1:1']]);
+});
+
+test('formats aspect ratios as literal text for Google Sheets', () => {
+  assert.equal(formatLibraryAspectRatioCell('9:16'), "'9:16");
+  assert.equal(formatLibraryAspectRatioCell('16:9'), "'16:9");
+  assert.equal(formatLibraryAspectRatioCell('1:1'), "'1:1");
+  assert.equal(formatLibraryAspectRatioCell("'9:16"), "'9:16");
+  assert.equal(formatLibraryAspectRatioCell(''), '');
 });
 
 test('infers the same creative family from ratio-specific filenames', () => {
