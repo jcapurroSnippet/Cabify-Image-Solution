@@ -234,6 +234,18 @@ const extractDriveFileId = (url) => {
 /**
  * Download and optimize image for API calls
  */
+const buildImageDownloadError = (imageUrl, error) => {
+  const status = error?.status || error?.response?.status || null;
+  const statusLabel = status ? ` (status ${status})` : '';
+  const wrapped = new Error(`Failed to download image from ${imageUrl}${statusLabel}: ${error.message}`);
+  wrapped.name = error?.name || 'Error';
+  wrapped.code = error?.code || null;
+  wrapped.status = status;
+  wrapped.details = error?.response?.statusText || error?.details || null;
+  wrapped.response = error?.response || null;
+  return wrapped;
+};
+
 export const downloadImageAsDataUrl = async (imageUrl) => {
   try {
     let buffer;
@@ -306,7 +318,7 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
     
     return dataUrl;
   } catch (error) {
-    throw new Error(`Failed to download image from ${imageUrl}: ${error.message}`);
+    throw buildImageDownloadError(imageUrl, error);
   }
 };
 

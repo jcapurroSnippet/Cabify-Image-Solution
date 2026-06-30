@@ -475,6 +475,7 @@ export const executeGoogleReplacements = async ({
 
       results.push({
         ...operation,
+        status: 'success',
         executionStatus: 'success',
         replacementImageResolution: formatResolution(replacementImageResolution),
         replacementAspectRatio: imageAspectRatioValidation?.replacementAspectRatio || null,
@@ -503,6 +504,7 @@ export const executeGoogleReplacements = async ({
 
       results.push({
         ...operation,
+        status: 'failed',
         executionStatus: 'failed',
         executionMessage: error.message,
         executionError,

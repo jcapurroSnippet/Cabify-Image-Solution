@@ -237,6 +237,22 @@ export const describeReplacementChange = (operation) => {
 };
 
 export const describeReplacementStatus = (operation) => {
+  if (operation.executionStatus === 'failed' || operation.status === 'failed') {
+    return {
+      label: 'Failed',
+      description: operation.executionMessage || operation.message || 'The replacement did not finish.',
+      tone: 'error',
+    };
+  }
+
+  if (operation.executionStatus === 'success' || operation.status === 'success') {
+    return {
+      label: 'Replaced',
+      description: operation.executionMessage || operation.message || 'The creative was replaced.',
+      tone: 'ready',
+    };
+  }
+
   if (operation?.message === 'NO_AVAILABLE_CREATIVE_FOR_RATIO') {
     const ratio = operation.requiredAspectRatio || 'matching';
     return {
@@ -284,22 +300,6 @@ export const describeReplacementStatus = (operation) => {
       label: 'Needs approval',
       description: 'This can run after you approve creating a new ad.',
       tone: 'approval',
-    };
-  }
-
-  if (operation.executionStatus === 'failed' || operation.status === 'failed') {
-    return {
-      label: 'Failed',
-      description: operation.executionMessage || operation.message || 'The replacement did not finish.',
-      tone: 'error',
-    };
-  }
-
-  if (operation.executionStatus === 'success' || operation.status === 'success') {
-    return {
-      label: 'Replaced',
-      description: operation.executionMessage || operation.message || 'The creative was replaced.',
-      tone: 'ready',
     };
   }
 

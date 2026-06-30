@@ -89,6 +89,19 @@ test('describes replacement status in operational language', () => {
     })).label,
     'Missing Meta family',
   );
+  assert.deepEqual(
+    describeReplacementStatus(operation({
+      executionStatus: 'failed',
+      requiresNewAd: true,
+      executionPolicy: 'clone_replace',
+      executionMessage: 'Could not load Meta replacement creative creative-1. Drive returned 404.',
+    })),
+    {
+      label: 'Failed',
+      description: 'Could not load Meta replacement creative creative-1. Drive returned 404.',
+      tone: 'error',
+    },
+  );
 });
 
 test('explains plans that have no ready replacements', () => {

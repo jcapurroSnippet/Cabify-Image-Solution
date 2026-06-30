@@ -86,6 +86,25 @@ const getMetaCreativeSetRequiredRatios = (requiredAspectRatio) => [
 
 const formatRatioList = (ratios = []) => ratios.filter(Boolean).join(', ');
 
+const buildReplacementImageLoadError = ({ error, creativeId, creativeUrl, aspectRatio, creativeFamilyId }) => {
+  const normalizedRatio = normalizeAspectRatio(aspectRatio);
+  const ratioLabel = normalizedRatio ? ` (${normalizedRatio})` : '';
+  const familyLabel = creativeFamilyId ? ` in family ${creativeFamilyId}` : '';
+  const status = error?.status || error?.response?.status || null;
+  const statusLabel = status ? ` Drive returned ${status}.` : '';
+  const wrapped = new Error(
+    `Could not load Meta replacement creative ${creativeId}${ratioLabel}${familyLabel}.` +
+      `${statusLabel} Check the creative library drive_url or Drive permissions: ${creativeUrl}`,
+  );
+  wrapped.name = error?.name || 'Error';
+  wrapped.code = error?.code || null;
+  wrapped.status = status;
+  wrapped.details = error?.details || error?.message || null;
+  wrapped.response = error?.response || null;
+  wrapped.cause = error;
+  return wrapped;
+};
+
 const getConfigForReplacement = async (sheetsUrl) => {
   if (!sheetsUrl) return getCreativeLibraryConfig();
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
@@ -118,7 +137,18 @@ const buildReplacementImageDataUrlsByRatio = async (familyCreatives, reservedCre
 
     const reserved = reservedCreativesById.get(creativeId) || {};
     const creativeUrl = reserved.drive_url || familyCreative.drive_url;
-    const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
+    let imageDataUrl;
+    try {
+      imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
+    } catch (error) {
+      throw buildReplacementImageLoadError({
+        error,
+        creativeId,
+        creativeUrl,
+        aspectRatio: familyCreative.aspect_ratio,
+        creativeFamilyId: familyCreative.creative_family_id,
+      });
+    }
     const imageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
     const normalizedRatio = normalizeAspectRatio(familyCreative.aspect_ratio);
 
@@ -567,6 +597,7 @@ export const executeMetaReplacements = async ({
 
       results.push({
         ...operation,
+        status: 'success',
         executionStatus: 'success',
         replacementImageResolution: formatResolution(replacementImageResolution),
         replacementAspectRatio: imageAspectRatioValidation?.replacementAspectRatio || null,
@@ -601,6 +632,7 @@ export const executeMetaReplacements = async ({
 
       results.push({
         ...operation,
+        status: 'failed',
         executionStatus: 'failed',
         executionMessage: error.message,
         executionError,
