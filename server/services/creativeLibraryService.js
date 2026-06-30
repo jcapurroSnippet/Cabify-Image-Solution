@@ -845,6 +845,11 @@ const isPlazasHeader = (header) => {
   return SOURCE_COLUMN_ALIASES.plazas.some((alias) => normalizeHeaderForMatch(alias) === normalized);
 };
 
+const isCategoryHeader = (header) => {
+  const normalized = normalizeHeaderForMatch(header);
+  return SOURCE_COLUMN_ALIASES.category.some((alias) => normalizeHeaderForMatch(alias) === normalized);
+};
+
 const buildSourceRowCampaignText = (cells, headers = []) => {
   const parts = [];
   cells.forEach((cell, index) => {
@@ -1065,24 +1070,34 @@ const normalizeLibraryRowCreativeFamilies = async (sheets, spreadsheetId, librar
 
   for (const row of libraryRows) {
     const currentFamilyId = normalizeCreativeFamilyId(row.creative_family_id);
-    let explicitFamilyId = currentFamilyId;
+    let explicitFamilyId = isGeneratedRowFamilyId(currentFamilyId) ? '' : currentFamilyId;
+    let sourceRowsFamilyId = '';
 
-    if (!explicitFamilyId && row.source_tab && row.source_row) {
+    if (row.source_tab && row.source_row) {
       try {
-        const { rowData, columnIndexes } = await getSourceContext(row.source_tab);
+        const { rowData, headers, columnIndexes } = await getSourceContext(row.source_tab);
         const sourceRowIndex = Number(row.source_row) - 1;
         const sourceCells = rowData?.[sourceRowIndex]?.values || [];
         const sourceFamilyColumnIndex = columnIndexes.get('creative_family_id');
-        explicitFamilyId = sourceFamilyColumnIndex !== undefined
-          ? getCellText(sourceCells[sourceFamilyColumnIndex])
+        const sourceExplicitFamilyId = sourceFamilyColumnIndex !== undefined
+          ? normalizeCreativeFamilyId(getCellText(sourceCells[sourceFamilyColumnIndex]))
           : '';
+        if (!explicitFamilyId && sourceExplicitFamilyId && !isGeneratedRowFamilyId(sourceExplicitFamilyId)) {
+          explicitFamilyId = sourceExplicitFamilyId;
+        }
+        sourceRowsFamilyId = inferCreativeFamilyIdFromSourceRows({
+          rowData,
+          headers,
+          sourceRowIndex,
+          sourceSheetName: row.source_tab,
+        });
       } catch {
-        explicitFamilyId = '';
+        sourceRowsFamilyId = '';
       }
     }
 
     const nextFamilyId = buildSourceCreativeFamilyId({
-      explicitFamilyId,
+      explicitFamilyId: explicitFamilyId || sourceRowsFamilyId,
       spreadsheetId: row.source_sheet_id || spreadsheetId,
       sourceSheetName: row.source_tab || '',
       rowNumber: row.source_row || row.__rowNumber,
@@ -1269,6 +1284,52 @@ export const inferCreativeFamilyIdFromImageUrl = (imageUrl, sourceSheetName = ''
   return sourcePrefix ? `${sourcePrefix}::${normalizedBase}` : normalizedBase;
 };
 
+const isGeneratedRowFamilyId = (value) => /(?:^|::)row-\d+$/i.test(normalizeCreativeFamilyId(value));
+
+const isSourceFamilyMarkerColumn = (header, index) => {
+  const normalized = normalizeHeader(header);
+  if (SOURCE_COLUMN_ALIASES.creative_family_id.some((alias) => normalizeHeader(alias) === normalized)) return true;
+  if (isOutputImageHeader(normalized) || isPlazasHeader(normalized) || isCategoryHeader(normalized)) return false;
+  if (/campaign|campana|copy|preview|image|imagen|link|url|fb|ig/.test(normalized)) return false;
+  if ((!normalized || /^column[a-z]+$/i.test(normalized)) && index === 0) return true;
+  return /(family|familia|set|grupo|group|creative_id|^id$)/i.test(normalized);
+};
+
+const getSourceFamilyMarkerFromCells = (cells = [], headers = []) => {
+  const candidateIndexes = [];
+  for (let index = 0; index < Math.max(cells.length, headers.length); index++) {
+    if (isSourceFamilyMarkerColumn(headers[index] || '', index)) candidateIndexes.push(index);
+  }
+
+  for (const index of candidateIndexes) {
+    const marker = normalizeCreativeFamilyId(getCellText(cells[index]));
+    if (marker && !isGeneratedRowFamilyId(marker)) return marker;
+  }
+
+  return '';
+};
+
+export const inferCreativeFamilyIdFromSourceRows = ({
+  rowData = [],
+  headers = [],
+  sourceRowIndex,
+  sourceSheetName = '',
+} = {}) => {
+  const rowIndex = Number(sourceRowIndex);
+  if (!Number.isFinite(rowIndex) || rowIndex < 0) return '';
+
+  for (const offset of [0, 1, 2, -1, -2]) {
+    const cells = rowData[rowIndex + offset]?.values || [];
+    const marker = getSourceFamilyMarkerFromCells(cells, headers);
+    if (!marker) continue;
+
+    const sourcePrefix = normalizeCreativeFamilyId(sourceSheetName);
+    return sourcePrefix ? `${sourcePrefix}::${marker}` : marker;
+  }
+
+  return '';
+};
+
 export const buildSourceCreativeFamilyId = ({
   explicitFamilyId,
   spreadsheetId,
@@ -1451,7 +1512,15 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     const notes = [];
     let rowHasOutput = false;
     let rowFamilyUpdateQueued = false;
+    const inferredSourceRowsFamilyId = inferCreativeFamilyIdFromSourceRows({
+      rowData,
+      headers,
+      sourceRowIndex: gridRowIndex,
+      sourceSheetName,
+    });
     let rowCreativeFamilyId = normalizeCreativeFamilyId(creativeFamilyRaw);
+    if (isGeneratedRowFamilyId(rowCreativeFamilyId)) rowCreativeFamilyId = '';
+    if (!rowCreativeFamilyId && inferredSourceRowsFamilyId) rowCreativeFamilyId = inferredSourceRowsFamilyId;
     const rowHasAcceptedOutput = outputColumns.some((columnIndex) => {
       const cell = cells[columnIndex];
       return getCellUrl(cell) && classifyBackgroundColor(cell, config) === 'ACCEPTED';
@@ -1474,7 +1543,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       if (
         columnIndexes.creative_family_id !== undefined &&
         !rowFamilyUpdateQueued &&
-        !String(creativeFamilyRaw || '').trim() &&
+        (!String(creativeFamilyRaw || '').trim() || isGeneratedRowFamilyId(creativeFamilyRaw)) &&
         creativeFamilyId
       ) {
         sourceUpdates.push({

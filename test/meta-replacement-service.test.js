@@ -21,12 +21,12 @@ test('uses selected Meta creative plus its family ratios for replacement', () =>
     creativeFamilyCreatives: [
       { creative_id: 'creative-1x1', aspect_ratio: '1:1' },
       { creative_id: 'creative-9x16', aspect_ratio: '9:16' },
-      { creative_id: 'creative-16x9', aspect_ratio: '16:9' },
+      { creative_id: 'creative-191x1', aspect_ratio: '1.91:1' },
     ],
   });
 
   assert.deepEqual(
     family.map((creative) => creative.creative_id),
-    ['creative-1x1', 'creative-9x16', 'creative-16x9'],
+    ['creative-1x1', 'creative-9x16', 'creative-191x1'],
   );
 });

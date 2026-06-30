@@ -6,6 +6,7 @@ import {
   findOutputColumns,
   formatLibraryAspectRatioCell,
   inferCreativeFamilyIdFromImageUrl,
+  inferCreativeFamilyIdFromSourceRows,
   migrateRowsToHeaders,
   resolveOutputReviewStatus,
   resolveCreativePlazas,
@@ -143,5 +144,34 @@ test('builds family ids from explicit value, filename, then row fallback', () =>
       rowNumber: 10,
     }),
     'sheet-1::Riders_AR::row-10',
+  );
+});
+
+test('infers creative family from nearby source row marker', () => {
+  const rowData = [
+    { values: [textCell(''), textCell('1080x1920')] },
+    { values: [textCell(''), textCell('1200x628')] },
+    { values: [textCell('2'), textCell('1080x1080')] },
+    { values: [textCell(''), textCell('1080x1920')] },
+    { values: [textCell(''), textCell('1200x628')] },
+    { values: [textCell('3'), textCell('1080x1080')] },
+  ];
+  const headers = ['', '1080x1080'];
+
+  assert.equal(
+    inferCreativeFamilyIdFromSourceRows({ rowData, headers, sourceRowIndex: 0, sourceSheetName: 'Riders | AR' }),
+    'Riders_AR::2',
+  );
+  assert.equal(
+    inferCreativeFamilyIdFromSourceRows({ rowData, headers, sourceRowIndex: 1, sourceSheetName: 'Riders | AR' }),
+    'Riders_AR::2',
+  );
+  assert.equal(
+    inferCreativeFamilyIdFromSourceRows({ rowData, headers, sourceRowIndex: 2, sourceSheetName: 'Riders | AR' }),
+    'Riders_AR::2',
+  );
+  assert.equal(
+    inferCreativeFamilyIdFromSourceRows({ rowData, headers, sourceRowIndex: 3, sourceSheetName: 'Riders | AR' }),
+    'Riders_AR::3',
   );
 });

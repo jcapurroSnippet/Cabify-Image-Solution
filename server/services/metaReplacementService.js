@@ -29,7 +29,7 @@ import {
 
 export const buildMetaTargetCategoryName = (asset) => asset.adName || asset.assetName || '';
 const buildTargetPlazasName = (asset) => asset.campaignName || '';
-const META_CONSISTENT_REPLACEMENT_RATIOS = ['1:1', '9:16', '16:9'];
+const META_CONSISTENT_REPLACEMENT_RATIOS = ['1:1', '9:16', '1.91:1'];
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
   const rawIds = Array.isArray(campaignIds)
