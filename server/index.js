@@ -72,6 +72,30 @@ const getErrorMessage = (error, fallbackMessage) => {
   return apiMessage || message || fallbackMessage;
 };
 
+const IMAGE_PREVIEW_PLACEHOLDER_SVG = Buffer.from(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320" role="img" aria-label="Preview unavailable">
+  <rect width="320" height="320" rx="18" fill="#eef2f7"/>
+  <path d="M94 206l45-52 31 34 20-22 36 40H94z" fill="#cbd5e1"/>
+  <circle cx="211" cy="119" r="22" fill="#cbd5e1"/>
+  <rect x="74" y="84" width="172" height="152" rx="14" fill="none" stroke="#94a3b8" stroke-width="8"/>
+  <text x="160" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">Preview unavailable</text>
+</svg>`
+);
+
+const getHeaderSafeMessage = (message) =>
+  String(message || '')
+    .replace(/[^\t\x20-\x7e]/g, ' ')
+    .slice(0, 300);
+
+const sendImagePreviewPlaceholder = (response, error) => {
+  const message = getErrorMessage(error, 'Failed to load image preview.');
+  console.warn('[IMAGE_PREVIEW] Returning placeholder:', message);
+  response.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  response.setHeader('Cache-Control', 'private, max-age=60');
+  response.setHeader('X-Image-Preview-Error', getHeaderSafeMessage(message));
+  return response.status(200).send(IMAGE_PREVIEW_PLACEHOLDER_SVG);
+};
+
 const parseDataUrl = (imageDataUrl) => {
   if (typeof imageDataUrl !== 'string' || imageDataUrl.trim().length === 0) {
     throw new RequestValidationError('imageDataUrl is required.');
@@ -150,7 +174,7 @@ app.get('/healthz', (_request, response) => {
 
 app.get('/api/image-preview', async (request, response) => {
   try {
-    const imageUrl = String(request.query.url ?? '').trim();
+    const imageUrl = String(request.query.url ?? request.query.u ?? '').trim();
     if (!imageUrl) {
       throw new RequestValidationError('url query param is required.');
     }
@@ -169,9 +193,7 @@ app.get('/api/image-preview', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
-    return response.status(502).json({
-      error: getErrorMessage(error, 'Failed to load image preview.'),
-    });
+    return sendImagePreviewPlaceholder(response, error);
   }
 });
 
