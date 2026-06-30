@@ -341,6 +341,56 @@ test('selects complete creative families by required ratios', () => {
   );
 });
 
+test('groups separated ratio creatives by explicit family id', () => {
+  const creatives = [
+    {
+      creative_id: 'set-1-square',
+      creative_family_id: 'set-1',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '1:1',
+      source_row: '10',
+      created_at: '2026-01-01T00:00:00Z',
+    },
+    {
+      creative_id: 'set-1-portrait',
+      creative_family_id: 'set-1',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '9:16',
+      source_row: '11',
+      created_at: '2026-01-01T00:00:01Z',
+    },
+    {
+      creative_id: 'set-1-video',
+      creative_family_id: 'set-1',
+      category: 'promo',
+      plazas: 'ALL',
+      status: 'available',
+      aspect_ratio: '16:9',
+      source_row: '12',
+      created_at: '2026-01-01T00:00:02Z',
+    },
+  ];
+
+  const set = selectCreativeSetForCategoryRatios(
+    creatives,
+    'Promo',
+    ['1:1', '9:16', '16:9'],
+    'oldest_first',
+    new Set(),
+    'BUE',
+    'meta',
+  );
+
+  assert.equal(set.familyKey, 'set-1');
+  assert.equal(set.creativesByRatio['1:1'].creative_id, 'set-1-square');
+  assert.equal(set.creativesByRatio['9:16'].creative_id, 'set-1-portrait');
+  assert.equal(set.creativesByRatio['16:9'].creative_id, 'set-1-video');
+});
+
 test('allows only expected creative status transitions', () => {
   assert.equal(canTransitionCreativeStatus('available', 'reserved'), true);
   assert.equal(canTransitionCreativeStatus('reserved', 'used'), true);

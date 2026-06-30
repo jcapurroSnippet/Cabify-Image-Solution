@@ -23,6 +23,7 @@ export interface CreativeLibraryItem {
   status: string;
   category: string;
   plazas: string;
+  creative_family_id?: string;
   source_tab: string;
   source_row: string;
   source_cell: string;
@@ -184,6 +185,7 @@ export interface ReplacementOperation {
     creative_id: string;
     category: string;
     plazas?: string;
+    creative_family_id?: string;
     drive_url: string;
     aspect_ratio?: string;
     image_resolution?: string;

@@ -1053,6 +1053,9 @@ export default function CreativeLibraryTab() {
                               {[operation.creative?.aspect_ratio, operation.creative?.image_resolution].filter(Boolean).join(' / ')}
                             </p>
                           )}
+                          {operation.creative?.creative_family_id && (
+                            <p className="text-xs text-slate-500">Family: {operation.creative.creative_family_id}</p>
+                          )}
                         </td>
                       </tr>
                     );

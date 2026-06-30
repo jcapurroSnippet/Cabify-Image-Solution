@@ -332,7 +332,7 @@ export const buildMetaReplacementPlan = async ({
         ...baseOperation,
         message: 'NO_AVAILABLE_META_CREATIVE_SET',
         blockedMessage:
-          `No complete Meta creative set available for ratios ${formatRatioList(metaCreativeSetRequiredRatios)}.`,
+          `No complete Meta creative family with the same creative_family_id is available for ratios ${formatRatioList(metaCreativeSetRequiredRatios)}.`,
       });
       continue;
     }
@@ -356,6 +356,7 @@ export const buildMetaReplacementPlan = async ({
         creative_id: familyCreative.creative_id,
         category: familyCreative.category,
         plazas: familyCreative.plazas || '',
+        creative_family_id: familyCreative.creative_family_id || '',
         drive_url: familyCreative.drive_url,
         aspect_ratio: familyCreative.aspect_ratio || '',
         image_resolution: familyCreative.image_resolution || '',
@@ -365,6 +366,7 @@ export const buildMetaReplacementPlan = async ({
         creative_id: creative.creative_id,
         category: creative.category,
         plazas: creative.plazas || '',
+        creative_family_id: creative.creative_family_id || '',
         drive_url: creative.drive_url,
         aspect_ratio: creative.aspect_ratio || '',
         image_resolution: creative.image_resolution || '',

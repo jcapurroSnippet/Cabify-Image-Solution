@@ -77,3 +77,15 @@ test('migrates legacy used_at values into used_at_google', () => {
 
   assert.deepEqual(rows, [['promo-1', '2026-06-01T00:00:00Z', '']]);
 });
+
+test('migrates legacy family id columns into creative_family_id', () => {
+  const rows = migrateRowsToHeaders(
+    [
+      ['creative_id', 'family_id', 'aspect_ratio'],
+      ['promo-1', 'riders-ar-001', '1:1'],
+    ],
+    ['creative_id', 'creative_family_id', 'aspect_ratio'],
+  );
+
+  assert.deepEqual(rows, [['promo-1', 'riders-ar-001', '1:1']]);
+});

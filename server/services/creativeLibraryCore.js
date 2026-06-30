@@ -490,6 +490,9 @@ export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
 };
 
 export const getCreativeFamilyKey = (creative = {}) => {
+  const explicitFamilyId = String(creative.creative_family_id || creative.family_id || '').trim();
+  if (explicitFamilyId) return explicitFamilyId;
+
   const sourceSheetId = String(creative.source_sheet_id || '').trim();
   const sourceTab = String(creative.source_tab || '').trim();
   const sourceRow = String(creative.source_row || '').trim();

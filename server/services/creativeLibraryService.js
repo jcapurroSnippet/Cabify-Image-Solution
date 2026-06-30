@@ -185,6 +185,7 @@ const normalizeSheetTitleForMatch = (value) =>
     .replace(/\s+/g, ' ');
 
 const HEADER_ALIASES = {
+  creative_family_id: ['creative_family_id', 'creative_family', 'family_id', 'creative_set_id', 'set_id'],
   used_at_google: ['used_at_google', 'used_at'],
 };
 
@@ -509,6 +510,15 @@ const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
 };
 
 const SOURCE_COLUMN_ALIASES = {
+  creative_family_id: [
+    'creative_family_id',
+    'creative_family',
+    'family_id',
+    'familia',
+    'id_familia',
+    'creative_set_id',
+    'set_id',
+  ],
   category: ['category', 'categoria', 'categoría'],
   plazas: [
     'plazas',
@@ -1134,6 +1144,17 @@ const buildCreativeId = (category) => `${category}_${Date.now()}_${cryptoSafeId(
 
 const cryptoSafeId = () => Math.random().toString(36).slice(2, 8);
 
+const normalizeCreativeFamilyId = (value) =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9_.:-]/g, '')
+    .slice(0, 160);
+
+const buildSourceCreativeFamilyId = ({ explicitFamilyId, spreadsheetId, sourceSheetName, rowNumber }) =>
+  normalizeCreativeFamilyId(explicitFamilyId) ||
+  normalizeCreativeFamilyId(`${spreadsheetId}::${sourceSheetName}::row-${rowNumber}`);
+
 const buildRowSummary = (counts, creativeIds, notes) => {
   if (counts.stored > 0) return { status: 'Stored', creativeIds: creativeIds.join(', '), notes: notes.join('; ') };
   if (counts.alreadyStored > 0) return { status: 'Already stored', creativeIds: creativeIds.join(', '), notes: notes.join('; ') };
@@ -1269,6 +1290,16 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       columnIndexes.plazas !== undefined
         ? getCellText(cells[columnIndexes.plazas])
         : '';
+    const creativeFamilyRaw =
+      columnIndexes.creative_family_id !== undefined
+        ? getCellText(cells[columnIndexes.creative_family_id])
+        : '';
+    const creativeFamilyId = buildSourceCreativeFamilyId({
+      explicitFamilyId: creativeFamilyRaw,
+      spreadsheetId,
+      sourceSheetName,
+      rowNumber,
+    });
     const category = resolveCreativeCategory({
       explicitCategory: categoryRaw,
       cells,
@@ -1392,6 +1423,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           status: 'available',
           category,
           source_sheet_id: spreadsheetId,
+          creative_family_id: creativeFamilyId,
           source_tab: sourceSheetName,
           source_row: String(rowNumber),
           source_cell: sourceCell,
@@ -1431,7 +1463,15 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           new_asset_resource_name: '',
           status: 'success',
           message: `Stored ${sourceSheetName}!${sourceCell}`,
-          payload_json: { rowNumber, sourceCell, resizedImageUrl, driveUrl, aspectRatio, imageResolution: imageResolutionText },
+          payload_json: {
+            rowNumber,
+            sourceCell,
+            resizedImageUrl,
+            driveUrl,
+            aspectRatio,
+            imageResolution: imageResolutionText,
+            creativeFamilyId,
+          },
         });
       } catch (error) {
         rowCounts.storageFailed += 1;

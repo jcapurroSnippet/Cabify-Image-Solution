@@ -43,6 +43,7 @@ export const CREATIVE_CATEGORIES_HEADERS = [
 export const SOURCE_STATUS_COLUMNS = [
   'category',
   'plazas',
+  'creative_family_id',
   'storage_status',
   'creative_ids',
   'google_ads_status',
@@ -54,6 +55,7 @@ export const CREATIVE_LIBRARY_HEADERS = [
   'status',
   'category',
   'plazas',
+  'creative_family_id',
   'source_sheet_id',
   'source_tab',
   'source_row',

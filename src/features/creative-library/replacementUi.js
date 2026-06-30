@@ -249,7 +249,7 @@ export const describeReplacementStatus = (operation) => {
   if (operation?.message === 'NO_AVAILABLE_META_CREATIVE_SET') {
     return {
       label: 'Missing Meta family',
-      description: operation.blockedMessage || 'Meta needs a complete family for the selected creative: matching ratios from the same set.',
+      description: operation.blockedMessage || 'Meta needs matching ratios with the same creative_family_id.',
       tone: 'warning',
     };
   }
