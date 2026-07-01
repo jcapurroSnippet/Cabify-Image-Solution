@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildMetaImageHashByAssetKeyForRatios,
   buildMetaCreativeClonePayload,
   collectMetaLowPerformerAssets,
   formatMetaGraphErrorMessage,
@@ -228,6 +229,69 @@ test('builds Meta dynamic creative payload by replacing only the selected image 
   assert.equal(creative.asset_feed_spec.images[1].hash, 'low-hash');
 });
 
+test('matches Meta dynamic creative images by placement rules when image URLs are absent', async () => {
+  const creative = {
+    id: 'creative-dynamic',
+    object_story_spec: { page_id: 'page-1' },
+    asset_feed_spec: {
+      images: [
+        { hash: 'square-hash', adlabels: [{ id: 'label-square', name: 'square' }] },
+        { hash: 'story-hash', adlabels: [{ id: 'label-story', name: 'story' }] },
+        { hash: 'search-hash', adlabels: [{ id: 'label-search', name: 'search' }] },
+      ],
+      asset_customization_rules: [
+        {
+          image_label: { id: 'label-story', name: 'story' },
+          customization_spec: {
+            publisher_platforms: ['facebook', 'instagram', 'messenger'],
+            facebook_positions: ['story', 'facebook_reels'],
+            instagram_positions: ['story', 'reels'],
+            messenger_positions: ['story'],
+          },
+          priority: 1,
+        },
+        {
+          image_label: { id: 'label-search', name: 'search' },
+          customization_spec: {
+            publisher_platforms: ['facebook'],
+            facebook_positions: ['search'],
+          },
+          priority: 2,
+        },
+        {
+          image_label: { id: 'label-square', name: 'square' },
+          customization_spec: {},
+          priority: 3,
+        },
+      ],
+    },
+  };
+
+  const imageHashByAssetKey = await buildMetaImageHashByAssetKeyForRatios({
+    creative,
+    replacementImageHashByRatio: {
+      '1:1': 'new-square-hash',
+      '9:16': 'new-story-hash',
+      '1.91:1': 'new-search-hash',
+    },
+  });
+
+  assert.deepEqual(imageHashByAssetKey, {
+    'square-hash': 'new-square-hash',
+    'story-hash': 'new-story-hash',
+    'search-hash': 'new-search-hash',
+  });
+
+  const payload = buildMetaCreativeClonePayload(creative, 'new-square-hash', 'Replacement Creative', {
+    imageHashByAssetKey,
+  });
+
+  assert.deepEqual(
+    payload.asset_feed_spec.images.map((image) => image.hash),
+    ['new-square-hash', 'new-story-hash', 'new-search-hash'],
+  );
+});
+
 test('collects Meta low performers with at least 30 running days by lowest impressions', async () => {
   const calls = [];
   const graphGetImpl = async (endpoint, params) => {
@@ -433,6 +497,80 @@ test('does not use generic Meta creative image URL for hash-only dynamic image a
   assert.equal(assets[0].assetPreviewUrl, 'https://example.com/thumbnail.jpg');
   assert.equal(assets[0].imageResolution, '');
   assert.deepEqual(resolvedUrls, []);
+});
+
+test('keeps Meta dynamic creatives replaceable when insight image hash is stale', async () => {
+  const graphGetImpl = async (endpoint) => {
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          {
+            ad_id: 'ad-1',
+            impressions: '100',
+            clicks: '10',
+            spend: '10',
+            image_asset: { hash: 'stale-insight-hash' },
+          },
+        ],
+      };
+    }
+    if (endpoint === '/ad-1') {
+      return {
+        id: 'ad-1',
+        name: 'Dynamic image ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo' },
+        },
+        creative: {
+          id: 'creative-dynamic',
+          name: 'Dynamic Creative',
+          thumbnail_url: 'https://example.com/thumbnail.jpg',
+          object_story_spec: { page_id: 'page-1' },
+          asset_feed_spec: {
+            images: [
+              { hash: 'square-hash', adlabels: [{ id: 'label-square' }] },
+              { hash: 'story-hash', adlabels: [{ id: 'label-story' }] },
+              { hash: 'search-hash', adlabels: [{ id: 'label-search' }] },
+            ],
+            asset_customization_rules: [
+              { image_label: { id: 'label-square' }, customization_spec: {}, priority: 3 },
+              {
+                image_label: { id: 'label-story' },
+                customization_spec: { facebook_positions: ['story'], instagram_positions: ['reels'] },
+                priority: 1,
+              },
+              {
+                image_label: { id: 'label-search' },
+                customization_spec: { facebook_positions: ['search'] },
+                priority: 2,
+              },
+            ],
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => {
+      throw new Error('No image URL should be resolved for stale hash');
+    },
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].assetId, 'stale-insight-hash');
+  assert.equal(assets[0].assetPreviewUrl, 'https://example.com/thumbnail.jpg');
+  assert.equal(assets[0].supportedReplacement, true);
+  assert.equal(assets[0].replacementSupportReason, null);
 });
 
 test('collects only Meta image low performers and skips video thumbnails', async () => {

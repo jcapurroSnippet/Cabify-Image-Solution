@@ -215,6 +215,63 @@ const getMetaAssetFeedImageUrl = (imageAsset = {}) =>
   imageAsset?.image_url ||
   '';
 
+const getMetaLabelKeys = (label = {}) =>
+  [label.id, label.name]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+const getMetaImageAssetLabelKeys = (imageAsset = {}) => {
+  const labels = [
+    ...(Array.isArray(imageAsset.adlabels) ? imageAsset.adlabels : []),
+    ...(Array.isArray(imageAsset.ad_labels) ? imageAsset.ad_labels : []),
+  ];
+  return labels.flatMap(getMetaLabelKeys);
+};
+
+const getMetaImageCustomizationRules = (creative = {}, imageAsset = {}) => {
+  const labelKeys = new Set(getMetaImageAssetLabelKeys(imageAsset));
+  if (labelKeys.size === 0) return [];
+
+  const rules = Array.isArray(creative.asset_feed_spec?.asset_customization_rules)
+    ? creative.asset_feed_spec.asset_customization_rules
+    : [];
+  return rules.filter((rule) =>
+    getMetaLabelKeys(rule?.image_label).some((labelKey) => labelKeys.has(labelKey)),
+  );
+};
+
+const listMetaCustomizationPositions = (customizationSpec = {}) => [
+  ...(Array.isArray(customizationSpec.facebook_positions) ? customizationSpec.facebook_positions : []),
+  ...(Array.isArray(customizationSpec.instagram_positions) ? customizationSpec.instagram_positions : []),
+  ...(Array.isArray(customizationSpec.messenger_positions) ? customizationSpec.messenger_positions : []),
+  ...(Array.isArray(customizationSpec.audience_network_positions) ? customizationSpec.audience_network_positions : []),
+].map((position) => String(position || '').toLowerCase());
+
+const inferMetaAspectRatioFromCustomizationRules = (rules = []) => {
+  let hasDefaultRule = false;
+
+  for (const rule of rules) {
+    const customizationSpec = rule?.customization_spec || {};
+    const positions = listMetaCustomizationPositions(customizationSpec);
+    if (positions.length === 0) {
+      hasDefaultRule = true;
+      continue;
+    }
+
+    if (positions.some((position) => position.includes('story') || position.includes('reels'))) {
+      return '9:16';
+    }
+    if (positions.some((position) => position === 'search' || position.endsWith('_search'))) {
+      return '1.91:1';
+    }
+    if (positions.some((position) => position.includes('feed') || position === 'profile')) {
+      return '1:1';
+    }
+  }
+
+  return hasDefaultRule ? '1:1' : null;
+};
+
 const getSelectedMetaImageAssetKey = (creative = {}, imageAssetKey = '') => {
   const explicitKey = String(imageAssetKey || '').trim();
   if (explicitKey) return explicitKey;
@@ -283,10 +340,11 @@ export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => 
 
     const imageHashByAssetKey = normalizeMetaImageHashByAssetKey(options.imageHashByAssetKey);
     const replacementAssetKeys = Object.keys(imageHashByAssetKey);
+    const allowMultiImageReplacement = options.allowMultiImageReplacement === true;
     const selectedImageAssetKey = replacementAssetKeys.length > 0
       ? replacementAssetKeys[0]
       : getSelectedMetaImageAssetKey(creative, options.selectedImageAssetKey);
-    if (!selectedImageAssetKey) {
+    if (!selectedImageAssetKey && !allowMultiImageReplacement) {
       return {
         supported: false,
         reason: 'META_IMAGE_ASSET_NOT_SELECTED',
@@ -295,7 +353,10 @@ export const isSafeMetaCreativeForImageClone = (creative = {}, options = {}) => 
     }
 
     const missingAssetKey = replacementAssetKeys.find((assetKey) => !findMetaAssetFeedImage(creative, assetKey));
-    if (missingAssetKey || !findMetaAssetFeedImage(creative, selectedImageAssetKey)) {
+    if (
+      missingAssetKey ||
+      (selectedImageAssetKey && !findMetaAssetFeedImage(creative, selectedImageAssetKey))
+    ) {
       return {
         supported: false,
         reason: 'META_IMAGE_ASSET_NOT_FOUND',
@@ -487,9 +548,12 @@ export const normalizeMetaLowPerformerAd = ({
   const previewUrl = getMetaCreativeImageAssetPreviewUrl(creative, effectiveImageAssetKey);
   const width = parseNumber(imageResolution.width);
   const height = parseNumber(imageResolution.height);
-  const safety = isSafeMetaCreativeForImageClone(creative, {
-    selectedImageAssetKey: effectiveImageAssetKey,
-  });
+  const safety = isSafeMetaCreativeForImageClone(
+    creative,
+    selectedImageAsset
+      ? { selectedImageAssetKey: effectiveImageAssetKey }
+      : { allowMultiImageReplacement: true },
+  );
   const hasRealImageUrl = Boolean(imageUrl);
   const assetId = effectiveImageAssetKey || creativeId;
 
@@ -862,14 +926,20 @@ const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace }) => {
   return imageHash;
 };
 
-const resolveMetaImageAssetRatio = async (imageAsset = {}) => {
+const resolveMetaImageAssetRatio = async (creative = {}, imageAsset = {}) => {
   const imageUrl = getMetaAssetFeedImageUrl(imageAsset);
-  if (!imageUrl) return null;
-  const resolution = await resolveImageResolution(imageUrl);
-  return normalizeAspectRatio(classifyAspectRatio(resolution));
+  if (imageUrl) {
+    const resolution = await resolveImageResolution(imageUrl);
+    const ratio = normalizeAspectRatio(classifyAspectRatio(resolution));
+    if (ratio) return ratio;
+  }
+
+  return normalizeAspectRatio(
+    inferMetaAspectRatioFromCustomizationRules(getMetaImageCustomizationRules(creative, imageAsset)),
+  );
 };
 
-const buildMetaImageHashByAssetKeyForRatios = async ({
+export const buildMetaImageHashByAssetKeyForRatios = async ({
   creative,
   replacementImageHashByRatio,
   selectedImageAssetKey,
@@ -888,7 +958,7 @@ const buildMetaImageHashByAssetKeyForRatios = async ({
     const imageAssetKey = getMetaImageAssetKey(image);
     if (!imageAssetKey) continue;
 
-    const imageRatio = await resolveMetaImageAssetRatio(image);
+    const imageRatio = await resolveMetaImageAssetRatio(creative, image);
     const replacementHash = normalizedReplacementHashes[imageRatio];
     if (!replacementHash) continue;
 
