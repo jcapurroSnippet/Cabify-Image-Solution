@@ -51,6 +51,22 @@ export const buildDriveFileUrl = (fileId) => {
   return cleanFileId ? `https://drive.google.com/file/d/${cleanFileId}/view` : '';
 };
 
+export const extractDriveFileId = (url) => {
+  const text = normalizeUrl(url) || String(url || '').trim();
+  if (!text) return '';
+
+  let match = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  match = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  match = text.match(/\/uc\?id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  return '';
+};
+
 export const getCreativeDriveUrl = (creative = {}) => {
   const driveFileId = String(creative.drive_file_id || '').trim();
   if (driveFileId) return buildDriveFileUrl(driveFileId);

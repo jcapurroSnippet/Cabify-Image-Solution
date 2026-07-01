@@ -15,6 +15,7 @@ import {
   dataUrlToBuffer,
   detectCategoryFromName,
   detectPlazasFromName,
+  extractDriveFileId,
   extractUrlFromFormula,
   getCellText,
   getCellUrl,
@@ -1592,11 +1593,25 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
 
       try {
         const sourceKey = `${spreadsheetId}:${sourceSheetName}:${rowNumber}:${sourceCell}`;
+        const sourceDriveFileId = extractDriveFileId(resizedImageUrl);
         const duplicateByUrl = existing.byUrl.get(resizedImageUrl);
         const duplicateBySource = existing.bySourceCell.get(sourceKey);
 
         if (duplicateByUrl || duplicateBySource) {
           const duplicate = duplicateByUrl || duplicateBySource;
+          if (
+            sourceDriveFileId &&
+            duplicate.__rowNumber &&
+            (String(duplicate.drive_file_id || '').trim() !== sourceDriveFileId ||
+              getUrlFromSheetValue(duplicate.drive_url) !== resizedImageUrl)
+          ) {
+            await updateLibraryRow(spreadsheetId, duplicate.__rowNumber, {
+              drive_file_id: sourceDriveFileId,
+              drive_url: resizedImageUrl,
+            });
+            duplicate.drive_file_id = sourceDriveFileId;
+            duplicate.drive_url = resizedImageUrl;
+          }
           rowCounts.alreadyStored += 1;
           totals.alreadyStored += 1;
           if (duplicate.creative_id) creativeIds.push(duplicate.creative_id);
@@ -1612,6 +1627,19 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
         const duplicateByHash = existing.byHash.get(imageHash);
 
         if (duplicateByHash) {
+          if (
+            sourceDriveFileId &&
+            duplicateByHash.__rowNumber &&
+            (String(duplicateByHash.drive_file_id || '').trim() !== sourceDriveFileId ||
+              getUrlFromSheetValue(duplicateByHash.drive_url) !== resizedImageUrl)
+          ) {
+            await updateLibraryRow(spreadsheetId, duplicateByHash.__rowNumber, {
+              drive_file_id: sourceDriveFileId,
+              drive_url: resizedImageUrl,
+            });
+            duplicateByHash.drive_file_id = sourceDriveFileId;
+            duplicateByHash.drive_url = resizedImageUrl;
+          }
           rowCounts.alreadyStored += 1;
           totals.alreadyStored += 1;
           if (duplicateByHash.creative_id) creativeIds.push(duplicateByHash.creative_id);
@@ -1619,11 +1647,16 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
         }
 
         const creativeId = buildCreativeId(category);
-        const categoryFolderId = await getOrCreateCategoryFolder(categoryFolderCache, category, config);
-        const extension = getExtensionForMimeType(mimeType);
-        const fileName = `${creativeId}_${sanitizeFileName(sourceSheetName)}_${sourceCell}.${extension}`;
-        const upload = await uploadBufferToDrive(buffer, fileName, mimeType, categoryFolderId);
-        const driveUrl = await makeFilePublic(upload.fileId);
+        let driveFileId = sourceDriveFileId;
+        let driveUrl = sourceDriveFileId ? resizedImageUrl : '';
+        if (!sourceDriveFileId) {
+          const categoryFolderId = await getOrCreateCategoryFolder(categoryFolderCache, category, config);
+          const extension = getExtensionForMimeType(mimeType);
+          const fileName = `${creativeId}_${sanitizeFileName(sourceSheetName)}_${sourceCell}.${extension}`;
+          const upload = await uploadBufferToDrive(buffer, fileName, mimeType, categoryFolderId);
+          driveFileId = upload.fileId;
+          driveUrl = await makeFilePublic(upload.fileId);
+        }
         const createdAt = nowIso();
 
         const libraryRow = {
@@ -1636,7 +1669,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
           source_row: String(rowNumber),
           source_cell: sourceCell,
           resized_image_url: resizedImageUrl,
-          drive_file_id: upload.fileId,
+          drive_file_id: driveFileId,
           drive_url: driveUrl,
           aspect_ratio: aspectRatio || '',
           image_resolution: imageResolutionText,
@@ -1676,6 +1709,8 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
             sourceCell,
             resizedImageUrl,
             driveUrl,
+            driveFileId,
+            storageMode: sourceDriveFileId ? 'source_drive_file' : 'uploaded_drive_copy',
             aspectRatio,
             imageResolution: imageResolutionText,
             creativeFamilyId,

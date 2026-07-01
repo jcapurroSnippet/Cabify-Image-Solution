@@ -6,6 +6,7 @@ import {
   classifyBackgroundColor,
   detectCategoryFromName,
   detectPlazasFromName,
+  extractDriveFileId,
   getCreativeDriveUrl,
   isGoogleLowPerformanceLabel,
   isImageAssetFieldType,
@@ -45,6 +46,17 @@ test('uses drive_file_id before visible Drive URL for creative downloads', () =>
       drive_url: 'https://drive.google.com/file/d/broken-visible-id/view',
     }),
     'https://drive.google.com/file/d/1ExactDriveFileId_AbC/view',
+  );
+});
+
+test('extracts Drive file ids without changing case or similar characters', () => {
+  assert.equal(
+    extractDriveFileId('https://drive.google.com/file/d/1XMt5xcIDSEISsIXG7TbUaUsrys7NxlO4/view?usp=sharing'),
+    '1XMt5xcIDSEISsIXG7TbUaUsrys7NxlO4',
+  );
+  assert.equal(
+    extractDriveFileId('https://drive.google.com/open?id=1ExactDriveFileId_AbC&usp=drive_copy'),
+    '1ExactDriveFileId_AbC',
   );
 });
 
