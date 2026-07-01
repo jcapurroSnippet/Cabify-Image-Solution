@@ -106,6 +106,35 @@ const buildReplacementImageLoadError = ({ error, creativeId, creativeUrl, aspect
   return wrapped;
 };
 
+export const getAppliedMetaReplacementCreatives = ({
+  reservedCreatives = [],
+  replacement = {},
+  operation = {},
+  selectedCreativeId = '',
+}) => {
+  const appliedRatios = new Set(
+    (replacement.appliedReplacementRatios || [])
+      .map((ratio) => normalizeAspectRatio(ratio))
+      .filter(Boolean),
+  );
+  const fallbackRatio = normalizeAspectRatio(operation.requiredAspectRatio || operation.creative?.aspect_ratio);
+  if (appliedRatios.size === 0 && fallbackRatio) appliedRatios.add(fallbackRatio);
+
+  const selectedId = String(selectedCreativeId || operation.creative?.creative_id || '').trim();
+  if (appliedRatios.size === 0 && selectedId) {
+    return reservedCreatives.filter((creative) => String(creative.creative_id || '').trim() === selectedId);
+  }
+
+  const matchedCreatives = reservedCreatives.filter((creative) =>
+    appliedRatios.has(normalizeAspectRatio(creative.aspect_ratio)),
+  );
+  if (matchedCreatives.length > 0) return matchedCreatives;
+
+  return selectedId
+    ? reservedCreatives.filter((creative) => String(creative.creative_id || '').trim() === selectedId)
+    : [];
+};
+
 const getConfigForReplacement = async (sheetsUrl) => {
   if (!sheetsUrl) return getCreativeLibraryConfig();
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
@@ -563,8 +592,16 @@ export const executeMetaReplacements = async ({
         { replacementImageDataUrlsByRatio },
       );
       const replacementResourceName = replacement.newCreativeId || replacement.assetResourceName || '';
+      const usedCreatives = getAppliedMetaReplacementCreatives({
+        reservedCreatives,
+        replacement,
+        operation,
+        selectedCreativeId: creativeId,
+      });
+      const usedCreativeIds = new Set(usedCreatives.map((creative) => String(creative.creative_id)));
+      const unusedCreatives = reservedCreatives.filter((creative) => !usedCreativeIds.has(String(creative.creative_id)));
 
-      for (const reserved of reservedCreatives) {
+      for (const reserved of usedCreatives) {
         await markCreativeUsed(spreadsheetId, reserved.creative_id, {
           adsPlatform: 'meta',
           adsResourceName: replacementResourceName,
@@ -572,6 +609,15 @@ export const executeMetaReplacements = async ({
           notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
         });
       }
+      await Promise.all(
+        unusedCreatives.map((reserved) =>
+          releaseCreativeReservation(
+            spreadsheetId,
+            reserved.creative_id,
+            `Reserved for ${operation.id}, but not applied to the Meta creative.`,
+          ),
+        ),
+      );
 
       await appendAuditLog(spreadsheetId, [
         {
@@ -592,8 +638,11 @@ export const executeMetaReplacements = async ({
             replacement,
             replacementImageResolution,
             imageAspectRatioValidation,
-            replacementImageRatios: Object.keys(replacementImageDataUrlsByRatio),
-            replacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
+            replacementImageRatios: replacement.replacementImageRatios || Object.keys(replacementImageDataUrlsByRatio),
+            appliedReplacementRatios: replacement.appliedReplacementRatios || [],
+            replacementCreativeIds: usedCreatives.map((reserved) => reserved.creative_id),
+            reservedReplacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
+            unusedReplacementCreativeIds: unusedCreatives.map((reserved) => reserved.creative_id),
           },
         },
       ]);
@@ -604,8 +653,11 @@ export const executeMetaReplacements = async ({
         executionStatus: 'success',
         replacementImageResolution: formatResolution(replacementImageResolution),
         replacementAspectRatio: imageAspectRatioValidation?.replacementAspectRatio || null,
-        replacementImageRatios: Object.keys(replacementImageDataUrlsByRatio),
-        replacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
+        replacementImageRatios: replacement.replacementImageRatios || Object.keys(replacementImageDataUrlsByRatio),
+        appliedReplacementRatios: replacement.appliedReplacementRatios || [],
+        replacementCreativeIds: usedCreatives.map((reserved) => reserved.creative_id),
+        reservedReplacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
+        unusedReplacementCreativeIds: unusedCreatives.map((reserved) => reserved.creative_id),
         replacement,
       });
     } catch (error) {

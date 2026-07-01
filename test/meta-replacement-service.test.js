@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildMetaTargetCategoryName,
+  getAppliedMetaReplacementCreatives,
   getMetaReplacementFamilyCreatives,
 } from '../server/services/metaReplacementService.js';
 
@@ -28,5 +29,27 @@ test('uses selected Meta creative plus its family ratios for replacement', () =>
   assert.deepEqual(
     family.map((creative) => creative.creative_id),
     ['creative-1x1', 'creative-9x16', 'creative-191x1'],
+  );
+});
+
+test('marks only Meta family creatives whose ratios were actually applied', () => {
+  const applied = getAppliedMetaReplacementCreatives({
+    operation: {
+      requiredAspectRatio: '1.91:1',
+      creative: { creative_id: 'creative-191x1', aspect_ratio: '1.91:1' },
+    },
+    replacement: {
+      appliedReplacementRatios: ['1.91:1'],
+    },
+    reservedCreatives: [
+      { creative_id: 'creative-1x1', aspect_ratio: '1:1' },
+      { creative_id: 'creative-9x16', aspect_ratio: '9:16' },
+      { creative_id: 'creative-191x1', aspect_ratio: '1.91:1' },
+    ],
+  });
+
+  assert.deepEqual(
+    applied.map((creative) => creative.creative_id),
+    ['creative-191x1'],
   );
 });

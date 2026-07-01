@@ -981,6 +981,26 @@ export const buildMetaImageHashByAssetKeyForRatios = async ({
   return {};
 };
 
+const getAppliedReplacementRatios = (imageHashByAssetKey = {}, replacementImageHashByRatio = {}, fallbackRatio = '') => {
+  const ratioByHash = new Map(
+    Object.entries(replacementImageHashByRatio || {})
+      .map(([ratio, hash]) => [String(hash || '').trim(), normalizeAspectRatio(ratio)])
+      .filter(([hash, ratio]) => hash && ratio),
+  );
+  const appliedRatios = [
+    ...new Set(
+      Object.values(imageHashByAssetKey || {})
+        .map((hash) => ratioByHash.get(String(hash || '').trim()))
+        .filter(Boolean),
+    ),
+  ];
+
+  if (appliedRatios.length > 0) return appliedRatios;
+
+  const fallback = normalizeAspectRatio(fallbackRatio);
+  return fallback ? [fallback] : [];
+};
+
 export const replaceAdCreativeFromOperation = async (adAccountId, operation, newImageDataUrl, options = {}) => {
   const metaAdsTrace = [];
 
@@ -1015,6 +1035,11 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
     replacementImageHashByRatio,
     selectedImageAssetKey: operation.selectedMetaImageAssetKey,
   });
+  const appliedReplacementRatios = getAppliedReplacementRatios(
+    imageHashByAssetKey,
+    replacementImageHashByRatio,
+    operation.requiredAspectRatio,
+  );
   const creativePayload = buildMetaCreativeClonePayload(
     existingCreative,
     imageHash,
@@ -1074,6 +1099,9 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
     imageHash,
     assetResourceName: newCreativeId,
     updatedAdResourceName: operation.adId,
+    imageHashByAssetKey,
+    replacementImageRatios: Object.keys(replacementImageHashByRatio),
+    appliedReplacementRatios,
     metaAdsTrace,
   };
 };
