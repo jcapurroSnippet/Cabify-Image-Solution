@@ -99,18 +99,15 @@ const valuesToObjects = (values) => {
 
 const objectToRow = (headers, object) => headers.map((header) => object[header] ?? '');
 
-const LIBRARY_HYPERLINK_COLUMNS = [
-  { header: 'resized_image_url', label: 'Source image' },
-  { header: 'drive_url', label: 'Drive file' },
+const LIBRARY_URL_COLUMNS = [
+  { header: 'resized_image_url' },
+  { header: 'drive_url' },
 ];
 
-const escapeFormulaString = (value) => String(value || '').replace(/"/g, '""');
-
-const buildHyperlinkFormula = (url, label) =>
-  `=HYPERLINK("${escapeFormulaString(url)}","${escapeFormulaString(label)}")`;
-
-const getUrlFromSheetValue = (value) =>
+export const getUrlFromSheetValue = (value) =>
   extractUrlFromFormula(value) || normalizeUrl(value) || '';
+
+export const formatLibraryUrlCell = (value) => getUrlFromSheetValue(value) || value || '';
 
 export const formatLibraryAspectRatioCell = (value) =>
   value
@@ -121,17 +118,16 @@ export const formatLibraryAspectRatioCell = (value) =>
 
 const objectToLibraryRow = (object) =>
   CREATIVE_LIBRARY_HEADERS.map((header) => {
-    const hyperlinkColumn = LIBRARY_HYPERLINK_COLUMNS.find((column) => column.header === header);
+    const urlColumn = LIBRARY_URL_COLUMNS.find((column) => column.header === header);
     const value = object[header] ?? '';
     if (header === 'aspect_ratio') return formatLibraryAspectRatioCell(value);
-    if (!hyperlinkColumn) return value;
+    if (!urlColumn) return value;
 
-    const url = getUrlFromSheetValue(value);
-    return url ? buildHyperlinkFormula(url, hyperlinkColumn.label) : value;
+    return formatLibraryUrlCell(value);
   });
 
 const normalizeLibraryLinkFields = (row) => {
-  for (const { header } of LIBRARY_HYPERLINK_COLUMNS) {
+  for (const { header } of LIBRARY_URL_COLUMNS) {
     const url = getUrlFromSheetValue(row[header]);
     if (url) row[header] = url;
   }
@@ -786,11 +782,11 @@ const appendLibraryRows = async (sheets, spreadsheetId, rows) => {
   });
 };
 
-const formatLibraryHyperlinkColumns = async (sheets, spreadsheetId, libraryRows) => {
+const formatLibraryUrlColumns = async (sheets, spreadsheetId, libraryRows) => {
   const updates = [];
 
   for (const row of libraryRows) {
-    for (const { header, label } of LIBRARY_HYPERLINK_COLUMNS) {
+    for (const { header } of LIBRARY_URL_COLUMNS) {
       const columnIndex = CREATIVE_LIBRARY_HEADERS.indexOf(header);
       if (columnIndex < 0) continue;
 
@@ -799,7 +795,7 @@ const formatLibraryHyperlinkColumns = async (sheets, spreadsheetId, libraryRows)
 
       updates.push({
         range: buildRange(CREATIVE_LIBRARY_SHEET, `${columnIndexToLetter(columnIndex)}${row.__rowNumber}`),
-        values: [[buildHyperlinkFormula(url, label)]],
+        values: [[url]],
       });
       row[header] = url;
     }
@@ -810,7 +806,7 @@ const formatLibraryHyperlinkColumns = async (sheets, spreadsheetId, libraryRows)
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: {
-      valueInputOption: 'USER_ENTERED',
+      valueInputOption: 'RAW',
       data: updates,
     },
   });
@@ -1370,7 +1366,7 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, creatives, config);
   await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, creatives);
   await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, creatives);
-  await formatLibraryHyperlinkColumns(sheets, spreadsheetId, creatives);
+  await formatLibraryUrlColumns(sheets, spreadsheetId, creatives);
   const byCategory = {};
   const byStatus = {};
 
@@ -1448,7 +1444,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, libraryRows, config);
   await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, libraryRows);
   await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, libraryRows);
-  await formatLibraryHyperlinkColumns(sheets, spreadsheetId, libraryRows);
+  await formatLibraryUrlColumns(sheets, spreadsheetId, libraryRows);
   const existing = getExistingLibraryIndexes(libraryRows);
   const categoryFolderCache = new Map();
   const sourceUpdates = [];

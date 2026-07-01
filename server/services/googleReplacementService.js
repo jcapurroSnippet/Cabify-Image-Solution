@@ -4,6 +4,7 @@ import {
   detectCategoryFromName,
   detectPlazasFromName,
   describeGoogleReplacementCapability,
+  getCreativeDriveUrl,
   normalizeGoogleReplacementMode,
   normalizeCategory,
   requiresNewAdCreationPermission,
@@ -255,7 +256,8 @@ export const buildGoogleReplacementPlan = async ({
         creative_id: creative.creative_id,
         category: creative.category,
         plazas: creative.plazas || '',
-        drive_url: creative.drive_url,
+        drive_file_id: creative.drive_file_id || '',
+        drive_url: getCreativeDriveUrl(creative) || creative.drive_url,
         aspect_ratio: creative.aspect_ratio || '',
         image_resolution: creative.image_resolution || '',
         created_at: creative.created_at,
@@ -428,7 +430,7 @@ export const executeGoogleReplacements = async ({
 
     try {
       const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id, 'google');
-      const creativeUrl = reserved.drive_url || operation.creative.drive_url;
+      const creativeUrl = getCreativeDriveUrl(reserved) || getCreativeDriveUrl(operation.creative);
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
       const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
       const imageAspectRatioValidation = assertReplacementImageAspectRatio({

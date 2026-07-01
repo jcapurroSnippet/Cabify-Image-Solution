@@ -27,6 +27,7 @@ export interface CreativeLibraryItem {
   source_tab: string;
   source_row: string;
   source_cell: string;
+  drive_file_id?: string;
   drive_url: string;
   aspect_ratio?: string;
   image_resolution?: string;
@@ -186,6 +187,7 @@ export interface ReplacementOperation {
     category: string;
     plazas?: string;
     creative_family_id?: string;
+    drive_file_id?: string;
     drive_url: string;
     aspect_ratio?: string;
     image_resolution?: string;

@@ -11,6 +11,7 @@ import {
 import {
   detectCategoryFromName,
   detectPlazasFromName,
+  getCreativeDriveUrl,
   normalizeCategory,
   selectCreativeSetForCategoryRatios,
 } from './creativeLibraryCore.js';
@@ -136,7 +137,7 @@ const buildReplacementImageDataUrlsByRatio = async (familyCreatives, reservedCre
     if (!creativeId) continue;
 
     const reserved = reservedCreativesById.get(creativeId) || {};
-    const creativeUrl = reserved.drive_url || familyCreative.drive_url;
+    const creativeUrl = getCreativeDriveUrl(reserved) || getCreativeDriveUrl(familyCreative);
     let imageDataUrl;
     try {
       imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
@@ -387,7 +388,8 @@ export const buildMetaReplacementPlan = async ({
         category: familyCreative.category,
         plazas: familyCreative.plazas || '',
         creative_family_id: familyCreative.creative_family_id || '',
-        drive_url: familyCreative.drive_url,
+        drive_file_id: familyCreative.drive_file_id || '',
+        drive_url: getCreativeDriveUrl(familyCreative) || familyCreative.drive_url,
         aspect_ratio: familyCreative.aspect_ratio || '',
         image_resolution: familyCreative.image_resolution || '',
         created_at: familyCreative.created_at,
@@ -397,7 +399,8 @@ export const buildMetaReplacementPlan = async ({
         category: creative.category,
         plazas: creative.plazas || '',
         creative_family_id: creative.creative_family_id || '',
-        drive_url: creative.drive_url,
+        drive_file_id: creative.drive_file_id || '',
+        drive_url: getCreativeDriveUrl(creative) || creative.drive_url,
         aspect_ratio: creative.aspect_ratio || '',
         image_resolution: creative.image_resolution || '',
         created_at: creative.created_at,

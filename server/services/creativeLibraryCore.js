@@ -17,25 +17,44 @@ export const normalizeHeader = (value) =>
 
 export const extractUrlFromFormula = (formula) => {
   if (typeof formula !== 'string') return null;
-  const match = formula.match(/HYPERLINK\(\s*["']([^"']+)["']/i);
-  return match ? match[1] : null;
+  const text = formula.trim();
+  if (!text.startsWith('=')) return null;
+
+  const quotedUrlMatch = text.match(/["'](https?:\/\/[^"']+)["']/i);
+  if (quotedUrlMatch) return quotedUrlMatch[1].replace(/""/g, '"');
+
+  const urlMatch = text.match(/https?:\/\/[^\s"',;)]+/i);
+  return urlMatch ? urlMatch[0] : null;
 };
+
+const trimUrlJunk = (value) => String(value || '').replace(/[)"',.;]+$/g, '');
 
 export const normalizeUrl = (value) => {
   if (typeof value !== 'string') return null;
   const text = value.trim();
   if (!text) return null;
 
-  if (/^https?:\/\//i.test(text)) return text;
-  if (/^(drive|docs)\.google\.com\//i.test(text) || /^www\./i.test(text)) return `https://${text}`;
+  if (/^https?:\/\//i.test(text)) return trimUrlJunk(text);
+  if (/^(drive|docs)\.google\.com\//i.test(text) || /^www\./i.test(text)) return `https://${trimUrlJunk(text)}`;
 
-  const httpMatch = text.match(/https?:\/\/\S+/i);
-  if (httpMatch) return httpMatch[0].replace(/[),.]+$/g, '');
+  const httpMatch = text.match(/https?:\/\/[^\s"')]+/i);
+  if (httpMatch) return trimUrlJunk(httpMatch[0]);
 
-  const googleMatch = text.match(/(?:drive|docs)\.google\.com\/\S+/i);
-  if (googleMatch) return `https://${googleMatch[0].replace(/[),.]+$/g, '')}`;
+  const googleMatch = text.match(/(?:drive|docs)\.google\.com\/[^\s"')]+/i);
+  if (googleMatch) return `https://${trimUrlJunk(googleMatch[0])}`;
 
   return null;
+};
+
+export const buildDriveFileUrl = (fileId) => {
+  const cleanFileId = String(fileId || '').trim();
+  return cleanFileId ? `https://drive.google.com/file/d/${cleanFileId}/view` : '';
+};
+
+export const getCreativeDriveUrl = (creative = {}) => {
+  const driveFileId = String(creative.drive_file_id || '').trim();
+  if (driveFileId) return buildDriveFileUrl(driveFileId);
+  return normalizeUrl(creative.drive_url) || '';
 };
 
 export const getCellText = (cell) => {

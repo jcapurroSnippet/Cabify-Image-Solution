@@ -6,6 +6,7 @@ import {
   classifyBackgroundColor,
   detectCategoryFromName,
   detectPlazasFromName,
+  getCreativeDriveUrl,
   isGoogleLowPerformanceLabel,
   isImageAssetFieldType,
   normalizeGoogleAdType,
@@ -35,6 +36,16 @@ test('classifies accepted and rejected sheet colors approximately', () => {
   assert.equal(classifyBackgroundColor(cellWithRgb(217 / 255, 234 / 255, 211 / 255), config), 'ACCEPTED');
   assert.equal(classifyBackgroundColor(cellWithRgb(244 / 255, 204 / 255, 204 / 255), config), 'REJECTED');
   assert.equal(classifyBackgroundColor(cellWithRgb(1, 1, 1), config), 'PENDING');
+});
+
+test('uses drive_file_id before visible Drive URL for creative downloads', () => {
+  assert.equal(
+    getCreativeDriveUrl({
+      drive_file_id: '1ExactDriveFileId_AbC',
+      drive_url: 'https://drive.google.com/file/d/broken-visible-id/view',
+    }),
+    'https://drive.google.com/file/d/1ExactDriveFileId_AbC/view',
+  );
 });
 
 test('detects category from mapped ad group text', () => {

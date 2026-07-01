@@ -5,6 +5,8 @@ import {
   buildSourceColumnIndex,
   findOutputColumns,
   formatLibraryAspectRatioCell,
+  formatLibraryUrlCell,
+  getUrlFromSheetValue,
   inferCreativeFamilyIdFromImageUrl,
   inferCreativeFamilyIdFromSourceRows,
   migrateRowsToHeaders,
@@ -100,6 +102,18 @@ test('formats aspect ratios as literal text for Google Sheets', () => {
   assert.equal(formatLibraryAspectRatioCell('1:1'), "'1:1");
   assert.equal(formatLibraryAspectRatioCell("'9:16"), "'9:16");
   assert.equal(formatLibraryAspectRatioCell(''), '');
+});
+
+test('keeps creative library Drive URLs exact instead of rewriting them as formulas', () => {
+  const driveUrl = 'https://drive.google.com/file/d/1XMt5xcIDSEISsIXG7TbUaUsrys7NxlO4/view';
+
+  assert.equal(formatLibraryUrlCell(driveUrl), driveUrl);
+  assert.equal(getUrlFromSheetValue(`=HYPERLINK("${driveUrl}","Drive file")`), driveUrl);
+  assert.equal(getUrlFromSheetValue(`=HIPERVINCULO("${driveUrl}";"Drive file")`), driveUrl);
+  assert.equal(
+    getUrlFromSheetValue(`Stored link: ${driveUrl},`),
+    driveUrl,
+  );
 });
 
 test('infers the same creative family from ratio-specific filenames', () => {
