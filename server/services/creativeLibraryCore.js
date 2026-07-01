@@ -243,18 +243,36 @@ export const detectPlazasFromName = (name, config = {}) => {
   };
 };
 
+const DEFAULT_CATEGORY_ALIASES = {
+  generic: ['generico', 'metodo de pago', 'seguridad', 'tiktok', 'mascota'],
+  promo: ['precio', 'atr'],
+  alianzas: ['alianza', 'alianzas'],
+};
+
+const getCategoryKeywords = (category, config = {}) => {
+  const categoryKey = normalizeComparableText(category);
+  const configuredMapping = config.categoryMapping || {};
+  const configuredKeywords =
+    configuredMapping[category] ||
+    configuredMapping[categoryKey] ||
+    configuredMapping[String(category || '').toLowerCase()] ||
+    [category];
+  const defaultKeywords = DEFAULT_CATEGORY_ALIASES[categoryKey] || [];
+
+  return [...new Set([...configuredKeywords, ...defaultKeywords])];
+};
+
 export const detectCategoryFromName = (name, config) => {
-  const text = String(name || '').toLowerCase();
+  const text = normalizeComparableText(name);
   if (!text.trim()) {
     return { category: null, matched: [], warning: null };
   }
 
   const matched = [];
   for (const category of config.categories) {
-    const categoryKey = String(category).toLowerCase();
-    const keywords = config.categoryMapping[category] || config.categoryMapping[categoryKey] || [category];
+    const keywords = getCategoryKeywords(category, config);
     const hasMatch = keywords.some((keyword) => {
-      const normalizedKeyword = String(keyword).toLowerCase().trim();
+      const normalizedKeyword = normalizeComparableText(keyword);
       if (!normalizedKeyword) return false;
       if (!/[a-z0-9]/i.test(normalizedKeyword)) return text.includes(normalizedKeyword);
 

@@ -111,6 +111,22 @@ test('detects beneficios ad set text as promo category', () => {
   assert.equal(result.warning, null);
 });
 
+test('detects Meta ad-name aliases for promo category', () => {
+  assert.equal(detectCategoryFromName('SI_PRECIO - IA', config).category, 'Promo');
+  assert.equal(detectCategoryFromName('AR_ATR_ALWAYS_ON', config).category, 'Promo');
+});
+
+test('detects Meta ad-name aliases for alianzas category', () => {
+  assert.equal(detectCategoryFromName('AR_ALIANZAS_BUE', config).category, 'Alianzas');
+});
+
+test('detects Meta ad-name aliases for generic category with accent-insensitive text', () => {
+  assert.equal(detectCategoryFromName('M\u00e9todo de pago - rider', config).category, 'Generic');
+  assert.equal(detectCategoryFromName('SEGURIDAD - IA', config).category, 'Generic');
+  assert.equal(detectCategoryFromName('TikTok always on', config).category, 'Generic');
+  assert.equal(detectCategoryFromName('Mascota - Gen\u00e9rico', config).category, 'Generic');
+});
+
 test('detects plaza codes from campaign text', () => {
   const result = detectPlazasFromName('AR | BUE | Partner | Always On', config);
   assert.equal(result.plazas, 'BUE');
