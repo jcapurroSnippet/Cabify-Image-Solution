@@ -1,8 +1,10 @@
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
 import {
   appendAuditLog,
+  filterRecentlyReplacedLowPerformers,
   getSpreadsheetIdFromLibraryInput,
   getCreativeLibrarySheetConfig,
+  listRecentlyReplacedTargetKeys,
   listCreativeLibrary,
   markCreativeUsed,
   releaseCreativeReservation,
@@ -205,12 +207,20 @@ const buildReplacementImageDataUrlsByRatio = async (familyCreatives, reservedCre
 export const getMetaLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
+  const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const assets = await getLowPerformingImageAssets(accountId, {
-    campaignIds: normalizeCampaignIds({ campaignId, campaignIds }),
+    campaignIds: selectedCampaignIds,
     limit,
   });
+  const recentlyReplacedTargetKeys = await listRecentlyReplacedTargetKeys({
+    sheetsUrl,
+    accountId,
+    campaignIds: selectedCampaignIds,
+    platform: 'meta',
+  });
+  const activeAssets = filterRecentlyReplacedLowPerformers(assets, recentlyReplacedTargetKeys);
 
-  return assets.map((asset) => {
+  return activeAssets.map((asset) => {
     const categoryMatch = buildCategoryMatch(asset, config);
     const plazasMatch = buildPlazasMatch(asset, config);
     return {

@@ -12,8 +12,10 @@ import {
 } from './creativeLibraryCore.js';
 import {
   appendAuditLog,
+  filterRecentlyReplacedLowPerformers,
   getSpreadsheetIdFromLibraryInput,
   getCreativeLibrarySheetConfig,
+  listRecentlyReplacedTargetKeys,
   listCreativeLibrary,
   markCreativeUsed,
   releaseCreativeReservation,
@@ -96,12 +98,20 @@ const getConfigForReplacement = async (sheetsUrl) => {
 export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
+  const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const assets = await getLowPerformingImageAssets(accountId, {
-    campaignIds: normalizeCampaignIds({ campaignId, campaignIds }),
+    campaignIds: selectedCampaignIds,
     limit,
   });
+  const recentlyReplacedTargetKeys = await listRecentlyReplacedTargetKeys({
+    sheetsUrl,
+    accountId,
+    campaignIds: selectedCampaignIds,
+    platform: 'google',
+  });
+  const activeAssets = filterRecentlyReplacedLowPerformers(assets, recentlyReplacedTargetKeys);
 
-  return assets.map((asset) => {
+  return activeAssets.map((asset) => {
     const categoryMatch = buildCategoryMatch(asset, config);
     const plazasMatch = buildPlazasMatch(asset, config);
     return {

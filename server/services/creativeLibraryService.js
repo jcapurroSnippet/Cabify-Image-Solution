@@ -43,6 +43,7 @@ import {
 } from './imageRatio.js';
 
 const DEFAULT_MAX_ROWS = Number(process.env.CREATIVE_LIBRARY_MAX_SCAN_ROWS || 500);
+const DEFAULT_REPLACEMENT_EXCLUSION_DAYS = Number(process.env.CREATIVE_REPLACEMENT_EXCLUSION_DAYS || 30);
 export const CREATIVE_LIBRARY_SYNC_LOG_PATH =
   process.env.CREATIVE_LIBRARY_SYNC_LOG_PATH ||
   path.join(process.env.TMP || process.env.TEMP || 'C:\\tmp', 'cabify-creative-library-sync.log');
@@ -99,6 +100,142 @@ const valuesToObjects = (values) => {
 };
 
 const objectToRow = (headers, object) => headers.map((header) => object[header] ?? '');
+
+const parseAuditPayload = (value) => {
+  if (!value || typeof value !== 'string') return {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+};
+
+const normalizeAuditText = (value) => String(value || '').trim();
+
+const normalizeAuditAccountId = (value) =>
+  normalizeAuditText(value).replace(/[^a-z0-9]/gi, '').toLowerCase();
+
+const normalizeAuditList = (value) => {
+  if (value === undefined || value === null || value === '') return [];
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values.map((item) => normalizeAuditText(item)).filter(Boolean))];
+};
+
+const inferAuditPlatform = (row = {}, payload = {}) => {
+  const explicitPlatform = normalizeAuditText(payload.platform).toLowerCase();
+  if (explicitPlatform) return explicitPlatform;
+
+  const operation = payload.operation || {};
+  const values = [
+    row.customer_id,
+    row.old_asset_resource_name,
+    row.new_asset_resource_name,
+    operation.customerId,
+    operation.accountId,
+    operation.adResourceName,
+    operation.associationResourceName,
+    operation.assetResourceName,
+    operation.oldAssetResourceName,
+  ].map((value) => normalizeAuditText(value));
+
+  if (values.some((value) => /^act_\d+/i.test(value))) return 'meta';
+  if (values.some((value) => value.startsWith('customers/'))) return 'google';
+  if (operation.metaCreative || operation.selectedMetaImageAssetKey) return 'meta';
+  if (operation.googleAdsUrl || operation.assetGroupId || operation.adGroupId) return 'google';
+
+  return '';
+};
+
+export const buildReplacementTargetKeys = (target = {}) => {
+  const keys = new Set();
+  const add = (prefix, value) => {
+    const text = normalizeAuditText(value);
+    if (text) keys.add(`${prefix}:${text}`);
+  };
+
+  add('ad', target.adId || target.ad_id);
+  add('ad_resource', target.adResourceName || target.ad_resource_name);
+  add('association', target.associationResourceName || target.association_resource_name);
+  add('asset_resource', target.oldAssetResourceName || target.assetResourceName || target.old_asset_resource_name);
+  add('asset_id', target.oldAssetId || target.assetId || target.asset_id);
+
+  return keys;
+};
+
+const getAuditReplacementTargetKeys = (row = {}) => {
+  const payload = parseAuditPayload(row.payload_json);
+  const operation = payload.operation || {};
+  const keys = new Set([
+    ...buildReplacementTargetKeys(operation),
+    ...buildReplacementTargetKeys({
+      adId: operation.adId,
+      adResourceName: operation.adResourceName,
+      associationResourceName: operation.associationResourceName,
+      oldAssetResourceName: row.old_asset_resource_name,
+      assetResourceName: operation.assetResourceName,
+      oldAssetId: operation.oldAssetId,
+      assetId: operation.assetId,
+    }),
+  ]);
+
+  return keys;
+};
+
+export const buildRecentlyReplacedTargetKeys = (
+  rows = [],
+  {
+    accountId = '',
+    campaignIds = [],
+    platform = '',
+    cooldownDays = DEFAULT_REPLACEMENT_EXCLUSION_DAYS,
+    now = new Date(),
+  } = {},
+) => {
+  const days = Number(cooldownDays);
+  if (!Number.isFinite(days) || days <= 0) return new Set();
+
+  const minTimestamp = now.getTime() - days * 24 * 60 * 60 * 1000;
+  const expectedAccountId = normalizeAuditAccountId(accountId);
+  const selectedCampaignIds = new Set(normalizeAuditList(campaignIds));
+  const expectedPlatform = normalizeAuditText(platform).toLowerCase();
+  const keys = new Set();
+
+  for (const row of rows || []) {
+    if (normalizeAuditText(row.event) !== 'ASSET_REPLACED') continue;
+    if (normalizeAuditText(row.status).toLowerCase() !== 'success') continue;
+
+    const timestamp = Date.parse(row.timestamp || '');
+    if (!Number.isFinite(timestamp) || timestamp < minTimestamp) continue;
+    if (expectedAccountId && normalizeAuditAccountId(row.customer_id) !== expectedAccountId) continue;
+    if (selectedCampaignIds.size > 0 && row.campaign_id && !selectedCampaignIds.has(normalizeAuditText(row.campaign_id))) {
+      continue;
+    }
+
+    const payload = parseAuditPayload(row.payload_json);
+    const payloadPlatform = inferAuditPlatform(row, payload);
+    if (expectedPlatform && payloadPlatform && payloadPlatform !== expectedPlatform) continue;
+
+    for (const key of getAuditReplacementTargetKeys(row)) keys.add(key);
+  }
+
+  return keys;
+};
+
+export const filterRecentlyReplacedLowPerformers = (assets = [], replacementTargetKeys = new Set()) => {
+  if (!replacementTargetKeys || replacementTargetKeys.size === 0) return assets;
+
+  return (assets || []).filter((asset) => {
+    const targetKeys = buildReplacementTargetKeys({
+      adId: asset.adId,
+      adResourceName: asset.adResourceName,
+      associationResourceName: asset.associationResourceName,
+      assetResourceName: asset.oldAssetResourceName || asset.assetResourceName,
+      assetId: asset.oldAssetId || asset.assetId,
+    });
+
+    return ![...targetKeys].some((key) => replacementTargetKeys.has(key));
+  });
+};
 
 const LIBRARY_URL_COLUMNS = [
   { header: 'resized_image_url' },
@@ -1205,6 +1342,37 @@ export const appendAuditLog = async (spreadsheetId, entries) => {
       ),
     },
   });
+};
+
+export const listRecentlyReplacedTargetKeys = async ({
+  sheetsUrl,
+  accountId = '',
+  campaignIds = [],
+  platform = '',
+  cooldownDays = DEFAULT_REPLACEMENT_EXCLUSION_DAYS,
+} = {}) => {
+  if (!sheetsUrl) return new Set();
+
+  try {
+    const spreadsheetId = extractSpreadsheetId(String(sheetsUrl).trim());
+    const sheets = await getSheetsClient();
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: buildRange(CREATIVE_AUDIT_SHEET, 'A:M'),
+    });
+
+    return buildRecentlyReplacedTargetKeys(response.data.values ? valuesToObjects(response.data.values) : [], {
+      accountId,
+      campaignIds,
+      platform,
+      cooldownDays,
+    });
+  } catch (error) {
+    writeSyncLog('warn', 'Could not read replacement audit log for low performer filtering', {
+      error: error?.message || String(error),
+    });
+    return new Set();
+  }
 };
 
 const getExistingLibraryIndexes = (libraryRows) => {

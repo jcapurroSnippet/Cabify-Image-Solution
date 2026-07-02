@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildRecentlyReplacedTargetKeys,
   buildSourceCreativeFamilyId,
   buildSourceColumnIndex,
+  filterRecentlyReplacedLowPerformers,
   findOutputColumns,
   formatLibraryAspectRatioCell,
   formatLibraryUrlCell,
@@ -114,6 +116,105 @@ test('keeps creative library Drive URLs exact instead of rewriting them as formu
     getUrlFromSheetValue(`Stored link: ${driveUrl},`),
     driveUrl,
   );
+});
+
+test('filters low performers recently replaced in the audit log', () => {
+  const replacementKeys = buildRecentlyReplacedTargetKeys(
+    [
+      {
+        timestamp: '2026-07-01T12:00:00.000Z',
+        event: 'ASSET_REPLACED',
+        status: 'success',
+        customer_id: 'act_123',
+        campaign_id: 'campaign-1',
+        old_asset_resource_name: 'old-hash',
+        payload_json: JSON.stringify({
+          platform: 'meta',
+          operation: {
+            adId: 'ad-1',
+            adResourceName: 'ad-1',
+            associationResourceName: 'ad-1',
+          },
+        }),
+      },
+    ],
+    {
+      accountId: 'act_123',
+      campaignIds: ['campaign-1'],
+      platform: 'meta',
+      now: new Date('2026-07-02T12:00:00.000Z'),
+      cooldownDays: 30,
+    },
+  );
+
+  const filtered = filterRecentlyReplacedLowPerformers(
+    [
+      { id: 'old-ad', adId: 'ad-1', assetResourceName: 'old-hash' },
+      { id: 'fresh-ad', adId: 'ad-2', assetResourceName: 'other-hash' },
+    ],
+    replacementKeys,
+  );
+
+  assert.deepEqual(filtered.map((asset) => asset.id), ['fresh-ad']);
+});
+
+test('does not filter replacements outside the cooldown window', () => {
+  const replacementKeys = buildRecentlyReplacedTargetKeys(
+    [
+      {
+        timestamp: '2026-05-01T12:00:00.000Z',
+        event: 'ASSET_REPLACED',
+        status: 'success',
+        customer_id: 'act_123',
+        campaign_id: 'campaign-1',
+        payload_json: JSON.stringify({
+          platform: 'meta',
+          operation: { adId: 'ad-1' },
+        }),
+      },
+    ],
+    {
+      accountId: 'act_123',
+      campaignIds: ['campaign-1'],
+      platform: 'meta',
+      now: new Date('2026-07-02T12:00:00.000Z'),
+      cooldownDays: 30,
+    },
+  );
+
+  assert.equal(replacementKeys.size, 0);
+});
+
+test('keeps legacy Google audit rows out of Meta replacement filtering', () => {
+  const replacementKeys = buildRecentlyReplacedTargetKeys(
+    [
+      {
+        timestamp: '2026-07-01T12:00:00.000Z',
+        event: 'ASSET_REPLACED',
+        status: 'success',
+        customer_id: '1234567890',
+        campaign_id: 'campaign-1',
+        old_asset_resource_name: 'customers/1234567890/assets/111',
+        payload_json: JSON.stringify({
+          operation: {
+            adGroupId: '222',
+            adId: '333',
+            adResourceName: 'customers/1234567890/adGroupAds/222~333',
+            assetResourceName: 'customers/1234567890/assets/111',
+          },
+        }),
+      },
+    ],
+    {
+      accountId: '',
+      campaignIds: ['campaign-1'],
+      platform: 'meta',
+      now: new Date('2026-07-02T12:00:00.000Z'),
+      cooldownDays: 30,
+    },
+  );
+
+  assert.equal(replacementKeys.size, 0);
 });
 
 test('infers the same creative family from ratio-specific filenames', () => {
