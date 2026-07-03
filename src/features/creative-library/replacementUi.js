@@ -149,7 +149,7 @@ export const describeAdsTargetType = (target = {}) => {
     if (adType === 'META_IMAGE_AD') {
       return {
         label: 'Meta image ad',
-        description: 'Updates the current Meta ad with a new creative.',
+        description: 'Creates a duplicate Meta ad with replacement images and pauses the original.',
       };
     }
 
@@ -214,6 +214,14 @@ export const describeReplacementChange = (operation) => {
   }
 
   if (operation.requiresNewAd || operation.executionPolicy === 'clone_replace') {
+    if (String(operation.platform || '').toLowerCase() === 'meta') {
+      return {
+        label: 'Creates duplicate ad',
+        description: 'Creates a new Meta ad and pauses the original.',
+        tone: 'approval',
+      };
+    }
+
     return {
       label: 'Creates new ad',
       description: 'Google needs a new ad for this ad type.',
@@ -296,6 +304,14 @@ export const describeReplacementStatus = (operation) => {
   }
 
   if (operation.requiresNewAd || operation.executionPolicy === 'clone_replace') {
+    if (String(operation.platform || '').toLowerCase() === 'meta') {
+      return {
+        label: 'Needs approval',
+        description: 'This can run after you approve creating a duplicate Meta ad and pausing the original.',
+        tone: 'approval',
+      };
+    }
+
     return {
       label: 'Needs approval',
       description: 'This can run after you approve creating a new ad.',
@@ -349,9 +365,10 @@ export const summarizeReplacementSelection = (operations, selectedIds) => {
 export const buildNewAdPermissionMessage = (newAdCount, selectedCount) => {
   const replacementWord = newAdCount === 1 ? 'replacement' : 'replacements';
   const totalWord = selectedCount === 1 ? 'creative' : 'creatives';
+  const adWord = newAdCount === 1 ? 'ad' : 'ads';
   return [
-    `Google needs to create a new ad for ${newAdCount} ${replacementWord}.`,
-    `You selected ${selectedCount} ${totalWord}. This can change the ad ID for those replacements, while keeping the campaign and ad group context.`,
+    `This run needs to create ${newAdCount} new ${adWord} for ${newAdCount} ${replacementWord}.`,
+    `You selected ${selectedCount} ${totalWord}. This can change the ad ID for those replacements while keeping the campaign and ad group context. For Meta, the original ad will be paused after the duplicate is created.`,
     'Continue and replace?',
   ].join('\n\n');
 };

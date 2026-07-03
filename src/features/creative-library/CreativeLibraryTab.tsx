@@ -158,7 +158,7 @@ export default function CreativeLibraryTab() {
   }, []);
 
   useEffect(() => {
-    const platformsForSource = adsSource === 'both' ? ADS_PLATFORMS : [adsSource];
+    const platformsForSource = [adsSource];
     const platformsToFetch = platformsForSource.filter((platform) => {
       const accountId = accountIds[platform];
       if (!accountId) {
@@ -271,7 +271,7 @@ export default function CreativeLibraryTab() {
     [library],
   );
   const activePlatforms = useMemo<AdsPlatform[]>(
-    () => (adsSource === 'both' ? ADS_PLATFORMS : [adsSource]),
+    () => [adsSource],
     [adsSource],
   );
   const adsSelections = useMemo<AdsSelections>(
@@ -295,7 +295,7 @@ export default function CreativeLibraryTab() {
   );
   const getCampaignLabel = (platform: AdsPlatform) => {
     const selectedIds = campaignIdsByPlatform[platform];
-    if (selectedIds.length === 0) return 'All enabled campaigns';
+    if (selectedIds.length === 0) return 'All active campaigns';
     if (selectedIds.length === 1) {
       return campaignsByPlatform[platform].find((campaign) => campaign.id === selectedIds[0])?.label || '1 campaign selected';
     }
@@ -811,11 +811,10 @@ export default function CreativeLibraryTab() {
             >
               <option value="google">Google Ads</option>
               <option value="meta">Meta Ads</option>
-              <option value="both">Both</option>
             </select>
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Limit per platform</span>
+            <span className="text-xs font-medium uppercase text-slate-400">Limit</span>
             <input
               type="number"
               min={1}

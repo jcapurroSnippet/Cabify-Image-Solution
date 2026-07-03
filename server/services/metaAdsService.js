@@ -9,7 +9,7 @@ const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 const META_CREATIVE_FIELDS =
   'id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,effective_object_story_id';
 const META_AD_FIELDS =
-  `id,name,created_time,effective_status,adset{id,name,campaign{id,name}},creative{${META_CREATIVE_FIELDS}}`;
+  `id,name,created_time,effective_status,adset{id,name,effective_status,campaign{id,name,effective_status}},creative{${META_CREATIVE_FIELDS}}`;
 const META_ADS_FIELDS = META_AD_FIELDS;
 const META_INSIGHTS_FIELDS =
   'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,actions,cost_per_action_type';
@@ -127,6 +127,29 @@ const parseNumber = (value) => {
 
 const deepClone = (value) =>
   value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+
+const getMetaStatus = (entity = {}) =>
+  String(entity?.effective_status || entity?.status || '').trim().toUpperCase();
+
+const isMetaActiveOrUnknown = (entity = {}) => {
+  const status = getMetaStatus(entity);
+  return !status || status === 'ACTIVE';
+};
+
+const isActiveMetaAdHierarchy = (ad = {}) =>
+  isMetaActiveOrUnknown(ad) &&
+  isMetaActiveOrUnknown(ad.adset) &&
+  isMetaActiveOrUnknown(ad.adset?.campaign);
+
+export const buildNextMetaAdName = (name) => {
+  const baseName = String(name || '').trim() || 'Meta ad';
+  const match = baseName.match(/^(.*?)(\d+)\s*$/);
+  if (!match) return `${baseName}-1`;
+
+  const [, prefix, numericSuffix] = match;
+  const nextNumber = String(Number(numericSuffix) + 1).padStart(numericSuffix.length, '0');
+  return `${prefix}${nextNumber}`;
+};
 
 const META_DEPRECATED_CREATIVE_SPEC_FIELDS = new Set(['standard_enhancements']);
 
@@ -669,19 +692,21 @@ const getMetaAdRunningDays = (ad = {}, now = new Date()) => {
 /**
  * Fetch all active campaigns for an ad account.
  */
-export const getCampaigns = async (adAccountId) => {
+export const getCampaigns = async (adAccountId, graphGetImpl = graphGet) => {
   if (!adAccountId) throw new Error('adAccountId is required.');
 
-  const response = await graphGet(`/${adAccountId}/campaigns`, {
-    fields: 'id,name',
-    effective_status: '["ACTIVE","PAUSED"]',
+  const response = await graphGetImpl(`/${adAccountId}/campaigns`, {
+    fields: 'id,name,effective_status',
+    effective_status: '["ACTIVE"]',
     limit: 200,
   });
 
-  return (response?.data || []).map((c) => ({
-    id: c.id,
-    label: c.name || `Campaign ${c.id}`,
-  }));
+  return (response?.data || [])
+    .filter((campaign) => isMetaActiveOrUnknown(campaign))
+    .map((c) => ({
+      id: c.id,
+      label: c.name || `Campaign ${c.id}`,
+    }));
 };
 
 export const collectMetaLowPerformerAssets = async ({
@@ -723,6 +748,7 @@ export const collectMetaLowPerformerAssets = async ({
     const ad = await graphGetImpl(`/${candidate.adId}`, {
       fields: META_AD_FIELDS,
     });
+    if (!isActiveMetaAdHierarchy(ad)) continue;
     if (getMetaAdRunningDays(ad, now) < 30) continue;
 
     const creative = ad?.creative || {};
@@ -750,17 +776,23 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
 
   const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
   const datePreset = options.datePreset || 'last_30d';
+  const graphGetImpl = options.graphGetImpl || graphGet;
   const selectedCampaignIds = normalizeCampaignIds(options);
+  const activeCampaigns = await getCampaigns(adAccountId, graphGetImpl);
+  const activeCampaignIds = new Set(activeCampaigns.map((campaign) => String(campaign.id || '').trim()).filter(Boolean));
   const campaigns = selectedCampaignIds.length > 0
-    ? selectedCampaignIds.map((id) => ({ id }))
-    : await getCampaigns(adAccountId);
+    ? selectedCampaignIds.filter((id) => activeCampaignIds.has(id)).map((id) => ({ id }))
+    : activeCampaigns;
   const campaignIds = campaigns.map((campaign) => String(campaign.id || '').trim()).filter(Boolean);
+  if (campaignIds.length === 0) return [];
 
   return collectMetaLowPerformerAssets({
     adAccountId,
     campaignIds,
     limit,
     datePreset,
+    graphGetImpl,
+    resolveImageResolutionImpl: options.resolveImageResolutionImpl || resolveImageResolution,
   });
 };
 
@@ -876,7 +908,15 @@ export const getAdCreativeForReplacement = async (adId) => {
   return response?.creative || null;
 };
 
-const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace }) => {
+export const getAdForReplacement = async (adId, graphGetImpl = graphGet) => {
+  if (!adId) throw new Error('adId is required.');
+
+  return graphGetImpl(`/${adId}`, {
+    fields: META_AD_FIELDS,
+  });
+};
+
+const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace, graphPostImpl = graphPost }) => {
   const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
     throw new Error('Invalid image data URL format.');
@@ -903,7 +943,7 @@ const uploadMetaImage = async ({ adAccountId, imageDataUrl, metaAdsTrace }) => {
       endpoint: `/${adAccountId}/adimages`,
       fileName,
     });
-    uploadResponse = await graphPost(`/${adAccountId}/adimages`, form);
+    uploadResponse = await graphPostImpl(`/${adAccountId}/adimages`, form);
   } catch (error) {
     pushMetaTrace(metaAdsTrace, 'upload_image_to_meta_adimages', 'error', getMetaErrorDetails(error));
     throwWithMetaTrace(error, metaAdsTrace);
@@ -1001,8 +1041,205 @@ const getAppliedReplacementRatios = (imageHashByAssetKey = {}, replacementImageH
   return fallback ? [fallback] : [];
 };
 
+const attachMetaPartialReplacement = (error, partialReplacement = {}) => {
+  error.metaPartialReplacement = {
+    ...(error.metaPartialReplacement || {}),
+    ...partialReplacement,
+  };
+  return error;
+};
+
+export const cloneMetaAdWithReplacementCreativeFromOperation = async (
+  adAccountId,
+  operation,
+  newImageDataUrl,
+  options = {},
+) => {
+  const metaAdsTrace = [];
+  const graphPostImpl = options.graphPostImpl || graphPost;
+
+  if (!adAccountId) {
+    throw new Error('adAccountId is required.');
+  }
+  if (!operation?.adId) {
+    throw new Error('operation.adId is required.');
+  }
+  if (!operation?.adGroupId) {
+    throw new Error('operation.adGroupId is required for Meta ad duplication.');
+  }
+
+  const imageHash = await uploadMetaImage({
+    adAccountId,
+    imageDataUrl: newImageDataUrl,
+    metaAdsTrace,
+    graphPostImpl,
+  });
+  const existingCreative = operation.metaCreative ||
+    await (options.getAdCreativeForReplacementImpl || getAdCreativeForReplacement)(operation.adId);
+  const replacementImageDataUrlsByRatio = options.replacementImageDataUrlsByRatio || {};
+  const replacementImageHashByRatio = {};
+  for (const [ratio, imageDataUrl] of Object.entries(replacementImageDataUrlsByRatio)) {
+    const normalizedRatio = normalizeAspectRatio(ratio);
+    if (!normalizedRatio || !imageDataUrl) continue;
+    replacementImageHashByRatio[normalizedRatio] = imageDataUrl === newImageDataUrl
+      ? imageHash
+      : await uploadMetaImage({
+          adAccountId,
+          imageDataUrl,
+          metaAdsTrace,
+          graphPostImpl,
+        });
+  }
+
+  const imageHashByAssetKey = await buildMetaImageHashByAssetKeyForRatios({
+    creative: existingCreative,
+    replacementImageHashByRatio,
+    selectedImageAssetKey: operation.selectedMetaImageAssetKey,
+  });
+  const appliedReplacementRatios = getAppliedReplacementRatios(
+    imageHashByAssetKey,
+    replacementImageHashByRatio,
+    operation.requiredAspectRatio,
+  );
+  const newAdName = buildNextMetaAdName(operation.adName || operation.assetName || existingCreative?.name || 'Meta ad');
+  const creativePayload = buildMetaCreativeClonePayload(
+    existingCreative,
+    imageHash,
+    `${existingCreative?.name || operation.assetName || operation.adName || 'Meta creative'} replacement`,
+    {
+      selectedImageAssetKey: operation.selectedMetaImageAssetKey,
+      imageHashByAssetKey,
+    },
+  );
+
+  let newCreativeId = '';
+  let newAdId = '';
+  let pausedOriginalAdId = '';
+
+  try {
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'started', {
+      endpoint: `/${adAccountId}/adcreatives`,
+      sourceCreativeId: existingCreative?.id || null,
+    });
+    const creativeResponse = await graphPostImpl(`/${adAccountId}/adcreatives`, creativePayload);
+    newCreativeId = creativeResponse?.id || '';
+    if (!newCreativeId) {
+      throw new Error('Failed to create ad creative in Meta.');
+    }
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'success', { newCreativeId });
+  } catch (error) {
+    attachMetaPartialReplacement(error, {
+      originalAdId: operation.adId,
+      newCreativeId,
+      newAdName,
+    });
+    pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
+
+  try {
+    pushMetaTrace(metaAdsTrace, 'create_meta_ad_duplicate', 'started', {
+      endpoint: `/${adAccountId}/ads`,
+      originalAdId: operation.adId,
+      adsetId: operation.adGroupId,
+      newCreativeId,
+      newAdName,
+      status: 'PAUSED',
+    });
+    const adResponse = await graphPostImpl(`/${adAccountId}/ads`, {
+      name: newAdName,
+      adset_id: operation.adGroupId,
+      creative: { creative_id: newCreativeId },
+      status: 'PAUSED',
+    });
+    newAdId = adResponse?.id || '';
+    if (!newAdId) {
+      throw new Error('Failed to create duplicate ad in Meta.');
+    }
+    pushMetaTrace(metaAdsTrace, 'create_meta_ad_duplicate', 'success', {
+      originalAdId: operation.adId,
+      newAdId,
+      newAdName,
+    });
+  } catch (error) {
+    attachMetaPartialReplacement(error, {
+      originalAdId: operation.adId,
+      newCreativeId,
+      newAdId,
+      newAdName,
+    });
+    pushMetaTrace(metaAdsTrace, 'create_meta_ad_duplicate', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
+
+  try {
+    pushMetaTrace(metaAdsTrace, 'pause_original_meta_ad', 'started', {
+      endpoint: `/${operation.adId}`,
+      originalAdId: operation.adId,
+      newAdId,
+    });
+    await graphPostImpl(`/${operation.adId}`, { status: 'PAUSED' });
+    pausedOriginalAdId = operation.adId;
+    pushMetaTrace(metaAdsTrace, 'pause_original_meta_ad', 'success', {
+      originalAdId: operation.adId,
+      newAdId,
+    });
+  } catch (error) {
+    attachMetaPartialReplacement(error, {
+      originalAdId: operation.adId,
+      newCreativeId,
+      newAdId,
+      newAdName,
+    });
+    pushMetaTrace(metaAdsTrace, 'pause_original_meta_ad', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
+
+  try {
+    pushMetaTrace(metaAdsTrace, 'activate_meta_ad_duplicate', 'started', {
+      endpoint: `/${newAdId}`,
+      originalAdId: operation.adId,
+      newAdId,
+    });
+    await graphPostImpl(`/${newAdId}`, { status: 'ACTIVE' });
+    pushMetaTrace(metaAdsTrace, 'activate_meta_ad_duplicate', 'success', {
+      originalAdId: operation.adId,
+      newAdId,
+    });
+  } catch (error) {
+    attachMetaPartialReplacement(error, {
+      originalAdId: operation.adId,
+      newCreativeId,
+      newAdId,
+      newAdName,
+      pausedOriginalAdId,
+    });
+    pushMetaTrace(metaAdsTrace, 'activate_meta_ad_duplicate', 'error', getMetaErrorDetails(error));
+    throwWithMetaTrace(error, metaAdsTrace);
+  }
+
+  return {
+    success: true,
+    replacementType: 'META_AD_DUPLICATE_AND_PAUSE',
+    originalAdId: operation.adId,
+    newAdId,
+    newAdName,
+    newCreativeId,
+    pausedOriginalAdId,
+    imageHash,
+    assetResourceName: newAdId,
+    newAdResourceName: newAdId,
+    updatedAdResourceName: newAdId,
+    imageHashByAssetKey,
+    replacementImageRatios: Object.keys(replacementImageHashByRatio),
+    appliedReplacementRatios,
+    metaAdsTrace,
+  };
+};
+
 export const replaceAdCreativeFromOperation = async (adAccountId, operation, newImageDataUrl, options = {}) => {
   const metaAdsTrace = [];
+  const graphPostImpl = options.graphPostImpl || graphPost;
 
   if (!adAccountId) {
     throw new Error('adAccountId is required.');
@@ -1015,8 +1252,10 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
     adAccountId,
     imageDataUrl: newImageDataUrl,
     metaAdsTrace,
+    graphPostImpl,
   });
-  const existingCreative = operation.metaCreative || await getAdCreativeForReplacement(operation.adId);
+  const existingCreative = operation.metaCreative ||
+    await (options.getAdCreativeForReplacementImpl || getAdCreativeForReplacement)(operation.adId);
   const replacementImageDataUrlsByRatio = options.replacementImageDataUrlsByRatio || {};
   const replacementImageHashByRatio = {};
   for (const [ratio, imageDataUrl] of Object.entries(replacementImageDataUrlsByRatio)) {
@@ -1028,6 +1267,7 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
           adAccountId,
           imageDataUrl,
           metaAdsTrace,
+          graphPostImpl,
         });
   }
   const imageHashByAssetKey = await buildMetaImageHashByAssetKeyForRatios({
@@ -1056,7 +1296,7 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
       endpoint: `/${adAccountId}/adcreatives`,
       sourceCreativeId: existingCreative?.id || null,
     });
-    creativeResponse = await graphPost(`/${adAccountId}/adcreatives`, creativePayload);
+    creativeResponse = await graphPostImpl(`/${adAccountId}/adcreatives`, creativePayload);
   } catch (error) {
     pushMetaTrace(metaAdsTrace, 'create_meta_adcreative', 'error', getMetaErrorDetails(error));
     throwWithMetaTrace(error, metaAdsTrace);
@@ -1080,7 +1320,7 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
       endpoint: `/${operation.adId}`,
       newCreativeId,
     });
-    await graphPost(`/${operation.adId}`, {
+    await graphPostImpl(`/${operation.adId}`, {
       creative: { creative_id: newCreativeId },
     });
   } catch (error) {
@@ -1110,5 +1350,15 @@ export const replaceAdCreativeFromOperation = async (adAccountId, operation, new
  * Replace an ad's creative with a new image.
  */
 export const replaceAdCreative = async (adAccountId, adId, newImageDataUrl) => {
-  return replaceAdCreativeFromOperation(adAccountId, { adId }, newImageDataUrl);
+  const ad = await getAdForReplacement(adId);
+  return cloneMetaAdWithReplacementCreativeFromOperation(
+    adAccountId,
+    {
+      adId,
+      adName: ad?.name || '',
+      adGroupId: ad?.adset?.id || '',
+      metaCreative: ad?.creative || null,
+    },
+    newImageDataUrl,
+  );
 };

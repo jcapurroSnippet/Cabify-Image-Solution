@@ -14,7 +14,6 @@ import type {
 export type LowPerformerCategories = Record<string, string>;
 
 const GOOGLE_REQUIRED_REPLACEMENT_MODE = 'allow_google_required_clone';
-const PLATFORM_VALUES: AdsPlatform[] = ['google', 'meta'];
 
 const parseErrorMessage = async (response: Response, url: string): Promise<string> => {
   try {
@@ -61,22 +60,13 @@ const postJson = async <T>(url: string, body: unknown): Promise<T> => {
   return (await response.json()) as T;
 };
 
-const getActivePlatforms = (source: LowPerformerSource): AdsPlatform[] =>
-  source === 'both' ? PLATFORM_VALUES : [source];
-
 const buildSelectionsPayload = (source: LowPerformerSource, selections: AdsSelections) =>
-  Object.fromEntries(
-    getActivePlatforms(source).map((platform) => {
-      const selection = selections[platform];
-      return [
-        platform,
-        {
-          accountId: selection?.accountId || '',
-          campaignIds: selection?.campaignIds?.length ? selection.campaignIds : undefined,
-        },
-      ];
-    }),
-  );
+  ({
+    [source]: {
+      accountId: selections[source]?.accountId || '',
+      campaignIds: selections[source]?.campaignIds?.length ? selections[source]?.campaignIds : undefined,
+    },
+  });
 
 export const fetchAdAccounts = async (platform: AdsPlatform): Promise<AccountOption[]> => {
   const data = await getJson<{ accounts: AccountOption[] }>(`/api/ads/accounts?platform=${platform}`);

@@ -96,8 +96,8 @@ const getClient = (customerId) => {
 /**
  * Fetch all enabled campaigns for an account.
  */
-export const getCampaigns = async (customerId) => {
-  const customer = getClient(customerId);
+export const getCampaigns = async (customerId, options = {}) => {
+  const customer = options.customer || getClient(customerId);
 
   const results = await customer.query(`
     SELECT campaign.id, campaign.name
@@ -370,7 +370,7 @@ const buildAssetGroupLowPerformerEntry = (row, customerId, performanceLabel) => 
  * Only returns targets that the current replacement executor can safely apply.
  */
 export const getLowPerformingImageAssets = async (customerId, options = {}) => {
-  const customer = getClient(customerId);
+  const customer = options.customer || getClient(customerId);
   const config = getCreativeLibraryConfig();
   const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
   const queryLimit = Math.max(limit, Math.min(Math.max(limit * 5, 100), 500));

@@ -122,13 +122,13 @@ const normalizeOptionalStringList = (value) => {
 
 const normalizeAdsSource = (value) => {
   const source = String(value || 'google').trim().toLowerCase();
-  if (!['google', 'meta', 'both'].includes(source)) {
-    throw new RequestValidationError('source must be "google", "meta", or "both".');
+  if (!['google', 'meta'].includes(source)) {
+    throw new RequestValidationError('source must be "google" or "meta".');
   }
   return source;
 };
 
-const getActiveAdsPlatforms = (source) => (source === 'both' ? ['google', 'meta'] : [source]);
+const getActiveAdsPlatforms = (source) => [source];
 
 const normalizeAdsSelections = ({ source, selections, accountId, campaignId, campaignIds }) => {
   const normalizedSelections = {};

@@ -6,22 +6,19 @@ import {
   getAdsLowPerformers,
 } from '../server/services/adsReplacementService.js';
 
-test('fetches low performers for both platforms and tags merged assets', async () => {
+test('fetches low performers for the selected platform and tags assets', async () => {
   const result = await getAdsLowPerformers({
-    source: 'both',
+    source: 'meta',
     selections: {
-      google: { accountId: '123', campaignIds: ['g-campaign'] },
       meta: { accountId: 'act_456', campaignIds: ['m-campaign'] },
     },
     limit: 10,
     sheetsUrl: 'sheet',
     deps: {
       google: {
-        getLowPerformers: async (args) => [{
-          id: 'google-asset',
-          platform: args.platform,
-          accountId: args.accountId,
-        }],
+        getLowPerformers: async () => {
+          throw new Error('Google should not be queried for a Meta source.');
+        },
       },
       meta: {
         getLowPerformers: async (args) => [{
@@ -34,37 +31,39 @@ test('fetches low performers for both platforms and tags merged assets', async (
   });
 
   assert.deepEqual(result.assets, [
-    { id: 'google-asset', platform: 'google', platformLabel: 'Google Ads', accountId: '123' },
     { id: 'meta-asset', platform: 'meta', platformLabel: 'Meta Ads', accountId: 'act_456' },
   ]);
 });
 
-test('builds a combined replacement plan without cross-platform creative exclusions', async () => {
+test('rejects both as an Ads source', async () => {
+  await assert.rejects(
+    () => getAdsLowPerformers({ source: 'both' }),
+    /source must be "google" or "meta"/,
+  );
+  await assert.rejects(
+    () => buildAdsReplacementPlan({ source: 'both' }),
+    /source must be "google" or "meta"/,
+  );
+  await assert.rejects(
+    () => executeAdsReplacements({ source: 'both' }),
+    /source must be "google" or "meta"/,
+  );
+});
+
+test('builds a replacement plan for one selected platform', async () => {
   const metaCalls = [];
   const result = await buildAdsReplacementPlan({
-    source: 'both',
+    source: 'meta',
     selections: {
-      google: { accountId: '123', campaignIds: ['g-campaign'] },
       meta: { accountId: 'act_456', campaignIds: ['m-campaign'] },
     },
     sheetsUrl: 'sheet',
     limit: 10,
     deps: {
       google: {
-        buildReplacementPlan: async () => ({
-          dryRun: true,
-          summary: { lowPerformers: 1, planned: 1, executable: 1, skipped: 0 },
-          operations: [
-            {
-              id: 'google-op',
-              platform: 'google',
-              status: 'planned',
-              executableInMode: true,
-              creative: { creative_id: 'creative-1' },
-            },
-          ],
-          librarySummary: { total: 2 },
-        }),
+        buildReplacementPlan: async () => {
+          throw new Error('Google should not be planned for a Meta source.');
+        },
       },
       meta: {
         buildReplacementPlan: async (args) => {
@@ -78,7 +77,7 @@ test('builds a combined replacement plan without cross-platform creative exclusi
                 platform: 'meta',
                 status: 'planned',
                 executableInMode: true,
-              creative: { creative_id: 'creative-1' },
+                creative: { creative_id: 'creative-1' },
               },
             ],
             librarySummary: { total: 2 },
@@ -91,26 +90,25 @@ test('builds a combined replacement plan without cross-platform creative exclusi
   assert.deepEqual(metaCalls[0].excludedCreativeIds, []);
   assert.deepEqual(
     result.operations.map((operation) => operation.id),
-    ['google-op', 'meta-op'],
+    ['meta-op'],
   );
   assert.deepEqual(result.summary, {
-    lowPerformers: 2,
-    planned: 2,
-    executable: 2,
+    lowPerformers: 1,
+    planned: 1,
+    executable: 1,
     skipped: 0,
   });
   assert.deepEqual(result.librarySummary, { total: 2 });
 });
 
-test('executes selected operations on each platform and merges traces', async () => {
+test('executes selected operations on one selected platform', async () => {
   const result = await executeAdsReplacements({
-    source: 'both',
+    source: 'google',
     selections: {
       google: { accountId: '123', campaignIds: [] },
-      meta: { accountId: 'act_456', campaignIds: [] },
     },
     sheetsUrl: 'sheet',
-    selectedOperationIds: ['google-op', 'meta-op'],
+    selectedOperationIds: ['google-op'],
     confirm: true,
     deps: {
       google: {
@@ -122,21 +120,18 @@ test('executes selected operations on each platform and merges traces', async ()
         }),
       },
       meta: {
-        executeReplacements: async () => ({
-          dryRun: false,
-          summary: { attempted: 1, success: 1, failed: 0, skipped: 0 },
-          metaAdsTrace: [{ step: 'meta', status: 'success' }],
-          results: [{ id: 'meta-op', platform: 'meta', executionStatus: 'success' }],
-        }),
+        executeReplacements: async () => {
+          throw new Error('Meta should not execute for a Google source.');
+        },
       },
     },
   });
 
-  assert.deepEqual(result.summary, { attempted: 2, success: 2, failed: 0, skipped: 0 });
+  assert.deepEqual(result.summary, { attempted: 1, success: 1, failed: 0, skipped: 0 });
   assert.deepEqual(result.googleAdsTrace, [{ step: 'google', status: 'success' }]);
-  assert.deepEqual(result.metaAdsTrace, [{ step: 'meta', status: 'success' }]);
+  assert.deepEqual(result.metaAdsTrace, []);
   assert.deepEqual(
     result.results.map((operation) => operation.id),
-    ['google-op', 'meta-op'],
+    ['google-op'],
   );
 });

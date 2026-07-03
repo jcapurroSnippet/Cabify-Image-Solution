@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildNextMetaAdName,
   buildMetaImageHashByAssetKeyForRatios,
   buildMetaCreativeClonePayload,
+  cloneMetaAdWithReplacementCreativeFromOperation,
   collectMetaLowPerformerAssets,
   formatMetaGraphErrorMessage,
+  getCampaigns,
+  getLowPerformingImageAssets,
   isSafeMetaCreativeForImageClone,
   normalizeMetaLowPerformerAd,
   rankMetaLowPerformers,
@@ -229,6 +233,160 @@ test('builds Meta dynamic creative payload by replacing only the selected image 
   assert.equal(creative.asset_feed_spec.images[1].hash, 'low-hash');
 });
 
+test('fetches only active Meta campaigns', async () => {
+  const calls = [];
+  const campaigns = await getCampaigns('act_123', async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    return {
+      data: [
+        { id: 'campaign-active', name: 'Active campaign', effective_status: 'ACTIVE' },
+        { id: 'campaign-paused', name: 'Paused campaign', effective_status: 'PAUSED' },
+      ],
+    };
+  });
+
+  assert.deepEqual(campaigns, [{ id: 'campaign-active', label: 'Active campaign' }]);
+  assert.equal(calls[0].endpoint, '/act_123/campaigns');
+  assert.equal(calls[0].params.effective_status, '["ACTIVE"]');
+});
+
+test('filters selected Meta campaign IDs to active campaigns before reading insights', async () => {
+  const calls = [];
+  const assets = await getLowPerformingImageAssets('act_123', {
+    campaignIds: ['campaign-active', 'campaign-paused'],
+    limit: 10,
+    graphGetImpl: async (endpoint, params) => {
+      calls.push({ endpoint, params });
+      if (endpoint === '/act_123/campaigns') {
+        return {
+          data: [
+            { id: 'campaign-active', name: 'Active campaign', effective_status: 'ACTIVE' },
+            { id: 'campaign-paused', name: 'Paused campaign', effective_status: 'PAUSED' },
+          ],
+        };
+      }
+      if (endpoint === '/campaign-active/insights') return { data: [] };
+      throw new Error(`Unexpected endpoint ${endpoint}`);
+    },
+  });
+
+  assert.deepEqual(assets, []);
+  assert.deepEqual(
+    calls.map((call) => call.endpoint),
+    ['/act_123/campaigns', '/campaign-active/insights'],
+  );
+});
+
+test('builds incremented Meta duplicate ad names', () => {
+  assert.equal(buildNextMetaAdName('METODO DE PAGO-144'), 'METODO DE PAGO-145');
+  assert.equal(buildNextMetaAdName('METODO DE PAGO'), 'METODO DE PAGO-1');
+  assert.equal(buildNextMetaAdName('AD-009'), 'AD-010');
+});
+
+test('clones a Meta ad paused, pauses the original, then activates the duplicate', async () => {
+  const imageDataUrl = 'data:image/png;base64,AAAA';
+  const calls = [];
+  const result = await cloneMetaAdWithReplacementCreativeFromOperation(
+    'act_123',
+    {
+      adId: 'ad-original',
+      adName: 'METODO DE PAGO-144',
+      adGroupId: 'adset-1',
+      requiredAspectRatio: '1:1',
+      metaCreative: {
+        id: 'creative-original',
+        name: 'Original Creative',
+        object_story_spec: {
+          page_id: 'page-1',
+          link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+        },
+      },
+    },
+    imageDataUrl,
+    {
+      replacementImageDataUrlsByRatio: { '1:1': imageDataUrl },
+      graphPostImpl: async (endpoint, data) => {
+        calls.push({ endpoint, data });
+        if (endpoint === '/act_123/adimages') return { images: { uploaded: { hash: 'new-image-hash' } } };
+        if (endpoint === '/act_123/adcreatives') return { id: 'creative-new' };
+        if (endpoint === '/act_123/ads') return { id: 'ad-new' };
+        if (endpoint === '/ad-original') return { success: true };
+        if (endpoint === '/ad-new') return { success: true };
+        throw new Error(`Unexpected endpoint ${endpoint}`);
+      },
+    },
+  );
+
+  assert.equal(result.newAdId, 'ad-new');
+  assert.equal(result.newAdName, 'METODO DE PAGO-145');
+  assert.equal(result.newCreativeId, 'creative-new');
+  assert.equal(result.pausedOriginalAdId, 'ad-original');
+  assert.deepEqual(
+    calls.map((call) => call.endpoint),
+    ['/act_123/adimages', '/act_123/adcreatives', '/act_123/ads', '/ad-original', '/ad-new'],
+  );
+  assert.deepEqual(calls[2].data, {
+    name: 'METODO DE PAGO-145',
+    adset_id: 'adset-1',
+    creative: { creative_id: 'creative-new' },
+    status: 'PAUSED',
+  });
+  assert.deepEqual(calls[3].data, { status: 'PAUSED' });
+  assert.deepEqual(calls[4].data, { status: 'ACTIVE' });
+});
+
+test('fails Meta clone replacement if the original ad cannot be paused', async () => {
+  const imageDataUrl = 'data:image/png;base64,AAAA';
+  const calls = [];
+
+  await assert.rejects(
+    () => cloneMetaAdWithReplacementCreativeFromOperation(
+      'act_123',
+      {
+        adId: 'ad-original',
+        adName: 'METODO DE PAGO-144',
+        adGroupId: 'adset-1',
+        requiredAspectRatio: '1:1',
+        metaCreative: {
+          id: 'creative-original',
+          name: 'Original Creative',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      },
+      imageDataUrl,
+      {
+        replacementImageDataUrlsByRatio: { '1:1': imageDataUrl },
+        graphPostImpl: async (endpoint, data) => {
+          calls.push({ endpoint, data });
+          if (endpoint === '/act_123/adimages') return { images: { uploaded: { hash: 'new-image-hash' } } };
+          if (endpoint === '/act_123/adcreatives') return { id: 'creative-new' };
+          if (endpoint === '/act_123/ads') return { id: 'ad-new' };
+          if (endpoint === '/ad-original') {
+            const error = new Error('Cannot pause original ad');
+            error.response = { status: 400, data: { error: { message: 'Cannot pause original ad' } } };
+            throw error;
+          }
+          throw new Error(`Unexpected endpoint ${endpoint}`);
+        },
+      },
+    ),
+    (error) => {
+      assert.equal(error.metaPartialReplacement.newAdId, 'ad-new');
+      assert.equal(error.metaPartialReplacement.newCreativeId, 'creative-new');
+      assert.equal(error.metaPartialReplacement.originalAdId, 'ad-original');
+      return /Cannot pause original ad/.test(error.message);
+    },
+  );
+
+  assert.deepEqual(
+    calls.map((call) => call.endpoint),
+    ['/act_123/adimages', '/act_123/adcreatives', '/act_123/ads', '/ad-original'],
+  );
+});
+
 test('matches Meta dynamic creative images by placement rules when image URLs are absent', async () => {
   const creative = {
     id: 'creative-dynamic',
@@ -362,6 +520,75 @@ test('collects Meta low performers with at least 30 running days by lowest impre
   assert.equal(assets[0].adId, 'ad-low-impressions-old');
   assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-new', '/ad-low-impressions-old']);
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
+});
+
+test('skips Meta low performers whose ad, ad set, or campaign is not active', async () => {
+  const graphGetImpl = async (endpoint) => {
+    if (endpoint === '/campaign-1/insights') {
+      return {
+        data: [
+          { ad_id: 'ad-paused', impressions: '100', clicks: '10', spend: '20' },
+          { ad_id: 'ad-active', impressions: '300', clicks: '30', spend: '60' },
+        ],
+      };
+    }
+    if (endpoint === '/ad-paused') {
+      return {
+        id: 'ad-paused',
+        name: 'Paused ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'PAUSED',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-paused',
+          image_url: 'https://example.com/paused.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-active') {
+      return {
+        id: 'ad-active',
+        name: 'Active ad',
+        created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-active',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-active',
+          image_url: 'https://example.com/active.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+    now: new Date('2026-03-20T00:00:00Z'),
+  });
+
+  assert.deepEqual(assets.map((asset) => asset.adId), ['ad-active']);
 });
 
 test('collects the lowest-impression Meta image asset for each ad', async () => {

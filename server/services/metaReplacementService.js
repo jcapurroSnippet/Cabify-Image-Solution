@@ -18,8 +18,8 @@ import {
   selectCreativeSetForCategoryRatios,
 } from './creativeLibraryCore.js';
 import {
+  cloneMetaAdWithReplacementCreativeFromOperation,
   getLowPerformingImageAssets,
-  replaceAdCreativeFromOperation,
 } from './metaAdsService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
 import {
@@ -315,7 +315,7 @@ export const buildMetaReplacementPlan = async ({
       targetType: asset.targetType,
       associationResourceName: asset.associationResourceName,
       assetFieldType: asset.assetFieldType,
-      replacementStrategy: asset.replacementStrategy,
+      replacementStrategy: supportedReplacement ? 'META_AD_DUPLICATE_AND_PAUSE' : asset.replacementStrategy,
       oldAssetId: asset.assetId,
       oldAssetResourceName: asset.assetResourceName,
       oldAssetUrl: asset.assetUrl,
@@ -334,11 +334,11 @@ export const buildMetaReplacementPlan = async ({
       supportedReplacement,
       supportReason: asset.replacementSupportReason,
       supportMessage: asset.replacementSupportMessage,
-      canPreserveAdId: supportedReplacement,
+      canPreserveAdId: false,
       canPreserveServingContainer: supportedReplacement,
-      requiresNewAd: false,
+      requiresNewAd: supportedReplacement,
       executableInMode: supportedReplacement,
-      executionPolicy: supportedReplacement ? 'same_ad_update' : 'manual_only',
+      executionPolicy: supportedReplacement ? 'clone_replace' : 'manual_only',
       blockedReason: supportedReplacement ? null : asset.replacementSupportReason || 'META_MANUAL_REVIEW',
       blockedMessage: supportedReplacement
         ? null
@@ -460,7 +460,7 @@ export const buildMetaReplacementPlan = async ({
       planned: operations.filter((operation) => operation.status === 'planned').length,
       executable: operations.filter((operation) => operation.status === 'planned' && operation.executableInMode).length,
       sameAdUpdates: operations.filter((operation) => operation.executionPolicy === 'same_ad_update').length,
-      cloneReplacements: 0,
+      cloneReplacements: operations.filter((operation) => operation.executionPolicy === 'clone_replace').length,
       manualOnly: operations.filter((operation) => operation.executionPolicy === 'manual_only').length,
       assetGroupReassociations: 0,
       skipped: operations.filter((operation) => operation.status === 'skipped').length,
@@ -478,6 +478,7 @@ const getExecutionErrorDetails = (error) => ({
   details: error?.details || null,
   errors: error?.errors || error?.response?.data?.errors || null,
   response: error?.response?.data || null,
+  partialReplacement: error?.metaPartialReplacement || error?.partialReplacement || null,
   metaAdsTrace: error?.metaAdsTrace || [],
 });
 
@@ -516,6 +517,7 @@ export const executeMetaReplacements = async ({
   selectedLowPerformerIds,
   lowPerformerCategories,
   excludedCreativeIds = [],
+  allowNewAdCreation = false,
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -540,6 +542,14 @@ export const executeMetaReplacements = async ({
     lowPerformerCategories,
     excludedCreativeIds,
   });
+  const selectedExecutableOperations = plan.operations.filter((operation) =>
+    (!selectedIds || selectedIds.has(operation.id)) &&
+    operation.status === 'planned' &&
+    operation.executableInMode,
+  );
+  if (selectedExecutableOperations.some((operation) => operation.requiresNewAd) && allowNewAdCreation !== true) {
+    throw new Error('New ad creation permission is required for the selected Meta replacements.');
+  }
   const results = [];
 
   for (const operation of plan.operations) {
@@ -595,13 +605,17 @@ export const executeMetaReplacements = async ({
         replacementResolution: replacementImageResolution,
         creativeId,
       });
-      const replacement = await replaceAdCreativeFromOperation(
+      const replacement = await cloneMetaAdWithReplacementCreativeFromOperation(
         accountId,
         operation,
         imageDataUrl,
         { replacementImageDataUrlsByRatio },
       );
-      const replacementResourceName = replacement.newCreativeId || replacement.assetResourceName || '';
+      const replacementResourceName =
+        replacement.newAdId ||
+        replacement.newAdResourceName ||
+        replacement.assetResourceName ||
+        '';
       const usedCreatives = getAppliedMetaReplacementCreatives({
         reservedCreatives,
         replacement,
@@ -616,7 +630,7 @@ export const executeMetaReplacements = async ({
           adsPlatform: 'meta',
           adsResourceName: replacementResourceName,
           operationId: operation.id,
-          notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
+          notes: `Used for ${operation.campaignName} / ${replacement.newAdName || operation.adGroupName}`,
         });
       }
       await Promise.all(
@@ -641,11 +655,16 @@ export const executeMetaReplacements = async ({
           old_asset_resource_name: operation.oldAssetResourceName,
           new_asset_resource_name: replacementResourceName,
           status: 'success',
-          message: 'Replacement completed.',
+          message: 'Duplicate ad created and original ad paused.',
           payload_json: {
             platform: 'meta',
             operation,
             replacement,
+            originalAdId: replacement.originalAdId || operation.adId,
+            newAdId: replacement.newAdId || '',
+            newAdName: replacement.newAdName || '',
+            newCreativeId: replacement.newCreativeId || '',
+            pausedOriginalAdId: replacement.pausedOriginalAdId || '',
             replacementImageResolution,
             imageAspectRatioValidation,
             replacementImageRatios: replacement.replacementImageRatios || Object.keys(replacementImageDataUrlsByRatio),
@@ -665,6 +684,10 @@ export const executeMetaReplacements = async ({
         replacementAspectRatio: imageAspectRatioValidation?.replacementAspectRatio || null,
         replacementImageRatios: replacement.replacementImageRatios || Object.keys(replacementImageDataUrlsByRatio),
         appliedReplacementRatios: replacement.appliedReplacementRatios || [],
+        newAdId: replacement.newAdId || '',
+        newAdName: replacement.newAdName || '',
+        newCreativeId: replacement.newCreativeId || '',
+        pausedOriginalAdId: replacement.pausedOriginalAdId || '',
         replacementCreativeIds: usedCreatives.map((reserved) => reserved.creative_id),
         reservedReplacementCreativeIds: reservedCreatives.map((reserved) => reserved.creative_id),
         unusedReplacementCreativeIds: unusedCreatives.map((reserved) => reserved.creative_id),
@@ -673,11 +696,15 @@ export const executeMetaReplacements = async ({
     } catch (error) {
       const executionError = getExecutionErrorDetails(error);
       logReplacementFailure({ operation, creativeId, executionError });
-      await Promise.all(
-        reservedCreatives.map((reserved) =>
-          releaseCreativeReservation(spreadsheetId, reserved.creative_id, error.message),
-        ),
-      );
+      const partialReplacement = executionError.partialReplacement || {};
+      const createdDuplicateAd = Boolean(partialReplacement.newAdId);
+      if (!createdDuplicateAd) {
+        await Promise.all(
+          reservedCreatives.map((reserved) =>
+            releaseCreativeReservation(spreadsheetId, reserved.creative_id, error.message),
+          ),
+        );
+      }
       await appendAuditLog(spreadsheetId, [
         {
           event: 'REPLACEMENT_FAILED',
@@ -688,10 +715,16 @@ export const executeMetaReplacements = async ({
           ad_group_id: operation.adGroupId,
           asset_group_id: '',
           old_asset_resource_name: operation.oldAssetResourceName,
-          new_asset_resource_name: '',
+          new_asset_resource_name: partialReplacement.newAdId || partialReplacement.newCreativeId || '',
           status: 'failed',
           message: error.message,
-          payload_json: { platform: 'meta', operation, executionError },
+          payload_json: {
+            platform: 'meta',
+            operation,
+            executionError,
+            partialReplacement,
+            reservationsReleased: !createdDuplicateAd,
+          },
         },
       ]);
 
@@ -701,6 +734,7 @@ export const executeMetaReplacements = async ({
         executionStatus: 'failed',
         executionMessage: error.message,
         executionError,
+        partialReplacement,
         metaAdsTrace: executionError.metaAdsTrace,
       });
     }

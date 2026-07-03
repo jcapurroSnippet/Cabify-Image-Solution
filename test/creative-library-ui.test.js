@@ -48,6 +48,10 @@ test('describes replacement changes without technical strategy labels', () => {
     'Creates new ad',
   );
   assert.equal(
+    describeReplacementChange(operation({ platform: 'meta', requiresNewAd: true, executionPolicy: 'clone_replace' })).label,
+    'Creates duplicate ad',
+  );
+  assert.equal(
     describeReplacementChange(operation({ executableInMode: false, executionPolicy: 'manual_only' })).label,
     'Review manually',
   );
@@ -147,7 +151,8 @@ test('explains plans that have no ready replacements', () => {
 test('builds new ad permission copy without dry-run language', () => {
   const message = buildNewAdPermissionMessage(2, 5);
 
-  assert.match(message, /Google needs to create a new ad for 2 replacements/);
+  assert.match(message, /needs to create 2 new ads for 2 replacements/);
+  assert.match(message, /original ad will be paused/);
   assert.match(message, /Continue and replace/);
   assert.doesNotMatch(message.toLowerCase(), /dry run/);
 });
@@ -174,7 +179,7 @@ test('describes Google Ads target types plainly', () => {
 test('describes Meta Ads target types plainly', () => {
   assert.deepEqual(describeAdsTargetType({ platform: 'meta', adType: 'META_IMAGE_AD' }), {
     label: 'Meta image ad',
-    description: 'Updates the current Meta ad with a new creative.',
+    description: 'Creates a duplicate Meta ad with replacement images and pauses the original.',
   });
   assert.deepEqual(describeAdsTargetType({ platform: 'meta', adType: 'META_UNSUPPORTED_CREATIVE_SHAPE' }), {
     label: 'Meta ad',

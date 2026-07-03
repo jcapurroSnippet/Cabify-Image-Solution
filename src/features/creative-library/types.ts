@@ -9,7 +9,7 @@ export interface CampaignOption {
 }
 
 export type AdsPlatform = 'google' | 'meta';
-export type LowPerformerSource = AdsPlatform | 'both';
+export type LowPerformerSource = AdsPlatform;
 
 export interface AdsSelection {
   accountId: string;

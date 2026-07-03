@@ -29,9 +29,8 @@ const DEFAULT_DEPS = {
 
 const normalizeSource = (source = 'google') => {
   const normalized = String(source || 'google').trim().toLowerCase();
-  if (normalized === 'both') return ['google', 'meta'];
   if (normalized === 'google' || normalized === 'meta') return [normalized];
-  throw new Error('source must be "google", "meta", or "both".');
+  throw new Error('source must be "google" or "meta".');
 };
 
 const normalizeStringList = (value) => {
