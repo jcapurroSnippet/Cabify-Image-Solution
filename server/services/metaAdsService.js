@@ -11,8 +11,11 @@ const META_CREATIVE_FIELDS =
 const META_AD_FIELDS =
   `id,name,created_time,effective_status,adset{id,name,effective_status,campaign{id,name,effective_status}},creative{${META_CREATIVE_FIELDS}}`;
 const META_ADS_FIELDS = META_AD_FIELDS;
+const META_AD_STATUS_FIELDS = 'id,status,configured_status,effective_status';
 const META_INSIGHTS_FIELDS =
   'ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,actions,cost_per_action_type';
+const META_PAUSE_VERIFICATION_ATTEMPTS = 3;
+const META_PAUSE_VERIFICATION_DELAY_MS = 1000;
 
 const getAccessToken = () => {
   const accessToken = process.env.META_ACCESS_TOKEN;
@@ -130,6 +133,37 @@ const deepClone = (value) =>
 
 const getMetaStatus = (entity = {}) =>
   String(entity?.effective_status || entity?.status || '').trim().toUpperCase();
+
+const normalizeMetaStatus = (value) => String(value || '').trim().toUpperCase();
+
+const getMetaAdStatusSummary = (ad = {}) => ({
+  status: normalizeMetaStatus(ad?.status),
+  configuredStatus: normalizeMetaStatus(ad?.configured_status),
+  effectiveStatus: normalizeMetaStatus(ad?.effective_status),
+});
+
+const isMetaAdPaused = (statusSummary = {}) =>
+  statusSummary.status === 'PAUSED' ||
+  statusSummary.configuredStatus === 'PAUSED' ||
+  statusSummary.effectiveStatus === 'PAUSED';
+
+const formatMetaAdStatusSummary = (statusSummary = {}) => [
+  `status=${statusSummary.status || 'UNKNOWN'}`,
+  `configured_status=${statusSummary.configuredStatus || 'UNKNOWN'}`,
+  `effective_status=${statusSummary.effectiveStatus || 'UNKNOWN'}`,
+].join(', ');
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const toPositiveInteger = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
+
+const toNonNegativeNumber = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
 
 const isMetaActiveOrUnknown = (entity = {}) => {
   const status = getMetaStatus(entity);
@@ -1066,6 +1100,61 @@ const attachMetaPartialReplacement = (error, partialReplacement = {}) => {
   return error;
 };
 
+const verifyMetaAdPaused = async ({
+  adId,
+  newAdId,
+  metaAdsTrace,
+  graphGetImpl = graphGet,
+  attempts = META_PAUSE_VERIFICATION_ATTEMPTS,
+  delayMs = META_PAUSE_VERIFICATION_DELAY_MS,
+  sleepImpl = sleep,
+}) => {
+  let lastStatusSummary = {};
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    pushMetaTrace(metaAdsTrace, 'verify_original_meta_ad_paused', 'started', {
+      endpoint: `/${adId}`,
+      originalAdId: adId,
+      newAdId,
+      attempt,
+      attempts,
+    });
+
+    const ad = await graphGetImpl(`/${adId}`, {
+      fields: META_AD_STATUS_FIELDS,
+    });
+    lastStatusSummary = getMetaAdStatusSummary(ad);
+
+    if (isMetaAdPaused(lastStatusSummary)) {
+      pushMetaTrace(metaAdsTrace, 'verify_original_meta_ad_paused', 'success', {
+        originalAdId: adId,
+        newAdId,
+        attempt,
+        ...lastStatusSummary,
+      });
+      return { ad, statusSummary: lastStatusSummary };
+    }
+
+    pushMetaTrace(metaAdsTrace, 'verify_original_meta_ad_paused', attempt < attempts ? 'waiting' : 'failed', {
+      originalAdId: adId,
+      newAdId,
+      attempt,
+      attempts,
+      ...lastStatusSummary,
+    });
+
+    if (attempt < attempts && delayMs > 0) {
+      await sleepImpl(delayMs);
+    }
+  }
+
+  throw new Error(
+    `Meta ad ${adId} did not pause after update. ` +
+    `Current Meta statuses: ${formatMetaAdStatusSummary(lastStatusSummary)}. ` +
+    `Duplicate ad ${newAdId} was left paused and was not activated.`,
+  );
+};
+
 export const cloneMetaAdWithReplacementCreativeFromOperation = async (
   adAccountId,
   operation,
@@ -1074,6 +1163,16 @@ export const cloneMetaAdWithReplacementCreativeFromOperation = async (
 ) => {
   const metaAdsTrace = [];
   const graphPostImpl = options.graphPostImpl || graphPost;
+  const graphGetImpl = options.graphGetImpl || graphGet;
+  const pauseVerificationAttempts = toPositiveInteger(
+    options.pauseVerificationAttempts,
+    META_PAUSE_VERIFICATION_ATTEMPTS,
+  );
+  const pauseVerificationDelayMs = toNonNegativeNumber(
+    options.pauseVerificationDelayMs,
+    META_PAUSE_VERIFICATION_DELAY_MS,
+  );
+  const sleepImpl = options.sleepImpl || sleep;
 
   if (!adAccountId) {
     throw new Error('adAccountId is required.');
@@ -1196,10 +1295,20 @@ export const cloneMetaAdWithReplacementCreativeFromOperation = async (
       newAdId,
     });
     await graphPostImpl(`/${operation.adId}`, { status: 'PAUSED' });
+    const pauseVerification = await verifyMetaAdPaused({
+      adId: operation.adId,
+      newAdId,
+      metaAdsTrace,
+      graphGetImpl,
+      attempts: pauseVerificationAttempts,
+      delayMs: pauseVerificationDelayMs,
+      sleepImpl,
+    });
     pausedOriginalAdId = operation.adId;
     pushMetaTrace(metaAdsTrace, 'pause_original_meta_ad', 'success', {
       originalAdId: operation.adId,
       newAdId,
+      ...pauseVerification.statusSummary,
     });
   } catch (error) {
     attachMetaPartialReplacement(error, {

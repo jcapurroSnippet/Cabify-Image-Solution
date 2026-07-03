@@ -287,6 +287,7 @@ test('builds incremented Meta duplicate ad names', () => {
 test('clones a Meta ad paused, pauses the original, then activates the duplicate', async () => {
   const imageDataUrl = 'data:image/png;base64,AAAA';
   const calls = [];
+  const getCalls = [];
   const result = await cloneMetaAdWithReplacementCreativeFromOperation(
     'act_123',
     {
@@ -315,6 +316,18 @@ test('clones a Meta ad paused, pauses the original, then activates the duplicate
         if (endpoint === '/ad-new') return { success: true };
         throw new Error(`Unexpected endpoint ${endpoint}`);
       },
+      graphGetImpl: async (endpoint, params) => {
+        getCalls.push({ endpoint, params });
+        if (endpoint === '/ad-original') {
+          return {
+            id: 'ad-original',
+            status: 'PAUSED',
+            configured_status: 'PAUSED',
+            effective_status: 'PAUSED',
+          };
+        }
+        throw new Error(`Unexpected endpoint ${endpoint}`);
+      },
     },
   );
 
@@ -334,6 +347,75 @@ test('clones a Meta ad paused, pauses the original, then activates the duplicate
   });
   assert.deepEqual(calls[3].data, { status: 'PAUSED' });
   assert.deepEqual(calls[4].data, { status: 'ACTIVE' });
+  assert.deepEqual(getCalls, [
+    {
+      endpoint: '/ad-original',
+      params: { fields: 'id,status,configured_status,effective_status' },
+    },
+  ]);
+});
+
+test('does not activate Meta duplicate when the original ad remains active after pause request', async () => {
+  const imageDataUrl = 'data:image/png;base64,AAAA';
+  const calls = [];
+
+  await assert.rejects(
+    () => cloneMetaAdWithReplacementCreativeFromOperation(
+      'act_123',
+      {
+        adId: 'ad-original',
+        adName: 'METODO DE PAGO-144',
+        adGroupId: 'adset-1',
+        requiredAspectRatio: '1:1',
+        metaCreative: {
+          id: 'creative-original',
+          name: 'Original Creative',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      },
+      imageDataUrl,
+      {
+        replacementImageDataUrlsByRatio: { '1:1': imageDataUrl },
+        pauseVerificationAttempts: 1,
+        pauseVerificationDelayMs: 0,
+        graphPostImpl: async (endpoint, data) => {
+          calls.push({ endpoint, data });
+          if (endpoint === '/act_123/adimages') return { images: { uploaded: { hash: 'new-image-hash' } } };
+          if (endpoint === '/act_123/adcreatives') return { id: 'creative-new' };
+          if (endpoint === '/act_123/ads') return { id: 'ad-new' };
+          if (endpoint === '/ad-original') return { success: true };
+          if (endpoint === '/ad-new') throw new Error('Duplicate should not be activated');
+          throw new Error(`Unexpected endpoint ${endpoint}`);
+        },
+        graphGetImpl: async (endpoint) => {
+          if (endpoint === '/ad-original') {
+            return {
+              id: 'ad-original',
+              status: 'ACTIVE',
+              configured_status: 'ACTIVE',
+              effective_status: 'ACTIVE',
+            };
+          }
+          throw new Error(`Unexpected endpoint ${endpoint}`);
+        },
+      },
+    ),
+    (error) => {
+      assert.equal(error.metaPartialReplacement.newAdId, 'ad-new');
+      assert.equal(error.metaPartialReplacement.newCreativeId, 'creative-new');
+      assert.equal(error.metaPartialReplacement.originalAdId, 'ad-original');
+      return /did not pause after update/.test(error.message) &&
+        /Duplicate ad ad-new was left paused and was not activated/.test(error.message);
+    },
+  );
+
+  assert.deepEqual(
+    calls.map((call) => call.endpoint),
+    ['/act_123/adimages', '/act_123/adcreatives', '/act_123/ads', '/ad-original'],
+  );
 });
 
 test('fails Meta clone replacement if the original ad cannot be paused', async () => {
