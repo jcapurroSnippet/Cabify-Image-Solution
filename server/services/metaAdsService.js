@@ -979,6 +979,29 @@ const resolveMetaImageAssetRatio = async (creative = {}, imageAsset = {}) => {
   );
 };
 
+export const getMetaCreativeReplacementRatios = async (creative = {}, fallbackRatio = '') => {
+  const ratios = [];
+  const addRatio = (ratio) => {
+    const normalizedRatio = normalizeAspectRatio(ratio);
+    if (normalizedRatio && !ratios.includes(normalizedRatio)) ratios.push(normalizedRatio);
+  };
+
+  if (creative?.asset_feed_spec) {
+    for (const imageAsset of getMetaAssetFeedImages(creative)) {
+      try {
+        addRatio(await resolveMetaImageAssetRatio(creative, imageAsset));
+      } catch {
+        // If Meta does not expose a resolvable asset URL, keep planning with the ratios we can infer.
+      }
+    }
+  } else {
+    addRatio(fallbackRatio);
+  }
+
+  if (ratios.length === 0) addRatio(fallbackRatio);
+  return ratios;
+};
+
 export const buildMetaImageHashByAssetKeyForRatios = async ({
   creative,
   replacementImageHashByRatio,
@@ -993,7 +1016,6 @@ export const buildMetaImageHashByAssetKeyForRatios = async ({
   if (!creative?.asset_feed_spec || requiredRatios.length === 0) return {};
 
   const imageHashByAssetKey = {};
-  const matchedRatios = new Set();
   for (const image of getMetaAssetFeedImages(creative)) {
     const imageAssetKey = getMetaImageAssetKey(image);
     if (!imageAssetKey) continue;
@@ -1003,14 +1025,9 @@ export const buildMetaImageHashByAssetKeyForRatios = async ({
     if (!replacementHash) continue;
 
     imageHashByAssetKey[imageAssetKey] = replacementHash;
-    matchedRatios.add(imageRatio);
   }
 
   if (Object.keys(imageHashByAssetKey).length > 0) {
-    const missingRatios = requiredRatios.filter((ratio) => !matchedRatios.has(ratio));
-    if (missingRatios.length > 0) {
-      throw new Error(`Could not match Meta creative image assets for ratios ${missingRatios.join(', ')}.`);
-    }
     return imageHashByAssetKey;
   }
 

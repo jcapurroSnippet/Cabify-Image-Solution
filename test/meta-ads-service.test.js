@@ -8,6 +8,7 @@ import {
   collectMetaLowPerformerAssets,
   formatMetaGraphErrorMessage,
   getCampaigns,
+  getMetaCreativeReplacementRatios,
   getLowPerformingImageAssets,
   isSafeMetaCreativeForImageClone,
   normalizeMetaLowPerformerAd,
@@ -448,6 +449,66 @@ test('matches Meta dynamic creative images by placement rules when image URLs ar
     payload.asset_feed_spec.images.map((image) => image.hash),
     ['new-square-hash', 'new-story-hash', 'new-search-hash'],
   );
+});
+
+test('detects only ratios that exist in a Meta creative', async () => {
+  const creative = {
+    id: 'creative-dynamic',
+    object_story_spec: { page_id: 'page-1' },
+    asset_feed_spec: {
+      images: [
+        { hash: 'square-hash', adlabels: [{ id: 'label-square' }] },
+        { hash: 'story-hash', adlabels: [{ id: 'label-story' }] },
+      ],
+      asset_customization_rules: [
+        { image_label: { id: 'label-square' }, customization_spec: {}, priority: 2 },
+        {
+          image_label: { id: 'label-story' },
+          customization_spec: { instagram_positions: ['story', 'reels'] },
+          priority: 1,
+        },
+      ],
+    },
+  };
+
+  const ratios = await getMetaCreativeReplacementRatios(creative, '16:9');
+
+  assert.deepEqual(ratios, ['1:1', '9:16']);
+});
+
+test('ignores replacement ratios that are not part of the Meta creative', async () => {
+  const creative = {
+    id: 'creative-dynamic',
+    object_story_spec: { page_id: 'page-1' },
+    asset_feed_spec: {
+      images: [
+        { hash: 'square-hash', adlabels: [{ id: 'label-square' }] },
+        { hash: 'story-hash', adlabels: [{ id: 'label-story' }] },
+      ],
+      asset_customization_rules: [
+        { image_label: { id: 'label-square' }, customization_spec: {}, priority: 2 },
+        {
+          image_label: { id: 'label-story' },
+          customization_spec: { instagram_positions: ['story', 'reels'] },
+          priority: 1,
+        },
+      ],
+    },
+  };
+
+  const imageHashByAssetKey = await buildMetaImageHashByAssetKeyForRatios({
+    creative,
+    replacementImageHashByRatio: {
+      '1:1': 'new-square-hash',
+      '9:16': 'new-story-hash',
+      '16:9': 'new-landscape-hash',
+    },
+  });
+
+  assert.deepEqual(imageHashByAssetKey, {
+    'square-hash': 'new-square-hash',
+    'story-hash': 'new-story-hash',
+  });
 });
 
 test('collects Meta low performers with at least 30 running days by lowest impressions', async () => {

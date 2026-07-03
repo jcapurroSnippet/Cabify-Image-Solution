@@ -19,6 +19,7 @@ import {
 } from './creativeLibraryCore.js';
 import {
   cloneMetaAdWithReplacementCreativeFromOperation,
+  getMetaCreativeReplacementRatios,
   getLowPerformingImageAssets,
 } from './metaAdsService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
@@ -32,7 +33,6 @@ import {
 
 export const buildMetaTargetCategoryName = (asset) => asset.adName || asset.assetName || '';
 const buildTargetPlazasName = (asset) => asset.campaignName || '';
-const META_CONSISTENT_REPLACEMENT_RATIOS = ['1:1', '9:16', '1.91:1'];
 
 const normalizeCampaignIds = ({ campaignId, campaignIds } = {}) => {
   const rawIds = Array.isArray(campaignIds)
@@ -79,13 +79,12 @@ const buildPlazasMatch = (asset, config) => detectPlazasFromName(buildTargetPlaz
 const buildMetaCreativeReplacementGroupKey = (asset = {}) =>
   String(asset.metaCreative?.id || asset.adId || asset.id || '').trim();
 
-const getMetaCreativeSetRequiredRatios = (requiredAspectRatio) => [
-  ...new Set(
-    [requiredAspectRatio, ...META_CONSISTENT_REPLACEMENT_RATIOS]
-      .map((ratio) => normalizeAspectRatio(ratio))
-      .filter(Boolean),
-  ),
-];
+const getMetaCreativeSetRequiredRatios = async (asset = {}, fallbackRatio = '') => {
+  const ratios = await getMetaCreativeReplacementRatios(asset.metaCreative || {}, fallbackRatio);
+  return ratios.length > 0
+    ? ratios
+    : [normalizeAspectRatio(fallbackRatio)].filter(Boolean);
+};
 
 const formatRatioList = (ratios = []) => ratios.filter(Boolean).join(', ');
 
@@ -368,7 +367,7 @@ export const buildMetaReplacementPlan = async ({
     }
 
     const metaCreativeGroupKey = buildMetaCreativeReplacementGroupKey(asset);
-    const metaCreativeSetRequiredRatios = getMetaCreativeSetRequiredRatios(requiredAspectRatio);
+    const metaCreativeSetRequiredRatios = await getMetaCreativeSetRequiredRatios(asset, requiredAspectRatio);
     let metaCreativeSetSelection = metaCreativeSetSelections.get(metaCreativeGroupKey);
 
     if (!metaCreativeSetSelection) {
@@ -393,8 +392,11 @@ export const buildMetaReplacementPlan = async ({
     }
 
     const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
-    const creative = normalizedRequiredAspectRatio
-      ? metaCreativeSetSelection.creativeSet?.creativesByRatio?.[normalizedRequiredAspectRatio]
+    const primaryReplacementRatio = metaCreativeSetRequiredRatios.includes(normalizedRequiredAspectRatio)
+      ? normalizedRequiredAspectRatio
+      : metaCreativeSetRequiredRatios[0] || normalizedRequiredAspectRatio;
+    const creative = primaryReplacementRatio
+      ? metaCreativeSetSelection.creativeSet?.creativesByRatio?.[primaryReplacementRatio]
       : metaCreativeSetSelection.creativeSet?.creatives?.[0];
 
     if (!creative) {
@@ -407,19 +409,20 @@ export const buildMetaReplacementPlan = async ({
       continue;
     }
 
-    if (normalizedRequiredAspectRatio && metaCreativeSetSelection.usedRatios.has(normalizedRequiredAspectRatio)) {
+    if (primaryReplacementRatio && metaCreativeSetSelection.usedRatios.has(primaryReplacementRatio)) {
       operations.push({
         ...baseOperation,
         message: 'NO_AVAILABLE_CREATIVE_FOR_RATIO',
-        blockedMessage: `No additional ${normalizedRequiredAspectRatio} creative in the selected Meta set.`,
+        blockedMessage: `No additional ${primaryReplacementRatio} creative in the selected Meta set.`,
       });
       continue;
     }
-    if (normalizedRequiredAspectRatio) metaCreativeSetSelection.usedRatios.add(normalizedRequiredAspectRatio);
+    if (primaryReplacementRatio) metaCreativeSetSelection.usedRatios.add(primaryReplacementRatio);
 
     operations.push({
       ...baseOperation,
       status: 'planned',
+      requiredAspectRatio: primaryReplacementRatio || requiredAspectRatio,
       creativeFamilyKey: metaCreativeSetSelection.creativeSet?.familyKey || '',
       creativeFamilyRequiredRatios: metaCreativeSetSelection.requiredRatios,
       creativeFamilyCreatives: (metaCreativeSetSelection.creativeSet?.creatives || []).map((familyCreative) => ({
