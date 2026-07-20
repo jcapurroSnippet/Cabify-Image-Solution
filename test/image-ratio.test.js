@@ -24,7 +24,9 @@ const buildImageDataUrl = async ({ width, height }) => {
 };
 
 test('classifies common Google creative aspect ratios from resolutions', () => {
-  assert.equal(classifyAspectRatio('1200x628'), '1.91:1');
+  assert.equal(classifyAspectRatio('1200x628'), '16:9');
+  assert.equal(classifyAspectRatio('1424x745'), '16:9');
+  assert.equal(classifyAspectRatio('1.91:1'), '16:9');
   assert.equal(classifyAspectRatio('1080x1080'), '1:1');
   assert.equal(classifyAspectRatio('1080x1920'), '9:16');
   assert.equal(classifyAspectRatio('1600x900'), '16:9');
@@ -32,7 +34,7 @@ test('classifies common Google creative aspect ratios from resolutions', () => {
 });
 
 test('falls back from Google asset field type when resolution is missing', () => {
-  assert.equal(getRequiredAspectRatio({ oldImageResolution: '', assetFieldType: 'MARKETING_IMAGE' }), '1.91:1');
+  assert.equal(getRequiredAspectRatio({ oldImageResolution: '', assetFieldType: 'MARKETING_IMAGE' }), '16:9');
   assert.equal(getRequiredAspectRatio({ oldImageResolution: '', assetFieldType: 'SQUARE_MARKETING_IMAGE' }), '1:1');
   assert.equal(getRequiredAspectRatio({ oldImageResolution: '', assetFieldType: 'PORTRAIT_MARKETING_IMAGE' }), '9:16');
 });
@@ -65,6 +67,6 @@ test('rejects replacement creatives when their aspect ratio does not match the G
       replacementResolution: { width: 1080, height: 1920 },
       creativeId: 'passenger_177',
     }),
-    /passenger_177.*1080x1920.*9:16.*1200x628.*1.91:1/,
+    /passenger_177.*1080x1920.*9:16.*1200x628.*16:9/,
   );
 });

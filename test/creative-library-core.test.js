@@ -365,7 +365,7 @@ test('selects complete creative families by required ratios', () => {
   assert.equal(set.familyKey, 'sheet-1::Riders | AR::10');
   assert.equal(set.creativesByRatio['1:1'].creative_id, 'family-a-square');
   assert.equal(set.creativesByRatio['9:16'].creative_id, 'family-a-portrait');
-  assert.equal(set.creativesByRatio['1.91:1'].creative_id, 'family-a-landscape');
+  assert.equal(set.creativesByRatio['16:9'].creative_id, 'family-a-landscape');
   assert.equal(
     selectCreativeSetForCategoryRatios(
       creatives,
@@ -377,6 +377,39 @@ test('selects complete creative families by required ratios', () => {
       'meta',
     ),
     null,
+  );
+});
+
+test('selects by aspect ratio regardless of platform and sheet resolution', () => {
+  const creatives = [
+    { creative_id: 'square', category: 'promo', plazas: 'ALL', status: 'available', image_resolution: '2048x2048' },
+    { creative_id: 'portrait', category: 'promo', plazas: 'ALL', status: 'available', image_resolution: '900x1600' },
+    { creative_id: 'landscape', category: 'promo', plazas: 'ALL', status: 'available', image_resolution: '1600x900' },
+  ];
+
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE', '1080x1080')?.creative_id,
+    'square',
+  );
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE', '1080x1920')?.creative_id,
+    'portrait',
+  );
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'BUE', '1920x1080')?.creative_id,
+    'landscape',
+  );
+});
+
+test('filters by ratio before preferring plaza-specific creatives', () => {
+  const creatives = [
+    { creative_id: 'bue-square', category: 'Generic', plazas: 'BUE', status: 'available', image_resolution: '1024x1024' },
+    { creative_id: 'all-landscape', category: 'Generic', plazas: 'ALL', status: 'available', image_resolution: '1424x745' },
+  ];
+
+  assert.equal(
+    selectCreativeForCategory(creatives, 'Generic', 'oldest_first', new Set(), 'BUE', '16:9', 'google')?.creative_id,
+    'all-landscape',
   );
 });
 
@@ -427,7 +460,7 @@ test('groups separated ratio creatives by explicit family id', () => {
   assert.equal(set.familyKey, 'set-1');
   assert.equal(set.creativesByRatio['1:1'].creative_id, 'set-1-square');
   assert.equal(set.creativesByRatio['9:16'].creative_id, 'set-1-portrait');
-  assert.equal(set.creativesByRatio['1.91:1'].creative_id, 'set-1-landscape');
+  assert.equal(set.creativesByRatio['16:9'].creative_id, 'set-1-landscape');
 });
 
 test('allows only expected creative status transitions', () => {

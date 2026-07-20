@@ -6,12 +6,14 @@ const KNOWN_ASPECT_RATIOS = [
   { label: '1:1', value: 1, aliases: ['1', 'square'] },
   { label: '9:16', value: 9 / 16, aliases: ['portrait'] },
   { label: '16:9', value: 16 / 9, aliases: ['video'] },
+  // Ad platforms commonly use ~1.91:1 for horizontal assets. The product
+  // treats that format as part of the same horizontal 16:9 bucket.
+  { label: '16:9', value: 1.91, aliases: ['1.91:1', '1.91', 'landscape', '1200x628'] },
   { label: '4:5', value: 4 / 5, aliases: ['vertical'] },
-  { label: '1.91:1', value: 1.91, aliases: ['1.91', 'landscape', '1200x628'] },
 ];
 
 const FIELD_TYPE_ASPECT_RATIOS = new Map([
-  ['MARKETING_IMAGE', '1.91:1'],
+  ['MARKETING_IMAGE', '16:9'],
   ['SQUARE_MARKETING_IMAGE', '1:1'],
   ['PORTRAIT_MARKETING_IMAGE', '9:16'],
   ['TALL_PORTRAIT_MARKETING_IMAGE', '9:16'],

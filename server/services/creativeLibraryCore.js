@@ -588,7 +588,6 @@ const getCreativeSelectionCandidates = (
   creatives,
   category,
   reservedIds = new Set(),
-  plazas = '',
   adsPlatform = '',
 ) => {
   const normalizedCategory = String(category || '').toLowerCase();
@@ -599,7 +598,7 @@ const getCreativeSelectionCandidates = (
       !reservedIds.has(creative.creative_id),
   );
 
-  return filterCreativesByPlazaPreference(candidates, plazas);
+  return candidates;
 };
 
 export const selectCreativeForCategory = (
@@ -612,12 +611,13 @@ export const selectCreativeForCategory = (
   adsPlatform = '',
 ) => {
   const normalizedRequiredAspectRatio = normalizeAspectRatio(requiredAspectRatio);
-  const available = getCreativeSelectionCandidates(creatives, category, reservedIds, plazas, adsPlatform)
+  const ratioMatches = getCreativeSelectionCandidates(creatives, category, reservedIds, adsPlatform)
     .filter(
       (creative) =>
         !normalizedRequiredAspectRatio ||
-        normalizeAspectRatio(creative.aspect_ratio) === normalizedRequiredAspectRatio,
+        getCreativeAspectRatio(creative) === normalizedRequiredAspectRatio,
     );
+  const available = filterCreativesByPlazaPreference(ratioMatches, plazas);
 
   if (available.length === 0) return null;
 
@@ -627,6 +627,11 @@ export const selectCreativeForCategory = (
 
   return sortCreativesBySelectionStrategy(available, strategy)[0];
 };
+
+// Matching is intentionally based on proportions, never on exact pixel dimensions.
+// image_resolution is a fallback for older/incomplete library rows without aspect_ratio.
+const getCreativeAspectRatio = (creative = {}) =>
+  normalizeAspectRatio(creative.aspect_ratio) || normalizeAspectRatio(creative.image_resolution);
 
 export const selectCreativeSetForCategoryRatios = (
   creatives,
@@ -658,8 +663,10 @@ export const selectCreativeSetForCategoryRatios = (
     return creative ? { familyKey: getCreativeFamilyKey(creative), creativesByRatio: {}, creatives: [creative] } : null;
   }
 
-  const candidates = getCreativeSelectionCandidates(creatives, category, reservedIds, plazas, adsPlatform)
-    .filter((creative) => getCreativeFamilyKey(creative));
+  const candidates = filterCreativesByPlazaPreference(
+    getCreativeSelectionCandidates(creatives, category, reservedIds, adsPlatform),
+    plazas,
+  ).filter((creative) => getCreativeFamilyKey(creative));
   const families = new Map();
 
   for (const creative of candidates) {
@@ -675,7 +682,7 @@ export const selectCreativeSetForCategoryRatios = (
 
     for (const ratio of normalizedRequiredRatios) {
       const ratioCreatives = sortCreativesBySelectionStrategy(
-        familyCreatives.filter((creative) => normalizeAspectRatio(creative.aspect_ratio) === ratio),
+        familyCreatives.filter((creative) => getCreativeAspectRatio(creative) === ratio),
         strategy,
       );
       if (ratioCreatives.length === 0) {
