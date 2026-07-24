@@ -3,6 +3,8 @@ import path from 'node:path';
 import {
   CREATIVE_AUDIT_HEADERS,
   CREATIVE_AUDIT_SHEET,
+  CREATIVE_CAMPAIGN_USAGE_HEADERS,
+  CREATIVE_CAMPAIGN_USAGE_SHEET,
   CREATIVE_CATEGORIES_HEADERS,
   CREATIVE_CATEGORIES_SHEET,
   CREATIVE_LIBRARY_HEADERS,
@@ -385,7 +387,12 @@ const resolveSourceSheetName = async (sheets, spreadsheetId, sheetsUrl, provided
 
   const sourceCandidate = metadata.find((sheet) => {
     const title = sheet.properties?.title;
-    return title && ![CREATIVE_LIBRARY_SHEET, CREATIVE_AUDIT_SHEET, CREATIVE_CATEGORIES_SHEET].includes(title);
+    return title && ![
+      CREATIVE_LIBRARY_SHEET,
+      CREATIVE_AUDIT_SHEET,
+      CREATIVE_CAMPAIGN_USAGE_SHEET,
+      CREATIVE_CATEGORIES_SHEET,
+    ].includes(title);
   });
 
   return sourceCandidate?.properties?.title || 'Sheet1';
@@ -631,6 +638,12 @@ const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
   );
 
   await ensureSheetWithHeaders(sheets, spreadsheetId, CREATIVE_AUDIT_SHEET, CREATIVE_AUDIT_HEADERS);
+  await ensureSheetWithHeaders(
+    sheets,
+    spreadsheetId,
+    CREATIVE_CAMPAIGN_USAGE_SHEET,
+    CREATIVE_CAMPAIGN_USAGE_HEADERS,
+  );
 
   if (librarySheetId !== undefined && librarySheetId !== null) {
     await applyCategoryValidation(
@@ -1536,10 +1549,15 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
   await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, creatives);
   await normalizeLibraryRowImageMetadata(sheets, spreadsheetId, creatives);
   await formatLibraryUrlColumns(sheets, spreadsheetId, creatives);
+  const campaignUsageRows = await readCampaignUsageRows(sheets, spreadsheetId);
+  await migrateAuditUsageRows(sheets, spreadsheetId, campaignUsageRows);
   const byCategory = {};
   const byStatus = {};
 
   for (const creative of creatives) {
+    if (String(creative.status || '').toLowerCase() === 'used') {
+      creative.status = 'available';
+    }
     const category = creative.category || 'uncategorized';
     const status = creative.status || 'unknown';
     byCategory[category] ??= { total: 0, available: 0, used: 0, reserved: 0, failed: 0, archived: 0 };
@@ -2001,32 +2019,218 @@ const updateLibraryRow = async (spreadsheetId, rowNumber, patch) => {
   });
 };
 
-const hasUsageValue = (value) => String(value ?? '').trim().length > 0;
+const normalizeUsagePlatform = (value) => String(value || '').trim().toLowerCase();
+const normalizeUsageAccountId = (value) => String(value || '').trim().toLowerCase().replace(/-/g, '');
+const normalizeUsageId = (value) => String(value || '').trim();
+const isBlockingUsageStatus = (value) => ['reserved', 'used'].includes(String(value || '').trim().toLowerCase());
 
-const statusAfterReservationRelease = (creative) =>
-  hasUsageValue(creative?.used_at_google) ||
-  hasUsageValue(creative?.used_at_meta) ||
-  hasUsageValue(creative?.used_at)
-    ? 'used'
-    : 'available';
+export const buildCreativeCampaignUsageKey = ({
+  creativeId,
+  creative_id,
+  platform,
+  accountId,
+  account_id,
+  campaignId,
+  campaign_id,
+} = {}) => [
+  normalizeUsagePlatform(platform),
+  normalizeUsageAccountId(accountId || account_id),
+  normalizeUsageId(campaignId || campaign_id),
+  normalizeUsageId(creativeId || creative_id),
+].join('::');
 
-export const reserveCreative = async (spreadsheetId, creativeId, operationId, adsPlatform = '') => {
-  const sheets = await getSheetsClient();
-  const rows = await readLibraryRows(sheets, spreadsheetId);
-  const creative = rows.find((row) => row.creative_id === creativeId);
+export const getUnavailableCreativeIdsForCampaign = (usageRows = [], context = {}) => {
+  const prefix = [
+    normalizeUsagePlatform(context.platform),
+    normalizeUsageAccountId(context.accountId || context.account_id),
+    normalizeUsageId(context.campaignId || context.campaign_id),
+  ].join('::');
 
-  if (!creative) throw new Error(`Creative ${creativeId} not found.`);
-  if (!isCreativeAvailableForPlatform(creative, adsPlatform)) {
-    throw new Error(`Creative ${creativeId} is not available.`);
+  const latestByOperation = new Map();
+  for (const row of usageRows) {
+    const operationKey = [
+      buildCreativeCampaignUsageKey(row),
+      normalizeUsageId(row.operation_id || row.operationId),
+    ].join('::');
+    latestByOperation.set(operationKey, row);
   }
 
-  await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
-    status: 'reserved',
-    reserved_at: nowIso(),
-    replacement_operation_id: operationId,
-  });
+  return new Set(
+    [...latestByOperation.values()]
+      .filter((row) => isBlockingUsageStatus(row.status))
+      .filter((row) => buildCreativeCampaignUsageKey(row).startsWith(`${prefix}::`))
+      .map((row) => normalizeUsageId(row.creative_id || row.creativeId))
+      .filter(Boolean),
+  );
+};
 
-  return { ...creative, status: 'reserved', replacement_operation_id: operationId };
+const appendCampaignUsageRows = async (sheets, spreadsheetId, rows) => {
+  if (rows.length === 0) return;
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: buildRange(CREATIVE_CAMPAIGN_USAGE_SHEET, 'A:K'),
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: rows.map((row) => objectToRow(CREATIVE_CAMPAIGN_USAGE_HEADERS, row)),
+    },
+  });
+};
+
+const readCampaignUsageRows = async (sheets, spreadsheetId) => {
+  await ensureSheetWithHeaders(
+    sheets,
+    spreadsheetId,
+    CREATIVE_CAMPAIGN_USAGE_SHEET,
+    CREATIVE_CAMPAIGN_USAGE_HEADERS,
+  );
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(CREATIVE_CAMPAIGN_USAGE_SHEET, 'A:K'),
+  });
+  return valuesToObjects(response.data.values || []);
+};
+
+export const buildCampaignUsageRowsFromAudit = (auditRows = [], usageRows = []) => {
+  const existingKeys = new Set(
+    usageRows
+      .filter((row) => String(row.status || '').toLowerCase() === 'used')
+      .map(buildCreativeCampaignUsageKey),
+  );
+  const migrated = [];
+
+  for (const row of auditRows) {
+    if (normalizeAuditText(row.event) !== 'ASSET_REPLACED') continue;
+    if (normalizeAuditText(row.status).toLowerCase() !== 'success') continue;
+    if (!normalizeUsageId(row.creative_id) || !normalizeUsageId(row.campaign_id)) continue;
+
+    const payload = parseAuditPayload(row.payload_json);
+    const operation = payload.operation || {};
+    const platform = inferAuditPlatform(row, payload) || operation.platform || '';
+    const accountId = row.customer_id || operation.accountId || operation.customerId || '';
+    if (!platform || !accountId) continue;
+
+    const creativeIds = [
+      ...new Set(
+        [row.creative_id, ...(Array.isArray(payload.replacementCreativeIds) ? payload.replacementCreativeIds : [])]
+          .map(normalizeUsageId)
+          .filter(Boolean),
+      ),
+    ];
+    for (const creativeId of creativeIds) {
+      const usage = {
+        creative_id: creativeId,
+        platform,
+        account_id: accountId,
+        campaign_id: row.campaign_id,
+        campaign_name: operation.campaignName || '',
+        operation_id: operation.id || `audit:${row.__rowNumber}`,
+        status: 'used',
+        ads_resource_name: row.new_asset_resource_name || '',
+        reserved_at: '',
+        used_at: row.timestamp || nowIso(),
+        updated_at: row.timestamp || nowIso(),
+      };
+      const key = buildCreativeCampaignUsageKey(usage);
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      migrated.push(usage);
+    }
+  }
+
+  return migrated;
+};
+
+const migrateAuditUsageRows = async (sheets, spreadsheetId, usageRows) => {
+  await ensureSheetWithHeaders(sheets, spreadsheetId, CREATIVE_AUDIT_SHEET, CREATIVE_AUDIT_HEADERS);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(CREATIVE_AUDIT_SHEET, 'A:M'),
+  });
+  const auditRows = valuesToObjects(response.data.values || []);
+  const migrated = buildCampaignUsageRowsFromAudit(auditRows, usageRows);
+  await appendCampaignUsageRows(sheets, spreadsheetId, migrated);
+  return migrated;
+};
+
+export const listCreativeCampaignUsage = async (spreadsheetId) => {
+  const sheets = await getSheetsClient();
+  const usageRows = await readCampaignUsageRows(sheets, spreadsheetId);
+  const migratedRows = await migrateAuditUsageRows(sheets, spreadsheetId, usageRows);
+  return [...usageRows, ...migratedRows];
+};
+
+const findOperationUsageRow = (rows, creativeId, operationId) =>
+  [...rows].reverse().find(
+    (row) =>
+      normalizeUsageId(row.creative_id) === normalizeUsageId(creativeId) &&
+      normalizeUsageId(row.operation_id) === normalizeUsageId(operationId),
+  );
+
+const campaignUsageReservationLocks = new Map();
+
+const withCampaignUsageReservationLock = async (spreadsheetId, callback) => {
+  const previous = campaignUsageReservationLocks.get(spreadsheetId) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  campaignUsageReservationLocks.set(spreadsheetId, current);
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    release();
+    if (campaignUsageReservationLocks.get(spreadsheetId) === current) {
+      campaignUsageReservationLocks.delete(spreadsheetId);
+    }
+  }
+};
+
+export const reserveCreative = async (spreadsheetId, creativeId, context = {}) => {
+  if (!context.platform || !context.accountId || !context.campaignId || !context.operationId) {
+    throw new Error('Creative reservation requires platform, accountId, campaignId, and operationId.');
+  }
+  return withCampaignUsageReservationLock(spreadsheetId, async () => {
+    const sheets = await getSheetsClient();
+    const rows = await readLibraryRows(sheets, spreadsheetId);
+    const creative = rows.find((row) => row.creative_id === creativeId);
+
+    if (!creative) throw new Error(`Creative ${creativeId} not found.`);
+    if (!isCreativeAvailableForPlatform(creative, context.platform)) {
+      throw new Error(`Creative ${creativeId} is not available.`);
+    }
+
+    const usageRows = await readCampaignUsageRows(sheets, spreadsheetId);
+    const existingOperation = findOperationUsageRow(usageRows, creativeId, context.operationId);
+    if (existingOperation && String(existingOperation.status).toLowerCase() === 'reserved') {
+      return { ...creative, campaignUsage: existingOperation };
+    }
+    if (existingOperation && String(existingOperation.status).toLowerCase() === 'used') {
+      throw new Error(`Creative ${creativeId} was already used by operation ${context.operationId}.`);
+    }
+    const unavailableIds = getUnavailableCreativeIdsForCampaign(usageRows, context);
+    if (unavailableIds.has(normalizeUsageId(creativeId))) {
+      throw new Error(`Creative ${creativeId} is already reserved or used in campaign ${context.campaignId}.`);
+    }
+
+    const timestamp = nowIso();
+    const campaignUsage = {
+      creative_id: creativeId,
+      platform: context.platform || '',
+      account_id: context.accountId || '',
+      campaign_id: context.campaignId || '',
+      campaign_name: context.campaignName || '',
+      operation_id: context.operationId || '',
+      status: 'reserved',
+      ads_resource_name: '',
+      reserved_at: timestamp,
+      used_at: '',
+      updated_at: timestamp,
+    };
+    await appendCampaignUsageRows(sheets, spreadsheetId, [campaignUsage]);
+    return { ...creative, campaignUsage };
+  });
 };
 
 export const markCreativeUsed = async (spreadsheetId, creativeId, data) => {
@@ -2038,9 +2242,25 @@ export const markCreativeUsed = async (spreadsheetId, creativeId, data) => {
   const adsResourceName = data.adsResourceName || data.googleAdsAssetResourceName || '';
   const adsPlatform = data.adsPlatform || (data.googleAdsAssetResourceName ? 'google' : '');
   const usageColumn = adsPlatform === 'meta' ? 'used_at_meta' : 'used_at_google';
+  const usageRows = await readCampaignUsageRows(sheets, spreadsheetId);
+  const usage = findOperationUsageRow(usageRows, creativeId, data.operationId);
+  if (!usage) throw new Error(`Campaign reservation for creative ${creativeId} was not found.`);
+  if (String(usage.status).toLowerCase() === 'used') return;
+  if (String(usage.status).toLowerCase() !== 'reserved') {
+    throw new Error(`Campaign reservation for creative ${creativeId} is no longer active.`);
+  }
+  const timestamp = nowIso();
+  await appendCampaignUsageRows(sheets, spreadsheetId, [{
+    ...usage,
+    __rowNumber: undefined,
+    status: 'used',
+    ads_resource_name: adsResourceName,
+    used_at: timestamp,
+    updated_at: timestamp,
+  }]);
 
   await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
-    status: 'used',
+    status: String(creative.status || '').toLowerCase() === 'used' ? 'available' : creative.status || 'available',
     [usageColumn]: nowIso(),
     ads_platform: adsPlatform,
     ads_resource_name: adsResourceName,
@@ -2053,18 +2273,17 @@ export const markCreativeUsed = async (spreadsheetId, creativeId, data) => {
   });
 };
 
-export const releaseCreativeReservation = async (spreadsheetId, creativeId, notes = '') => {
+export const releaseCreativeReservation = async (spreadsheetId, creativeId, operationId, notes = '', status = 'released') => {
   const sheets = await getSheetsClient();
-  const rows = await readLibraryRows(sheets, spreadsheetId);
-  const creative = rows.find((row) => row.creative_id === creativeId);
-  if (!creative) return;
-
-  await updateLibraryRow(spreadsheetId, creative.__rowNumber, {
-    status: statusAfterReservationRelease(creative),
-    reserved_at: '',
-    replacement_operation_id: '',
-    notes: notes || creative.notes || '',
-  });
+  const usageRows = await readCampaignUsageRows(sheets, spreadsheetId);
+  const usage = findOperationUsageRow(usageRows, creativeId, operationId);
+  if (!usage || String(usage.status).toLowerCase() !== 'reserved') return;
+  await appendCampaignUsageRows(sheets, spreadsheetId, [{
+    ...usage,
+    __rowNumber: undefined,
+    status: status === 'failed' ? 'failed' : 'released',
+    updated_at: nowIso(),
+  }]);
 };
 
 export const getSpreadsheetIdFromLibraryInput = (sheetsUrl) => extractSpreadsheetId(sheetsUrl);

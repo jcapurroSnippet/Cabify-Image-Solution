@@ -4,7 +4,9 @@ import {
   filterRecentlyReplacedLowPerformers,
   getSpreadsheetIdFromLibraryInput,
   getCreativeLibrarySheetConfig,
+  getUnavailableCreativeIdsForCampaign,
   listRecentlyReplacedTargetKeys,
+  listCreativeCampaignUsage,
   listCreativeLibrary,
   markCreativeUsed,
   releaseCreativeReservation,
@@ -272,6 +274,8 @@ export const buildMetaReplacementPlan = async ({
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const selectedCategories = normalizeLowPerformerCategories(lowPerformerCategories, config);
   const library = await listCreativeLibrary({ sheetsUrl });
+  const spreadsheetId = getSpreadsheetIdFromLibraryInput(sheetsUrl);
+  const campaignUsage = await listCreativeCampaignUsage(spreadsheetId);
   const selectedLowIds = Array.isArray(selectedLowPerformerIds)
     ? new Set(selectedLowPerformerIds.map((id) => String(id)))
     : null;
@@ -282,7 +286,7 @@ export const buildMetaReplacementPlan = async ({
     limit,
     selectedLowPerformerIds: selectedLowIds,
   });
-  const reservedCreativeIds = new Set(excludedCreativeIds.map((id) => String(id)).filter(Boolean));
+  const plannedCreativeIdsByCampaign = new Map();
   const metaCreativeSetSelections = new Map();
   const operations = [];
 
@@ -366,7 +370,17 @@ export const buildMetaReplacementPlan = async ({
       continue;
     }
 
-    const metaCreativeGroupKey = buildMetaCreativeReplacementGroupKey(asset);
+    const campaignUsageContext = {
+      platform: 'meta',
+      accountId,
+      campaignId: asset.campaignId,
+    };
+    const unavailableCreativeIds = getUnavailableCreativeIdsForCampaign(campaignUsage, campaignUsageContext);
+    const plannedForCampaign = plannedCreativeIdsByCampaign.get(String(asset.campaignId)) || new Set();
+    plannedForCampaign.forEach((creativeId) => unavailableCreativeIds.add(creativeId));
+    excludedCreativeIds.forEach((creativeId) => unavailableCreativeIds.add(String(creativeId)));
+
+    const metaCreativeGroupKey = `${asset.campaignId}::${buildMetaCreativeReplacementGroupKey(asset)}`;
     const metaCreativeSetRequiredRatios = await getMetaCreativeSetRequiredRatios(asset, requiredAspectRatio);
     let metaCreativeSetSelection = metaCreativeSetSelections.get(metaCreativeGroupKey);
 
@@ -376,12 +390,13 @@ export const buildMetaReplacementPlan = async ({
         categoryMatch.category,
         metaCreativeSetRequiredRatios,
         config.selectionStrategy,
-        reservedCreativeIds,
+        unavailableCreativeIds,
         plazasMatch.plazas,
         'meta',
       );
       if (creativeSet) {
-        creativeSet.creatives.forEach((familyCreative) => reservedCreativeIds.add(familyCreative.creative_id));
+        creativeSet.creatives.forEach((familyCreative) => plannedForCampaign.add(familyCreative.creative_id));
+        plannedCreativeIdsByCampaign.set(String(asset.campaignId), plannedForCampaign);
       }
       metaCreativeSetSelection = {
         creativeSet,
@@ -586,7 +601,13 @@ export const executeMetaReplacements = async ({
       const familyCreatives = getMetaReplacementFamilyCreatives(operation);
       for (const familyCreative of familyCreatives) {
         const familyCreativeId = familyCreative.creative_id;
-        const reserved = await reserveCreative(spreadsheetId, familyCreativeId, operation.id, 'meta');
+        const reserved = await reserveCreative(spreadsheetId, familyCreativeId, {
+          platform: 'meta',
+          accountId,
+          campaignId: operation.campaignId,
+          campaignName: operation.campaignName,
+          operationId: operation.id,
+        });
         reservedCreatives.push(reserved);
       }
 
@@ -641,6 +662,7 @@ export const executeMetaReplacements = async ({
           releaseCreativeReservation(
             spreadsheetId,
             reserved.creative_id,
+            operation.id,
             `Reserved for ${operation.id}, but not applied to the Meta creative.`,
           ),
         ),
@@ -701,10 +723,21 @@ export const executeMetaReplacements = async ({
       logReplacementFailure({ operation, creativeId, executionError });
       const partialReplacement = executionError.partialReplacement || {};
       const createdDuplicateAd = Boolean(partialReplacement.newAdId);
-      if (!createdDuplicateAd) {
+      if (createdDuplicateAd) {
         await Promise.all(
           reservedCreatives.map((reserved) =>
-            releaseCreativeReservation(spreadsheetId, reserved.creative_id, error.message),
+            markCreativeUsed(spreadsheetId, reserved.creative_id, {
+              adsPlatform: 'meta',
+              adsResourceName: partialReplacement.newAdId || partialReplacement.newCreativeId || '',
+              operationId: operation.id,
+              notes: `Partially applied for ${operation.campaignName} / ${operation.adGroupName}`,
+            }),
+          ),
+        );
+      } else {
+        await Promise.all(
+          reservedCreatives.map((reserved) =>
+            releaseCreativeReservation(spreadsheetId, reserved.creative_id, operation.id, error.message, 'failed'),
           ),
         );
       }

@@ -510,24 +510,9 @@ const plazasToSet = (value) =>
       .filter(Boolean),
   );
 
-const hasUsageValue = (value) => String(value ?? '').trim().length > 0;
-
 const normalizeAdsPlatform = (value) => {
   const platform = String(value || '').trim().toLowerCase();
   return platform === 'google' || platform === 'meta' ? platform : null;
-};
-
-const hasLegacyGoogleUsage = (creative) => {
-  if (hasUsageValue(creative.used_at)) return true;
-  if (hasUsageValue(creative.used_at_google) || hasUsageValue(creative.used_at_meta)) return false;
-  return String(creative.status || '').toLowerCase() === 'used';
-};
-
-const getCreativeUsedAtForPlatform = (creative, adsPlatform) => {
-  const platform = normalizeAdsPlatform(adsPlatform);
-  if (platform === 'google') return creative.used_at_google || creative.used_at || (hasLegacyGoogleUsage(creative) ? 'legacy_used' : '');
-  if (platform === 'meta') return creative.used_at_meta || '';
-  return '';
 };
 
 export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
@@ -535,11 +520,13 @@ export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
 
   const platform = normalizeAdsPlatform(adsPlatform);
   const status = String(creative.status || '').toLowerCase();
-  if (!platform) return status === 'available';
+  if (!platform) return ['available', 'used'].includes(status);
   if (['reserved', 'failed', 'archived'].includes(status)) return false;
   if (!['available', 'used'].includes(status)) return false;
 
-  return !hasUsageValue(getCreativeUsedAtForPlatform(creative, platform));
+  // Platform timestamps are historical metadata. Campaign-scoped usage is
+  // enforced by creative_campaign_usage before candidates reach this selector.
+  return true;
 };
 
 export const getCreativeFamilyKey = (creative = {}) => {

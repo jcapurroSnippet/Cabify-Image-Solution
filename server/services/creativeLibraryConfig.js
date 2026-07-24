@@ -31,6 +31,7 @@ export const DEFAULT_SOURCE_SHEETS = [
 
 export const CREATIVE_LIBRARY_SHEET = 'creative_library';
 export const CREATIVE_AUDIT_SHEET = 'creative_audit_log';
+export const CREATIVE_CAMPAIGN_USAGE_SHEET = 'creative_campaign_usage';
 export const CREATIVE_CATEGORIES_SHEET = 'creative_categories';
 
 export const CREATIVE_CATEGORIES_HEADERS = [
@@ -91,6 +92,20 @@ export const CREATIVE_AUDIT_HEADERS = [
   'status',
   'message',
   'payload_json',
+];
+
+export const CREATIVE_CAMPAIGN_USAGE_HEADERS = [
+  'creative_id',
+  'platform',
+  'account_id',
+  'campaign_id',
+  'campaign_name',
+  'operation_id',
+  'status',
+  'ads_resource_name',
+  'reserved_at',
+  'used_at',
+  'updated_at',
 ];
 
 const parseJsonEnv = (key, fallback) => {

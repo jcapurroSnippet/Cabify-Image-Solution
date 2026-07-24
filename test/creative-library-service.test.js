@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildCampaignUsageRowsFromAudit,
   buildRecentlyReplacedTargetKeys,
   buildSourceCreativeFamilyId,
   buildSourceColumnIndex,
@@ -8,6 +9,7 @@ import {
   findOutputColumns,
   formatLibraryAspectRatioCell,
   formatLibraryUrlCell,
+  getUnavailableCreativeIdsForCampaign,
   getUrlFromSheetValue,
   inferCreativeFamilyIdFromImageUrl,
   inferCreativeFamilyIdFromSourceRows,
@@ -96,6 +98,103 @@ test('migrates legacy family id columns into creative_family_id', () => {
   );
 
   assert.deepEqual(rows, [['promo-1', 'riders-ar-001', '1:1']]);
+});
+
+test('blocks creative usage only within the same platform account and campaign', () => {
+  const usageRows = [
+    {
+      creative_id: 'creative-1',
+      platform: 'google',
+      account_id: '123-456',
+      campaign_id: 'campaign-a',
+      status: 'used',
+    },
+    {
+      creative_id: 'creative-2',
+      platform: 'google',
+      account_id: '123456',
+      campaign_id: 'campaign-a',
+      status: 'reserved',
+    },
+    {
+      creative_id: 'creative-3',
+      platform: 'google',
+      account_id: '123456',
+      campaign_id: 'campaign-a',
+      operation_id: 'operation-3',
+      status: 'reserved',
+    },
+    {
+      creative_id: 'creative-3',
+      platform: 'google',
+      account_id: '123456',
+      campaign_id: 'campaign-a',
+      operation_id: 'operation-3',
+      status: 'released',
+    },
+  ];
+
+  assert.deepEqual(
+    [...getUnavailableCreativeIdsForCampaign(usageRows, {
+      platform: 'google',
+      accountId: '123456',
+      campaignId: 'campaign-a',
+    })].sort(),
+    ['creative-1', 'creative-2'],
+  );
+  assert.equal(getUnavailableCreativeIdsForCampaign(usageRows, {
+    platform: 'google',
+    accountId: '123456',
+    campaignId: 'campaign-b',
+  }).size, 0);
+  assert.equal(getUnavailableCreativeIdsForCampaign(usageRows, {
+    platform: 'meta',
+    accountId: '123456',
+    campaignId: 'campaign-a',
+  }).size, 0);
+});
+
+test('migrates successful campaign audit usage idempotently and ignores unknown campaigns', () => {
+  const auditRows = [
+    {
+      __rowNumber: 2,
+      timestamp: '2026-07-01T12:00:00.000Z',
+      event: 'ASSET_REPLACED',
+      status: 'success',
+      creative_id: 'creative-primary',
+      customer_id: 'act_123',
+      campaign_id: 'campaign-a',
+      new_asset_resource_name: 'new-ad',
+      payload_json: JSON.stringify({
+        platform: 'meta',
+        operation: { id: 'operation-1', campaignName: 'Campaign A' },
+        replacementCreativeIds: ['creative-primary', 'creative-portrait'],
+      }),
+    },
+    {
+      __rowNumber: 3,
+      timestamp: '2026-07-01T12:00:00.000Z',
+      event: 'ASSET_REPLACED',
+      status: 'success',
+      creative_id: 'legacy-without-campaign',
+      customer_id: 'act_123',
+      campaign_id: '',
+      payload_json: JSON.stringify({ platform: 'meta' }),
+    },
+  ];
+  const existingUsage = [{
+    creative_id: 'creative-primary',
+    platform: 'meta',
+    account_id: 'act_123',
+    campaign_id: 'campaign-a',
+    status: 'used',
+  }];
+
+  const migrated = buildCampaignUsageRowsFromAudit(auditRows, existingUsage);
+
+  assert.deepEqual(migrated.map((row) => row.creative_id), ['creative-portrait']);
+  assert.equal(migrated[0].campaign_name, 'Campaign A');
+  assert.equal(migrated[0].operation_id, 'operation-1');
 });
 
 test('formats aspect ratios as literal text for Google Sheets', () => {

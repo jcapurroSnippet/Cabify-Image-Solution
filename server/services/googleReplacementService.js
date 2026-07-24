@@ -15,7 +15,9 @@ import {
   filterRecentlyReplacedLowPerformers,
   getSpreadsheetIdFromLibraryInput,
   getCreativeLibrarySheetConfig,
+  getUnavailableCreativeIdsForCampaign,
   listRecentlyReplacedTargetKeys,
+  listCreativeCampaignUsage,
   listCreativeLibrary,
   markCreativeUsed,
   releaseCreativeReservation,
@@ -158,6 +160,8 @@ export const buildGoogleReplacementPlan = async ({
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const selectedCategories = normalizeLowPerformerCategories(lowPerformerCategories, config);
   const library = await listCreativeLibrary({ sheetsUrl });
+  const spreadsheetId = getSpreadsheetIdFromLibraryInput(sheetsUrl);
+  const campaignUsage = await listCreativeCampaignUsage(spreadsheetId);
   const selectedLowIds = Array.isArray(selectedLowPerformerIds)
     ? new Set(selectedLowPerformerIds.map((id) => String(id)))
     : null;
@@ -168,7 +172,7 @@ export const buildGoogleReplacementPlan = async ({
     limit,
     selectedLowPerformerIds: selectedLowIds,
   });
-  const reservedCreativeIds = new Set();
+  const plannedCreativeIdsByCampaign = new Map();
   const operations = [];
 
   for (const asset of lowPerformers) {
@@ -249,11 +253,20 @@ export const buildGoogleReplacementPlan = async ({
       continue;
     }
 
+    const campaignUsageContext = {
+      platform: 'google',
+      accountId,
+      campaignId: asset.campaignId,
+    };
+    const unavailableCreativeIds = getUnavailableCreativeIdsForCampaign(campaignUsage, campaignUsageContext);
+    const plannedForCampaign = plannedCreativeIdsByCampaign.get(String(asset.campaignId)) || new Set();
+    plannedForCampaign.forEach((creativeId) => unavailableCreativeIds.add(creativeId));
+
     const creative = selectCreativeForCategory(
       library.creatives,
       categoryMatch.category,
       config.selectionStrategy,
-      reservedCreativeIds,
+      unavailableCreativeIds,
       plazasMatch.plazas,
       requiredAspectRatio,
       'google',
@@ -269,7 +282,8 @@ export const buildGoogleReplacementPlan = async ({
       continue;
     }
 
-    reservedCreativeIds.add(creative.creative_id);
+    plannedForCampaign.add(creative.creative_id);
+    plannedCreativeIdsByCampaign.set(String(asset.campaignId), plannedForCampaign);
     operations.push({
       ...baseOperation,
       ...replacementCapability,
@@ -451,7 +465,13 @@ export const executeGoogleReplacements = async ({
     }
 
     try {
-      const reserved = await reserveCreative(spreadsheetId, creativeId, operation.id, 'google');
+      const reserved = await reserveCreative(spreadsheetId, creativeId, {
+        platform: 'google',
+        accountId,
+        campaignId: operation.campaignId,
+        campaignName: operation.campaignName,
+        operationId: operation.id,
+      });
       const creativeUrl = getCreativeDriveUrl(reserved) || getCreativeDriveUrl(operation.creative);
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
       const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
@@ -508,7 +528,7 @@ export const executeGoogleReplacements = async ({
     } catch (error) {
       const executionError = getExecutionErrorDetails(error);
       logReplacementFailure({ operation, creativeId, executionError });
-      await releaseCreativeReservation(spreadsheetId, creativeId, error.message);
+      await releaseCreativeReservation(spreadsheetId, creativeId, operation.id, error.message, 'failed');
       await appendAuditLog(spreadsheetId, [
         {
           event: 'REPLACEMENT_FAILED',

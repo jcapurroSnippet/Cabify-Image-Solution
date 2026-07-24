@@ -18,6 +18,7 @@ import {
   selectCreativeSetForCategoryRatios,
 } from '../server/services/creativeLibraryCore.js';
 import {
+  CREATIVE_CAMPAIGN_USAGE_HEADERS,
   CREATIVE_LIBRARY_HEADERS,
   SOURCE_STATUS_COLUMNS,
   getCreativeLibraryConfig,
@@ -111,6 +112,22 @@ test('detects beneficios ad set text as promo category', () => {
   assert.equal(result.warning, null);
 });
 
+test('defines campaign-scoped creative usage ledger columns', () => {
+  assert.deepEqual(CREATIVE_CAMPAIGN_USAGE_HEADERS, [
+    'creative_id',
+    'platform',
+    'account_id',
+    'campaign_id',
+    'campaign_name',
+    'operation_id',
+    'status',
+    'ads_resource_name',
+    'reserved_at',
+    'used_at',
+    'updated_at',
+  ]);
+});
+
 test('detects Meta ad-name aliases for promo category', () => {
   assert.equal(detectCategoryFromName('SI_PRECIO - IA', config).category, 'Promo');
   assert.equal(detectCategoryFromName('AR_ATR_ALWAYS_ON', config).category, 'Promo');
@@ -187,7 +204,7 @@ test('selects an available creative by category and avoids reserved ids', () => 
   assert.equal(selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL')?.creative_id, 'd');
 });
 
-test('selects creatives by platform-specific usage columns', () => {
+test('treats platform usage timestamps as historical metadata', () => {
   const creatives = [
     {
       creative_id: 'google-used',
@@ -220,7 +237,7 @@ test('selects creatives by platform-specific usage columns', () => {
 
   assert.equal(
     selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google')?.creative_id,
-    'meta-used',
+    'google-used',
   );
   assert.equal(
     selectCreativeForCategory(creatives, 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta')?.creative_id,
@@ -228,15 +245,15 @@ test('selects creatives by platform-specific usage columns', () => {
   );
   assert.equal(
     selectCreativeForCategory([creatives[2]], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google'),
-    null,
+    creatives[2],
   );
   assert.equal(
     selectCreativeForCategory([creatives[2]], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta'),
-    null,
+    creatives[2],
   );
 });
 
-test('treats legacy used_at rows as Google usage only', () => {
+test('allows legacy used rows because campaign-specific usage is tracked separately', () => {
   const creative = {
     creative_id: 'legacy-google-used',
     category: 'promo',
@@ -248,7 +265,7 @@ test('treats legacy used_at rows as Google usage only', () => {
 
   assert.equal(
     selectCreativeForCategory([creative], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'google'),
-    null,
+    creative,
   );
   assert.equal(
     selectCreativeForCategory([creative], 'Promo', 'oldest_first', new Set(), 'ALL', null, 'meta')?.creative_id,
