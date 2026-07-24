@@ -122,8 +122,19 @@ export default function CreativeLibraryTab() {
   const [execution, setExecution] = useState<ExecutionResponse | null>(null);
   const [selectedLowPerformerIds, setSelectedLowPerformerIds] = useState<Set<string>>(new Set());
   const [selectedOperationIds, setSelectedOperationIds] = useState<Set<string>>(new Set());
+  const [expandedPreview, setExpandedPreview] = useState<{ src: string; alt: string } | null>(null);
   const campaignControlsRef = useRef<HTMLDivElement | null>(null);
   const fetchedCampaignAccountsRef = useRef<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
+
+  useEffect(() => {
+    if (!expandedPreview) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpandedPreview(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [expandedPreview]);
 
   useEffect(() => {
     let isActive = true;
@@ -1093,13 +1104,26 @@ export default function CreativeLibraryTab() {
                         </button>
                       </td>
                       <td className="px-3 py-2">
-                        <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                        <button
+                          type="button"
+                          aria-label={`Expand preview for ${asset.campaignName || 'low performer'}`}
+                          onClick={() => {
+                            const previewUrl = asset.assetPreviewUrl || asset.assetUrl;
+                            if (previewUrl) {
+                              setExpandedPreview({
+                                src: getPreviewSrc(previewUrl),
+                                alt: asset.campaignName || 'Low performer',
+                              });
+                            }
+                          }}
+                          className="h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 transition hover:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
+                        >
                           {asset.assetPreviewUrl || asset.assetUrl ? (
                             <img src={getPreviewSrc(asset.assetPreviewUrl || asset.assetUrl)} alt="Low performer" className="h-full w-full object-cover" />
                           ) : (
                             <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
                           )}
-                        </div>
+                        </button>
                       </td>
                       <td className="px-3 py-2 text-slate-300">{asset.platformLabel || (asset.platform ? PLATFORM_LABELS[asset.platform] : 'Google Ads')}</td>
                       <td className="px-3 py-2">{renderAdsTargetType(asset)}</td>
@@ -1160,6 +1184,35 @@ export default function CreativeLibraryTab() {
             ))}
           </div>
         </section>
+      )}
+
+      {expandedPreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Expanded low performer preview"
+          onClick={() => setExpandedPreview(null)}
+        >
+          <div
+            className="relative flex max-h-[92vh] max-w-[92vw] items-center justify-center"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <img
+              src={expandedPreview.src}
+              alt={expandedPreview.alt}
+              className="max-h-[88vh] max-w-[88vw] rounded-xl object-contain shadow-2xl"
+            />
+            <button
+              type="button"
+              aria-label="Close expanded preview"
+              onClick={() => setExpandedPreview(null)}
+              className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-full bg-slate-950/80 text-white transition hover:bg-slate-800"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

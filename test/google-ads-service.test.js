@@ -9,6 +9,7 @@ import {
   getLowPerformingImageAssets,
   replaceAdCreative,
 } from '../server/services/googleAdsService.js';
+import { buildCategoryMatch } from '../server/services/googleReplacementService.js';
 
 const buildInput = (adType) => ({
   adType,
@@ -53,6 +54,23 @@ test('keeps Google low performer queries scoped to enabled campaign containers',
   assert.match(queries[1], /campaign\.status = 'ENABLED'/);
   assert.match(queries[1], /asset_group\.status = 'ENABLED'/);
   assert.match(queries[1], /asset_group_asset\.status = 'ENABLED'/);
+});
+
+test('classifies Google beneficio ad groups as Promo with custom keywords', () => {
+  const result = buildCategoryMatch(
+    { id: 'asset-1', adGroupName: 'AR | Beneficio | BUE' },
+    {
+      categories: ['Generic', 'Promo', 'Alianzas'],
+      categoryAliases: {
+        generic: ['generic'],
+        promo: ['offer'],
+        alianzas: ['partner'],
+      },
+    },
+  );
+
+  assert.equal(result.category, 'Promo');
+  assert.equal(result.source, 'automatic');
 });
 
 test('builds image ad replacement mutations without remove operations', () => {

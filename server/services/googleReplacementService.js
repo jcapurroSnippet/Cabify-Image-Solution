@@ -70,7 +70,7 @@ const normalizeLowPerformerCategories = (value, config) => {
   return new Map(entries);
 };
 
-const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) => {
+export const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) => {
   const overrideCategory = lowPerformerCategories.get(String(asset.id));
   if (overrideCategory) {
     return {
@@ -78,6 +78,18 @@ const buildCategoryMatch = (asset, config, lowPerformerCategories = new Map()) =
       matched: [overrideCategory],
       warning: null,
       source: 'manual',
+    };
+  }
+
+  // This Google naming convention is authoritative even when a Sheet provides
+  // a custom category keyword configuration without "beneficio".
+  if (/\bbeneficios?\b/i.test(String(asset.adGroupName || ''))) {
+    const promoCategory = normalizeCategory('Promo', config.categories) || 'Promo';
+    return {
+      category: promoCategory,
+      matched: [promoCategory],
+      warning: null,
+      source: 'automatic',
     };
   }
 
