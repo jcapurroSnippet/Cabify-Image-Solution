@@ -15,7 +15,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
-const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_ENGAGEMENT_AD']);
+const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
 const APP_AD_MANUAL_REPLACEMENT_MESSAGE =
   'App Ad image replacement must be completed directly in Google Ads. Google Ads API cannot remove App Ads or create another ad in the same app ad group.';
 
@@ -408,7 +408,7 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
     WHERE campaign.status = 'ENABLED'
       AND ad_group.status = 'ENABLED'
       AND ad_group_ad.status = 'ENABLED'
-      AND ad_group_ad.ad.type IN ('IMAGE_AD', 'APP_ENGAGEMENT_AD')
+      AND ad_group_ad.ad.type IN ('IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD')
       AND asset.type = 'IMAGE'
       AND ad_group_ad_asset_view.enabled = TRUE
       AND ad_group_ad_asset_view.performance_label = '${lowLabel}'
@@ -436,7 +436,6 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
       ...buildLowPerformerEntry(row, customerId, performanceLabel),
       performanceLabel: normalizeGooglePerformanceLabel(performanceLabel),
     };
-    if (entry.adType === 'APP_AD') continue;
     if (!entry.supportedReplacement) continue;
     lowPerformers.push(entry);
   }

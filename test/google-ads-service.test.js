@@ -51,7 +51,6 @@ test('keeps Google low performer queries scoped to enabled campaign containers',
   assert.match(queries[0], /campaign\.status = 'ENABLED'/);
   assert.match(queries[0], /ad_group\.status = 'ENABLED'/);
   assert.match(queries[0], /ad_group_ad\.status = 'ENABLED'/);
-  assert.doesNotMatch(queries[0], /'APP_AD'/);
   assert.match(queries[1], /campaign\.status = 'ENABLED'/);
   assert.match(queries[1], /asset_group\.status = 'ENABLED'/);
   assert.match(queries[1], /asset_group_asset\.status = 'ENABLED'/);

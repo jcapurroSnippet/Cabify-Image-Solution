@@ -989,40 +989,20 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
-                            {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
-                              <button
-                                type="button"
-                                aria-label="Expand current creative preview"
-                                onClick={() => setExpandedPreview({
-                                  src: getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl),
-                                  alt: `Current creative for ${operation.campaignName || 'replacement'}`,
-                                })}
-                                className="h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 transition hover:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
-                              >
+                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
                                 <img src={getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
-                              </button>
-                            ) : (
-                              <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
-                              </div>
-                            )}
-                            {operation.creative?.drive_url ? (
-                              <button
-                                type="button"
-                                aria-label="Expand replacement creative preview"
-                                onClick={() => setExpandedPreview({
-                                  src: getPreviewSrc(operation.creative?.drive_url),
-                                  alt: `Replacement creative for ${operation.campaignName || 'replacement'}`,
-                                })}
-                                className="h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 transition hover:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
-                              >
+                              )}
+                            </div>
+                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              {operation.creative?.drive_url ? (
                                 <img src={getPreviewSrc(operation.creative.drive_url)} alt="Replacement creative" className="h-full w-full object-cover" />
-                              </button>
-                            ) : (
-                              <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                              ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No match</div>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="px-3 py-2">
