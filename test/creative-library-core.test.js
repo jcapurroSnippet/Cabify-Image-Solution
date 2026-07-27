@@ -505,14 +505,14 @@ test('classifies app install ads as manual replacements in strict mode', () => {
     supportedReplacement: true,
     targetType: 'AD_GROUP_AD',
     adType: 'APP_AD',
-    replacementStrategy: 'APP_AD_CLONE_REPLACE',
+    replacementStrategy: 'APP_AD_IMAGE_UPDATE',
   }, 'strict_same_ad');
 
   assert.equal(capability.canPreserveAdId, false);
   assert.equal(capability.requiresNewAd, false);
   assert.equal(capability.executableInMode, false);
   assert.equal(capability.executionPolicy, 'manual_only');
-  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI');
+  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_DISABLED');
 });
 
 test('keeps app install ads as manual replacements even when new ads are allowed', () => {
@@ -520,14 +520,33 @@ test('keeps app install ads as manual replacements even when new ads are allowed
     supportedReplacement: true,
     targetType: 'AD_GROUP_AD',
     adType: 'APP_AD',
-    replacementStrategy: 'APP_AD_CLONE_REPLACE',
+    replacementStrategy: 'APP_AD_IMAGE_UPDATE',
   }, 'allow_google_required_clone');
 
   assert.equal(capability.canPreserveAdId, false);
   assert.equal(capability.requiresNewAd, false);
   assert.equal(capability.executableInMode, false);
   assert.equal(capability.executionPolicy, 'manual_only');
-  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI');
+  assert.equal(capability.blockedReason, 'APP_AD_REPLACEMENT_DISABLED');
+});
+
+test('enables APP_AD same-ad updates only behind the feature flag', () => {
+  const previous = process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED;
+  process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED = '1';
+  try {
+    const capability = describeGoogleReplacementCapability({
+      supportedReplacement: true,
+      targetType: 'AD_GROUP_AD',
+      adType: 'APP_AD',
+      replacementStrategy: 'APP_AD_IMAGE_UPDATE',
+    }, 'strict_same_ad');
+    assert.equal(capability.canPreserveAdId, true);
+    assert.equal(capability.executableInMode, true);
+    assert.equal(capability.executionPolicy, 'same_ad_update');
+  } finally {
+    if (previous === undefined) delete process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED;
+    else process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED = previous;
+  }
 });
 
 test('classifies app engagement ads as same-ad image-list updates', () => {

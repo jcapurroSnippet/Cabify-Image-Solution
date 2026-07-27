@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertAppEngagementAdImageUpdate,
-  buildAppAdCloneReplacementMutations,
+  assertAppAdImageUpdate,
+  buildAppAdImageUpdateMutations,
   buildAssetGroupAssetReplacementMutations,
   buildAppEngagementAdImageUpdateMutations,
   buildImageAdReplacementMutations,
@@ -29,11 +30,31 @@ const buildInput = (adType) => ({
   },
 });
 
-test('does not build API removal mutations for app install ads', () => {
-  assert.throws(
-    () => buildAppAdCloneReplacementMutations(buildInput('APP_AD')),
-    /App Ad image replacement must be completed directly in Google Ads/,
-  );
+test('updates APP_AD images on the same ad while preserving unrelated assets', () => {
+  const mutations = buildAppAdImageUpdateMutations({
+    assetCreate: buildInput('APP_AD').assetCreate,
+    cleanCustomerId: '123',
+    target: { adId: '789', oldAssetResourceName: 'customers/123/assets/111' },
+    existingAd: { app_ad: { images: [
+      { asset: 'customers/123/assets/111' },
+      { asset: 'customers/123/assets/222' },
+      { asset: 'customers/123/assets/222' },
+    ] } },
+    newAssetResourceName: 'customers/123/assets/-1',
+  });
+  assert.deepEqual(mutations.map((mutation) => `${mutation.entity}:${mutation.operation}`), ['asset:create', 'ad:update']);
+  assert.equal(mutations[1].resource.resource_name, 'customers/123/ads/789');
+  assert.deepEqual(mutations[1].resource.app_ad.images, [
+    { asset: 'customers/123/assets/-1' },
+    { asset: 'customers/123/assets/222' },
+  ]);
+  assert.deepEqual(mutations[1].update_mask.paths, ['app_ad.images']);
+  assert.deepEqual(assertAppAdImageUpdate({
+    ad: mutations[1].resource,
+    oldAssetResourceName: 'customers/123/assets/111',
+    expectedAssetResourceName: 'customers/123/assets/-1',
+    previousAssets: ['customers/123/assets/111', 'customers/123/assets/222'],
+  }), ['customers/123/assets/-1', 'customers/123/assets/222']);
 });
 
 test('keeps Google low performer queries scoped to enabled campaign containers', async () => {
@@ -166,7 +187,7 @@ test('rejects app install ad replacement before calling Google Ads', async () =>
       },
       'data:image/png;base64,AA==',
     ),
-    /App Ad image replacement must be completed directly in Google Ads/,
+    /APP_AD replacement is disabled/,
   );
 });
 

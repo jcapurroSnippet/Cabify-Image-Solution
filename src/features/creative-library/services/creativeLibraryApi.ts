@@ -12,6 +12,7 @@ import type {
 } from '../types';
 
 export type LowPerformerCategories = Record<string, string>;
+export type PerformanceOptions = { analysisDays: number; minImpressions: number; maxAssetsPerAd: number };
 
 const GOOGLE_REQUIRED_REPLACEMENT_MODE = 'allow_google_required_clone';
 
@@ -155,12 +156,14 @@ export const fetchLowPerformers = async (
   source: LowPerformerSource,
   selections: AdsSelections,
   limit: number,
+  options?: PerformanceOptions,
 ): Promise<{ assets: LowPerformer[]; categories: string[] }> => {
   const data = await postJson<{ assets: LowPerformer[]; categories: string[] }>('/api/ads/low-performers', {
     sheetsUrl,
     source,
     selections: buildSelectionsPayload(source, selections),
     limit,
+    ...options,
   });
   return {
     assets: data.assets || [],
@@ -175,6 +178,7 @@ export const buildReplacementPlan = async (
   limit: number,
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
+  options?: PerformanceOptions,
 ): Promise<ReplacementPlanResponse> =>
   postJson<ReplacementPlanResponse>('/api/ads/replacement-plan', {
     sheetsUrl,
@@ -183,6 +187,7 @@ export const buildReplacementPlan = async (
     limit,
     selectedLowPerformerIds,
     lowPerformerCategories,
+    ...options,
     replacementMode: GOOGLE_REQUIRED_REPLACEMENT_MODE,
   });
 
@@ -195,6 +200,7 @@ export const executeReplacements = async (
   selectedLowPerformerIds?: string[],
   lowPerformerCategories?: LowPerformerCategories,
   allowNewAdCreation = false,
+  options?: PerformanceOptions,
 ): Promise<ExecutionResponse> =>
   postJson<ExecutionResponse>('/api/ads/execute-replacements', {
     sheetsUrl,
@@ -206,5 +212,6 @@ export const executeReplacements = async (
     lowPerformerCategories,
     replacementMode: GOOGLE_REQUIRED_REPLACEMENT_MODE,
     allowNewAdCreation,
+    ...options,
     confirm: true,
   });

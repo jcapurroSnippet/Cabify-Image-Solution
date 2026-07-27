@@ -437,24 +437,29 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
     adType === 'APP_AD';
+  const appAdReplacementEnabled = process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED === '1';
+  const isAppAdImageUpdate =
+    isAppInstallAd &&
+    appAdReplacementEnabled &&
+    (!replacementStrategy || replacementStrategy === 'APP_AD_IMAGE_UPDATE');
   const requiresNewAd =
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
     !isAppInstallAd &&
     adType !== 'APP_ENGAGEMENT_AD' &&
     replacementStrategy.includes('CLONE_REPLACE');
-  const canPreserveAdId = isSameAdImageUpdate || isAppEngagementAdImageUpdate;
+  const canPreserveAdId = isSameAdImageUpdate || isAppEngagementAdImageUpdate || isAppAdImageUpdate;
   const canPreserveServingContainer = canPreserveAdId || isAssetGroupAssociation;
   const executableInMode =
     supportedReplacement &&
-    !isAppInstallAd &&
+    (!isAppInstallAd || isAppAdImageUpdate) &&
     (canPreserveAdId ||
       (replacementMode === GOOGLE_REPLACEMENT_MODES.ALLOW_GOOGLE_REQUIRED_CLONE &&
         (requiresNewAd || isAssetGroupAssociation)));
-  const executionPolicy = isAppInstallAd
-    ? 'manual_only'
-    : canPreserveAdId
+  const executionPolicy = canPreserveAdId
     ? 'same_ad_update'
+    : isAppInstallAd
+      ? 'manual_only'
     : requiresNewAd
       ? 'clone_replace'
       : isAssetGroupAssociation
@@ -466,9 +471,9 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
   if (!supportedReplacement) {
     blockedReason = target.replacementSupportReason || target.supportReason || 'UNSUPPORTED_TARGET';
     blockedMessage = target.replacementSupportMessage || target.supportMessage || null;
-  } else if (isAppInstallAd) {
-    blockedReason = 'APP_AD_REPLACEMENT_REQUIRES_GOOGLE_ADS_UI';
-    blockedMessage = 'Google Ads API cannot replace App Ad images automatically. Replace this creative directly in Google Ads.';
+  } else if (isAppInstallAd && !appAdReplacementEnabled) {
+    blockedReason = 'APP_AD_REPLACEMENT_DISABLED';
+    blockedMessage = 'APP_AD replacement is disabled until validate-only verification is enabled.';
   } else if (!executableInMode && requiresNewAd) {
     blockedReason = 'REQUIRES_NEW_AD';
   } else if (!executableInMode && isAssetGroupAssociation) {

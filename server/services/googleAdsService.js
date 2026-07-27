@@ -16,8 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
 const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
-const APP_AD_MANUAL_REPLACEMENT_MESSAGE =
-  'App Ad image replacement must be completed directly in Google Ads. Google Ads API cannot remove App Ads or create another ad in the same app ad group.';
+const APP_AD_MANUAL_REPLACEMENT_MESSAGE = 'APP_AD replacement is disabled. Set GOOGLE_APP_AD_REPLACEMENT_ENABLED=1 after validate-only verification.';
 
 const normalizeCustomerId = (value) => String(value || '').replace(/\D/g, '');
 
@@ -25,7 +24,7 @@ const getAdGroupAdReplacementStrategy = (adType) => {
   const normalized = normalizeGoogleAdType(adType);
   if (normalized === 'IMAGE_AD') return 'IMAGE_AD_UPDATE';
   if (normalized === 'APP_ENGAGEMENT_AD') return 'APP_ENGAGEMENT_AD_UPDATE';
-  if (normalized === 'APP_AD') return 'APP_AD_MANUAL_REPLACEMENT';
+  if (normalized === 'APP_AD') return 'APP_AD_IMAGE_UPDATE';
   return 'UNSUPPORTED_TARGET';
 };
 
@@ -114,9 +113,12 @@ export const getCampaigns = async (customerId, options = {}) => {
 
 const microsToCurrency = (micros) => Number(micros ?? 0) / 1_000_000;
 
-const getAllTimePerformanceDateFilter = () => {
-  const startDate = process.env.GOOGLE_LOW_PERFORMANCE_START_DATE || '2010-01-01';
+const getPerformanceDateFilter = (analysisDays) => {
+  const days = Math.max(1, Math.min(Number(analysisDays || process.env.GOOGLE_LOW_PERFORMANCE_LOOKBACK_DAYS || 30), 3650));
   const endDate = new Date().toISOString().slice(0, 10);
+  const start = new Date(`${endDate}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  const startDate = start.toISOString().slice(0, 10);
   return `AND segments.date BETWEEN '${startDate}' AND '${endDate}'`;
 };
 
@@ -276,6 +278,7 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
     customerId: customerId.replace(/-/g, ''),
     campaignId,
     campaignName: row.campaign?.name || 'Unknown Campaign',
+    campaignSubtype: row.campaign?.advertising_channel_sub_type || '',
     adGroupId,
     adGroupName: row.ad_group?.name || 'Unknown Ad Group',
     assetGroupId: '',
@@ -308,6 +311,7 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
         : 'UNSUPPORTED_TARGET',
     replacementSupportMessage: null,
     replacementStrategy: getAdGroupAdReplacementStrategy(adType),
+    currentImageAssets: cloneAssetRefs(row.ad_group_ad?.ad?.app_ad?.images).map((image) => image.asset),
   };
 };
 
@@ -376,19 +380,24 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
   const queryLimit = Math.max(limit, Math.min(Math.max(limit * 5, 100), 500));
   const campaignIds = normalizeCampaignIds(options);
   const campaignFilter = buildCampaignFilter(campaignIds);
-  const allTimeDateFilter = getAllTimePerformanceDateFilter();
+  const analysisDays = Math.max(1, Number(options.analysisDays || process.env.GOOGLE_LOW_PERFORMANCE_LOOKBACK_DAYS || 30));
+  const minImpressions = Math.max(0, Number(options.minImpressions ?? process.env.GOOGLE_LOW_PERFORMANCE_MIN_IMPRESSIONS ?? 100));
+  const maxAssetsPerAd = Math.max(1, Number(options.maxAssetsPerAd || process.env.GOOGLE_MAX_REPLACEMENTS_PER_AD || 1));
+  const allTimeDateFilter = getPerformanceDateFilter(analysisDays);
   const lowLabel = String(config.googleLowPerformanceLabel || 'LOW').toUpperCase();
 
   const adGroupAdResults = await customer.query(`
     SELECT
       campaign.id,
       campaign.name,
+      campaign.advertising_channel_sub_type,
       ad_group.id,
       ad_group.name,
       ad_group_ad.resource_name,
       ad_group_ad.ad.id,
       ad_group_ad.ad.name,
       ad_group_ad.ad.type,
+      ad_group_ad.ad.app_ad.images,
       ad_group_ad_asset_view.asset,
       ad_group_ad_asset_view.field_type,
       ad_group_ad_asset_view.performance_label,
@@ -420,6 +429,7 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
 
   const lowPerformers = [];
   const seenKeys = new Set();
+  const replacementsByAd = new Map();
   for (const row of adGroupAdResults) {
     const performanceLabel = row.ad_group_ad_asset_view?.performance_label;
     if (!isGoogleLowPerformanceLabel(performanceLabel, lowLabel)) continue;
@@ -436,7 +446,13 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
       ...buildLowPerformerEntry(row, customerId, performanceLabel),
       performanceLabel: normalizeGooglePerformanceLabel(performanceLabel),
     };
+    if (entry.metrics.impressions < minImpressions) continue;
+    const adKey = `${entry.campaignId}:${entry.adGroupId}:${entry.adId}`;
+    const adReplacementCount = replacementsByAd.get(adKey) || 0;
+    if (adReplacementCount >= maxAssetsPerAd) continue;
     if (!entry.supportedReplacement) continue;
+    replacementsByAd.set(adKey, adReplacementCount + 1);
+    entry.analysisPeriod = { days: analysisDays, minImpressions, maxAssetsPerAd };
     lowPerformers.push(entry);
   }
 
@@ -878,7 +894,44 @@ export const buildAppEngagementAdImageUpdateMutations = ({
         },
       },
     },
-  ];
+];
+
+export const buildAppAdImageUpdateMutations = ({
+  assetCreate,
+  cleanCustomerId,
+  target,
+  existingAd,
+  newAssetResourceName,
+}) => {
+  const adId = String(target?.adId || '').replace(/-/g, '');
+  if (!adId) throw new Error('adId is required for APP_AD image replacement.');
+  if (!target?.oldAssetResourceName) throw new Error('oldAssetResourceName is required for APP_AD image replacement.');
+  const replacementImages = replaceAssetRef(existingAd?.app_ad?.images, target.oldAssetResourceName, newAssetResourceName);
+  if (!replacementImages.replaced) throw new Error('Old image asset is no longer present in app_ad.images.');
+  if (replacementImages.assets.length === 0) throw new Error('APP_AD must keep at least one image asset.');
+  return [
+    assetCreate,
+    {
+      entity: 'ad',
+      operation: 'update',
+      resource: {
+        resource_name: buildAdResourceName(cleanCustomerId, adId),
+        app_ad: { images: replacementImages.assets },
+      },
+      update_mask: { paths: ['app_ad.images'] },
+    },
+  ].filter(Boolean);
+};
+
+export const getAppAdImageAssetNames = (ad) => cloneAssetRefs(ad?.app_ad?.images).map((image) => image.asset);
+
+export const assertAppAdImageUpdate = ({ ad, oldAssetResourceName, expectedAssetResourceName, previousAssets = [] }) => {
+  const imageAssets = getAppAdImageAssetNames(ad);
+  if (!imageAssets.includes(expectedAssetResourceName)) throw new Error(`APP_AD does not reference ${expectedAssetResourceName}.`);
+  if (imageAssets.includes(oldAssetResourceName)) throw new Error(`APP_AD still references ${oldAssetResourceName}.`);
+  const preserved = previousAssets.filter((asset) => asset !== oldAssetResourceName);
+  if (preserved.some((asset) => !imageAssets.includes(asset))) throw new Error('APP_AD update removed an unrelated image asset.');
+  return imageAssets;
 };
 
 export const getAppEngagementAdImageAssetNames = (ad) =>
@@ -918,6 +971,9 @@ const runAtomicReplacementMutations = async (customer, mutations) => {
       extractResourceNameFromMutateResponse(response, 'campaign_asset_result'),
   };
 };
+
+const validateAtomicReplacementMutations = async (customer, mutations) =>
+  customer.mutateResources(mutations, { partial_failure: false, validate_only: true });
 
 const getGoogleAdsErrorDetails = (error) => ({
   name: error?.name || null,
@@ -989,13 +1045,13 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     imageBytes: imageData.length,
   });
 
-  if (adType === 'APP_AD') {
+  if (adType === 'APP_AD' && process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED !== '1') {
     throwWithGoogleAdsTrace(new Error(APP_AD_MANUAL_REPLACEMENT_MESSAGE), googleAdsTrace);
   }
 
   const customer = getClient(customerId);
-  const tempAssetResourceName = buildTempAssetResourceName(cleanCustomerId);
-  const assetCreate = {
+  const tempAssetResourceName = target.reuseAssetResourceName || buildTempAssetResourceName(cleanCustomerId);
+  const assetCreate = target.reuseAssetResourceName ? null : {
     entity: 'asset',
     operation: 'create',
     resource: {
@@ -1045,6 +1101,60 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
   }
 
   const oldAdResourceName = target.adResourceName || `customers/${cleanCustomerId}/adGroupAds/${target.adGroupId}~${target.adId}`;
+
+  if (adType === 'APP_AD') {
+    let existingAdRow;
+    try {
+      existingAdRow = await fetchAdForReplacement(customer, target.adGroupId, target.adId);
+    } catch (error) {
+      throwWithGoogleAdsTrace(error, googleAdsTrace);
+    }
+    const previousAssets = getAppAdImageAssetNames(existingAdRow.ad_group_ad.ad);
+    const mutations = buildAppAdImageUpdateMutations({
+      assetCreate,
+      cleanCustomerId,
+      target,
+      existingAd: existingAdRow.ad_group_ad.ad,
+      newAssetResourceName: tempAssetResourceName,
+    });
+    try {
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_ad_image_update', 'started');
+      await validateAtomicReplacementMutations(customer, mutations);
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_ad_image_update', 'success');
+    } catch (error) {
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_ad_image_update', 'error', getGoogleAdsErrorDetails(error));
+      error.appAdUnsupported = true;
+      throwWithGoogleAdsTrace(error, googleAdsTrace);
+    }
+    const replacement = await runTracedAtomicReplacementMutations(customer, mutations, googleAdsTrace, 'upload_asset_and_update_app_ad');
+    const effectiveNewAssetResourceName = replacement.assetResourceName || tempAssetResourceName;
+    let verifiedImageAssets;
+    try {
+      const verified = await fetchAdForReplacement(customer, target.adGroupId, target.adId);
+      verifiedImageAssets = assertAppAdImageUpdate({
+        ad: verified.ad_group_ad.ad,
+        oldAssetResourceName: target.oldAssetResourceName,
+        expectedAssetResourceName: effectiveNewAssetResourceName,
+        previousAssets,
+      });
+    } catch (error) {
+      error.appAdAppliedUnverified = true;
+      error.partialReplacement = { assetResourceName: effectiveNewAssetResourceName, updatedAdResourceName: buildAdResourceName(cleanCustomerId, target.adId) };
+      throwWithGoogleAdsTrace(error, googleAdsTrace);
+    }
+    return {
+      success: true,
+      replacementType: 'APP_AD_IMAGE_UPDATE',
+      assetResourceName: effectiveNewAssetResourceName,
+      updatedAdResourceName: replacement.updatedAdResourceName || buildAdResourceName(cleanCustomerId, target.adId),
+      oldAdUpdated: true,
+      previousImageAssets: previousAssets,
+      verifiedImageAssets,
+      validationStatus: 'success',
+      googleRequestId: replacement.response?.request_id || replacement.response?.requestId || '',
+      googleAdsTrace,
+    };
+  }
 
   if (adType === 'IMAGE_AD') {
     const imageAdReplacementMutations = buildImageAdReplacementMutations({

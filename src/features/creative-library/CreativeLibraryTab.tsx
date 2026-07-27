@@ -111,6 +111,9 @@ export default function CreativeLibraryTab() {
   const [campaignSearchByPlatform, setCampaignSearchByPlatform] = useState<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
   const [openCampaignMenu, setOpenCampaignMenu] = useState<AdsPlatform | null>(null);
   const [limit, setLimit] = useState(10);
+  const [analysisDays, setAnalysisDays] = useState(30);
+  const [minImpressions, setMinImpressions] = useState(100);
+  const [maxAssetsPerAd, setMaxAssetsPerAd] = useState(1);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResponse | null>(null);
@@ -382,7 +385,7 @@ export default function CreativeLibraryTab() {
   const handleLowPerformers = () => {
     if (!validateAds()) return;
     void runAction('low', async () => {
-      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit);
+      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit, { analysisDays, minImpressions, maxAssetsPerAd });
       const assets = result.assets;
       setLowPerformers(assets);
       setCategoryOptions(result.categories.length > 0 ? result.categories : DEFAULT_CATEGORY_OPTIONS);
@@ -428,6 +431,7 @@ export default function CreativeLibraryTab() {
         limit,
         selectedLowIds,
         selectedCategories,
+        { analysisDays, minImpressions, maxAssetsPerAd },
       );
       const executableOperations = nextPlan.operations.filter(
         (operation) => operation.status === 'planned' && operation.executableInMode,
@@ -480,6 +484,7 @@ export default function CreativeLibraryTab() {
         selectedLowIds,
         selectedCategories,
         requiresNewAdPermission,
+        { analysisDays, minImpressions, maxAssetsPerAd },
       );
       console.info('[Creative Library] Ads execution result', result);
       if (result.googleAdsTrace?.length) {
@@ -812,7 +817,7 @@ export default function CreativeLibraryTab() {
       </section>
 
       <section className="panel-surface space-y-4">
-        <div className="grid gap-3 lg:grid-cols-[0.7fr_0.3fr]">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <label className="space-y-1">
             <span className="text-xs font-medium uppercase text-slate-400">Platform</span>
             <select
@@ -823,6 +828,18 @@ export default function CreativeLibraryTab() {
               <option value="google">Google Ads</option>
               <option value="meta">Meta Ads</option>
             </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-medium uppercase text-slate-400">Analysis days</span>
+            <input type="number" min={1} max={3650} value={analysisDays} onChange={(event) => setAnalysisDays(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-medium uppercase text-slate-400">Min impressions</span>
+            <input type="number" min={0} value={minImpressions} onChange={(event) => setMinImpressions(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-medium uppercase text-slate-400">Assets per ad</span>
+            <input type="number" min={1} max={20} value={maxAssetsPerAd} onChange={(event) => setMaxAssetsPerAd(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
           </label>
           <label className="space-y-1">
             <span className="text-xs font-medium uppercase text-slate-400">Limit</span>
@@ -989,20 +1006,20 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
-                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                            <button type="button" className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40" onClick={() => (operation.oldAssetPreviewUrl || operation.oldAssetUrl) && setExpandedPreview({ src: getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl), alt: 'Current low performer' })}>
                               {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
                                 <img src={getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
                               )}
-                            </div>
-                            <div className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40">
+                            </button>
+                            <button type="button" className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40" onClick={() => operation.creative?.drive_url && setExpandedPreview({ src: getPreviewSrc(operation.creative.drive_url), alt: 'Replacement creative' })}>
                               {operation.creative?.drive_url ? (
                                 <img src={getPreviewSrc(operation.creative.drive_url)} alt="Replacement creative" className="h-full w-full object-cover" />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No match</div>
                               )}
-                            </div>
+                            </button>
                           </div>
                         </td>
                         <td className="px-3 py-2">
@@ -1058,6 +1075,12 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2 text-slate-300">
                           <p>{operation.creative?.creative_id || '-'}</p>
+                          {operation.adType === 'APP_AD' && operation.currentImageAssets && (
+                            <p className="mt-1 text-xs text-slate-500" title={operation.currentImageAssets.join('\n')}>Current assets: {operation.currentImageAssets.length}</p>
+                          )}
+                          {operation.adType === 'APP_AD' && operation.proposedImageAssets && (
+                            <p className="text-xs text-slate-500" title={operation.proposedImageAssets.join('\n')}>Proposed assets: {operation.proposedImageAssets.length}</p>
+                          )}
                           {(operation.creative?.aspect_ratio || operation.creative?.image_resolution) && (
                             <p className="text-xs text-slate-500">
                               {[operation.creative?.aspect_ratio, operation.creative?.image_resolution].filter(Boolean).join(' / ')}

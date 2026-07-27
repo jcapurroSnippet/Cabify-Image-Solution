@@ -98,6 +98,7 @@ export interface LowPerformer {
   customerId: string;
   campaignId: string;
   campaignName: string;
+  campaignSubtype?: string;
   adGroupId: string;
   adGroupName: string;
   assetId: string;
@@ -125,6 +126,8 @@ export interface LowPerformer {
   categoryWarning?: string | null;
   matchedCategories?: string[];
   performanceLabel?: string;
+  currentImageAssets?: string[];
+  analysisPeriod?: { days: number; minImpressions: number; maxAssetsPerAd: number };
   reason: string;
   supportedReplacement: boolean;
   replacementSupportReason?: string | null;
@@ -180,6 +183,12 @@ export interface ReplacementOperation {
   oldAssetPreviewUrl?: string;
   oldImageResolution?: string;
   requiredAspectRatio?: string | null;
+  currentImageAssets?: string[];
+  proposedImageAssets?: string[];
+  idempotencyKey?: string;
+  analysisPeriod?: { days: number; minImpressions: number; maxAssetsPerAd: number };
+  validationStatus?: string;
+  googleRequestId?: string;
   googleAdsUrl?: string;
   adsUrl?: string;
   creative: {
@@ -191,6 +200,7 @@ export interface ReplacementOperation {
     drive_url: string;
     aspect_ratio?: string;
     image_resolution?: string;
+    image_hash?: string;
     created_at: string;
   } | null;
   replacementImageResolution?: string;

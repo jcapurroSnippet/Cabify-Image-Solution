@@ -16,12 +16,15 @@ import {
   getSpreadsheetIdFromLibraryInput,
   getCreativeLibrarySheetConfig,
   getUnavailableCreativeIdsForCampaign,
+  getGoogleAssetCacheEntry,
+  hasSuccessfulReplacementIdempotencyKey,
   listRecentlyReplacedTargetKeys,
   listCreativeCampaignUsage,
   listCreativeLibrary,
   markCreativeUsed,
   releaseCreativeReservation,
   reserveCreative,
+  storeGoogleAssetCacheEntry,
 } from './creativeLibraryService.js';
 import {
   getLowPerformingImageAssets,
@@ -109,13 +112,16 @@ const getConfigForReplacement = async (sheetsUrl) => {
   return (await getCreativeLibrarySheetConfig({ sheetsUrl })).config;
 };
 
-export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
+export const getGoogleLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl, analysisDays, minImpressions, maxAssetsPerAd }) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const assets = await getLowPerformingImageAssets(accountId, {
     campaignIds: selectedCampaignIds,
     limit,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
   });
   const recentlyReplacedTargetKeys = await listRecentlyReplacedTargetKeys({
     sheetsUrl,
@@ -151,6 +157,9 @@ export const buildGoogleReplacementPlan = async ({
   selectedLowPerformerIds,
   lowPerformerCategories,
   replacementMode,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
 }) => {
   if (!sheetsUrl) throw new Error('sheetsUrl is required.');
   if (!accountId) throw new Error('accountId is required.');
@@ -171,6 +180,9 @@ export const buildGoogleReplacementPlan = async ({
     sheetsUrl,
     limit,
     selectedLowPerformerIds: selectedLowIds,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
   });
   const plannedCreativeIdsByCampaign = new Map();
   const operations = [];
@@ -210,6 +222,8 @@ export const buildGoogleReplacementPlan = async ({
       googleAdsUrl: asset.googleAdsUrl || '',
       reason: asset.reason,
       metrics: asset.metrics,
+      analysisPeriod: asset.analysisPeriod || { days: analysisDays || 30, minImpressions: minImpressions ?? 100, maxAssetsPerAd: maxAssetsPerAd || 1 },
+      currentImageAssets: asset.currentImageAssets || [],
       detectedCategory: categoryMatch.category,
       detectedPlazas: plazasMatch.plazas || null,
       categorySource: categoryMatch.source,
@@ -297,7 +311,13 @@ export const buildGoogleReplacementPlan = async ({
         aspect_ratio: creative.aspect_ratio || '',
         image_resolution: creative.image_resolution || '',
         created_at: creative.created_at,
+        image_hash: creative.image_hash || '',
       },
+      proposedImageAssets: (asset.currentImageAssets || []).map((resourceName) =>
+        resourceName === asset.assetResourceName ? `creative:${creative.creative_id}` : resourceName),
+      idempotencyKey: crypto.createHash('sha256').update([
+        accountId.replace(/-/g, ''), asset.adId, asset.assetResourceName, creative.image_hash || creative.creative_id,
+      ].join('|')).digest('hex'),
       message: replacementCapability.executableInMode
         ? 'READY'
         : replacementCapability.blockedMessage ||
@@ -334,6 +354,9 @@ const getLowPerformersWithLimit = async ({
   sheetsUrl,
   limit,
   selectedLowPerformerIds,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
 }) => {
   const maxResults = Math.max(1, Number(limit || 20));
   const assets = await getGoogleLowPerformers({
@@ -341,6 +364,9 @@ const getLowPerformersWithLimit = async ({
     campaignIds,
     sheetsUrl,
     limit: Math.max(maxResults * 4, 50),
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
   });
 
   if (selectedLowPerformerIds?.size) {
@@ -358,6 +384,9 @@ const getExecutionErrorDetails = (error) => ({
   details: error?.details || null,
   errors: error?.errors || error?.failure?.errors || error?.response?.data?.errors || null,
   response: error?.response?.data || null,
+  appAdUnsupported: Boolean(error?.appAdUnsupported),
+  appAdAppliedUnverified: Boolean(error?.appAdAppliedUnverified),
+  partialReplacement: error?.partialReplacement || null,
   googleAdsTrace: error?.googleAdsTrace || [],
   metaAdsTrace: error?.metaAdsTrace || [],
 });
@@ -403,6 +432,9 @@ export const executeGoogleReplacements = async ({
   lowPerformerCategories,
   replacementMode,
   allowNewAdCreation = false,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -426,6 +458,9 @@ export const executeGoogleReplacements = async ({
     selectedLowPerformerIds,
     lowPerformerCategories,
     replacementMode,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
   });
   const needsNewAdCreationPermission = requiresNewAdCreationPermission(plan.operations, selectedIds);
   if (needsNewAdCreationPermission && allowNewAdCreation !== true) {
@@ -465,6 +500,10 @@ export const executeGoogleReplacements = async ({
     }
 
     try {
+      if (await hasSuccessfulReplacementIdempotencyKey(spreadsheetId, operation.idempotencyKey)) {
+        results.push({ ...operation, executionStatus: 'skipped', executionMessage: 'DUPLICATE_IDEMPOTENCY_KEY' });
+        continue;
+      }
       const reserved = await reserveCreative(spreadsheetId, creativeId, {
         platform: 'google',
         accountId,
@@ -473,6 +512,7 @@ export const executeGoogleReplacements = async ({
         operationId: operation.id,
       });
       const creativeUrl = getCreativeDriveUrl(reserved) || getCreativeDriveUrl(operation.creative);
+      const cachedAsset = await getGoogleAssetCacheEntry(spreadsheetId, accountId, reserved.image_hash || operation.creative?.image_hash);
       const imageDataUrl = await downloadImageAsDataUrl(creativeUrl);
       const replacementImageResolution = await getImageResolutionFromDataUrl(imageDataUrl);
       const imageAspectRatioValidation = assertReplacementImageAspectRatio({
@@ -483,7 +523,7 @@ export const executeGoogleReplacements = async ({
       });
       const replacement = await replaceAdCreative(
         accountId,
-        operation,
+        { ...operation, reuseAssetResourceName: cachedAsset?.asset_resource_name || '' },
         imageDataUrl,
       );
       const replacementResourceName =
@@ -498,6 +538,11 @@ export const executeGoogleReplacements = async ({
         googleAdsAssetResourceName: replacementResourceName,
         operationId: operation.id,
         notes: `Used for ${operation.campaignName} / ${operation.adGroupName}`,
+      });
+      await storeGoogleAssetCacheEntry(spreadsheetId, {
+        customerId: accountId,
+        creativeHash: reserved.image_hash || operation.creative?.image_hash,
+        assetResourceName: replacement.assetResourceName || cachedAsset?.asset_resource_name || '',
       });
 
       await appendAuditLog(spreadsheetId, [
@@ -528,7 +573,19 @@ export const executeGoogleReplacements = async ({
     } catch (error) {
       const executionError = getExecutionErrorDetails(error);
       logReplacementFailure({ operation, creativeId, executionError });
-      await releaseCreativeReservation(spreadsheetId, creativeId, operation.id, error.message, 'failed');
+      const appliedUnverified = Boolean(error.appAdAppliedUnverified || error.partialReplacement?.assetResourceName);
+      const unsupported = Boolean(error.appAdUnsupported);
+      if (appliedUnverified) {
+        await markCreativeUsed(spreadsheetId, creativeId, {
+          adsPlatform: 'google',
+          adsResourceName: error.partialReplacement?.assetResourceName || '',
+          googleAdsAssetResourceName: error.partialReplacement?.assetResourceName || '',
+          operationId: operation.id,
+          notes: `APP_AD applied but verification failed for ${operation.campaignName}`,
+        });
+      } else {
+        await releaseCreativeReservation(spreadsheetId, creativeId, operation.id, error.message, 'failed');
+      }
       await appendAuditLog(spreadsheetId, [
         {
           event: 'REPLACEMENT_FAILED',
@@ -540,7 +597,7 @@ export const executeGoogleReplacements = async ({
           asset_group_id: operation.assetGroupId || '',
           old_asset_resource_name: operation.oldAssetResourceName,
           new_asset_resource_name: '',
-          status: 'failed',
+          status: appliedUnverified ? 'applied_unverified' : unsupported ? 'unsupported' : 'failed',
           message: error.message,
           payload_json: { operation, executionError },
         },
@@ -548,8 +605,8 @@ export const executeGoogleReplacements = async ({
 
       results.push({
         ...operation,
-        status: 'failed',
-        executionStatus: 'failed',
+        status: appliedUnverified ? 'applied_unverified' : unsupported ? 'unsupported' : 'failed',
+        executionStatus: appliedUnverified ? 'applied_unverified' : unsupported ? 'unsupported' : 'failed',
         executionMessage: error.message,
         executionError,
         googleAdsTrace: executionError.googleAdsTrace,

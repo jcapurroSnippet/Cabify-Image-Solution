@@ -5,6 +5,8 @@ import {
   CREATIVE_AUDIT_SHEET,
   CREATIVE_CAMPAIGN_USAGE_HEADERS,
   CREATIVE_CAMPAIGN_USAGE_SHEET,
+  GOOGLE_ASSET_CACHE_HEADERS,
+  GOOGLE_ASSET_CACHE_SHEET,
   CREATIVE_CATEGORIES_HEADERS,
   CREATIVE_CATEGORIES_SHEET,
   CREATIVE_LIBRARY_HEADERS,
@@ -391,6 +393,7 @@ const resolveSourceSheetName = async (sheets, spreadsheetId, sheetsUrl, provided
       CREATIVE_LIBRARY_SHEET,
       CREATIVE_AUDIT_SHEET,
       CREATIVE_CAMPAIGN_USAGE_SHEET,
+      GOOGLE_ASSET_CACHE_SHEET,
       CREATIVE_CATEGORIES_SHEET,
     ].includes(title);
   });
@@ -644,6 +647,7 @@ const ensureLibraryAndAuditSheets = async (sheets, spreadsheetId, config) => {
     CREATIVE_CAMPAIGN_USAGE_SHEET,
     CREATIVE_CAMPAIGN_USAGE_HEADERS,
   );
+  await ensureSheetWithHeaders(sheets, spreadsheetId, GOOGLE_ASSET_CACHE_SHEET, GOOGLE_ASSET_CACHE_HEADERS);
 
   if (librarySheetId !== undefined && librarySheetId !== null) {
     await applyCategoryValidation(
@@ -1357,6 +1361,36 @@ export const appendAuditLog = async (spreadsheetId, entries) => {
   });
 };
 
+export const listCreativeAuditHistory = async ({ sheetsUrl, accountId = '', campaignId = '', status = '', from = '' } = {}) => {
+  const spreadsheetId = extractSpreadsheetId(String(sheetsUrl || '').trim());
+  const sheets = await getSheetsClient();
+  await ensureSheetWithHeaders(sheets, spreadsheetId, CREATIVE_AUDIT_SHEET, CREATIVE_AUDIT_HEADERS);
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: buildRange(CREATIVE_AUDIT_SHEET, 'A:M') });
+  const fromTime = from ? Date.parse(from) : null;
+  return valuesToObjects(response.data.values || [])
+    .filter((row) => !accountId || normalizeAuditAccountId(row.customer_id) === normalizeAuditAccountId(accountId))
+    .filter((row) => !campaignId || String(row.campaign_id) === String(campaignId))
+    .filter((row) => !status || String(row.status).toLowerCase() === String(status).toLowerCase())
+    .filter((row) => !Number.isFinite(fromTime) || Date.parse(row.timestamp) >= fromTime)
+    .map((row) => ({ ...row, payload: parseAuditPayload(row.payload_json), payload_json: undefined }))
+    .reverse();
+};
+
+export const hasSuccessfulReplacementIdempotencyKey = async (spreadsheetId, idempotencyKey) => {
+  if (!spreadsheetId || !idempotencyKey) return false;
+  const sheets = await getSheetsClient();
+  await ensureSheetWithHeaders(sheets, spreadsheetId, CREATIVE_AUDIT_SHEET, CREATIVE_AUDIT_HEADERS);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(CREATIVE_AUDIT_SHEET, 'A:M'),
+  });
+  return valuesToObjects(response.data.values || []).some((row) => {
+    if (!['success', 'applied_unverified'].includes(String(row.status || '').toLowerCase())) return false;
+    const payload = parseAuditPayload(row.payload_json);
+    return payload?.operation?.idempotencyKey === idempotencyKey;
+  });
+};
+
 export const listRecentlyReplacedTargetKeys = async ({
   sheetsUrl,
   accountId = '',
@@ -2047,6 +2081,7 @@ export const getUnavailableCreativeIdsForCampaign = (usageRows = [], context = {
   ].join('::');
 
   const latestByOperation = new Map();
+  const reservationTtlMs = Math.max(1, Number(process.env.CREATIVE_RESERVATION_TTL_MINUTES || 30)) * 60_000;
   for (const row of usageRows) {
     const operationKey = [
       buildCreativeCampaignUsageKey(row),
@@ -2058,6 +2093,11 @@ export const getUnavailableCreativeIdsForCampaign = (usageRows = [], context = {
   return new Set(
     [...latestByOperation.values()]
       .filter((row) => isBlockingUsageStatus(row.status))
+      .filter((row) => {
+        if (String(row.status).toLowerCase() !== 'reserved') return true;
+        const reservedAt = Date.parse(row.reserved_at || row.updated_at || '');
+        return Number.isFinite(reservedAt) && Date.now() - reservedAt <= reservationTtlMs;
+      })
       .filter((row) => buildCreativeCampaignUsageKey(row).startsWith(`${prefix}::`))
       .map((row) => normalizeUsageId(row.creative_id || row.creativeId))
       .filter(Boolean),
@@ -2158,6 +2198,43 @@ export const listCreativeCampaignUsage = async (spreadsheetId) => {
   const usageRows = await readCampaignUsageRows(sheets, spreadsheetId);
   const migratedRows = await migrateAuditUsageRows(sheets, spreadsheetId, usageRows);
   return [...usageRows, ...migratedRows];
+};
+
+export const getGoogleAssetCacheEntry = async (spreadsheetId, customerId, creativeHash) => {
+  if (!creativeHash) return null;
+  const sheets = await getSheetsClient();
+  await ensureSheetWithHeaders(sheets, spreadsheetId, GOOGLE_ASSET_CACHE_SHEET, GOOGLE_ASSET_CACHE_HEADERS);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(GOOGLE_ASSET_CACHE_SHEET, 'A:F'),
+  });
+  const cleanCustomerId = normalizeUsageAccountId(customerId);
+  return [...valuesToObjects(response.data.values || [])].reverse().find((row) =>
+    normalizeUsageAccountId(row.customer_id) === cleanCustomerId &&
+    String(row.creative_hash || '') === String(creativeHash) &&
+    String(row.status || '').toLowerCase() === 'active') || null;
+};
+
+export const storeGoogleAssetCacheEntry = async (spreadsheetId, entry) => {
+  if (!entry?.creativeHash || !entry?.assetResourceName) return;
+  const existing = await getGoogleAssetCacheEntry(spreadsheetId, entry.customerId, entry.creativeHash);
+  if (existing?.asset_resource_name === entry.assetResourceName) return;
+  const sheets = await getSheetsClient();
+  const timestamp = nowIso();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: buildRange(GOOGLE_ASSET_CACHE_SHEET, 'A:F'),
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [objectToRow(GOOGLE_ASSET_CACHE_HEADERS, {
+      customer_id: normalizeUsageAccountId(entry.customerId),
+      creative_hash: entry.creativeHash,
+      asset_resource_name: entry.assetResourceName,
+      status: 'active',
+      created_at: timestamp,
+      updated_at: timestamp,
+    })] },
+  });
 };
 
 const findOperationUsageRow = (rows, creativeId, operationId) =>

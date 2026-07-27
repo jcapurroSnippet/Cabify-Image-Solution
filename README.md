@@ -15,7 +15,7 @@ Single Vite + React app that combines two image workflows in separate tabs:
 1. Install dependencies:
    `npm install`
 2. Configure environment variable in `.env`:
-   `GEMINI_API_KEY=YOUR_GEMINI_API_KEY`
+   Copy `.env.example` to `.env` and complete the credentials required by the enabled integrations.
 3. Start backend API (terminal 1):
    `npm run dev:server`
 4. Start frontend dev server (terminal 2):
@@ -29,6 +29,17 @@ Single Vite + React app that combines two image workflows in separate tabs:
 - `npm run start` - start production server (serves API + `dist/`)
 - `npm run preview` - preview frontend build only
 - `npm run lint` - type check
+- `npm test` - run the automated test suite
+
+## Google Ads APP_AD image replacement
+
+The replacement planner analyzes enabled campaigns, ad groups, and ads over a configurable period. Defaults are 30 days, 100 impressions, and at most one LOW image per ad. A dry run only builds the proposed final `app_ad.images` list; it does not reserve creatives, create assets, or mutate ads.
+
+APP_AD mutation is guarded by `GOOGLE_APP_AD_REPLACEMENT_ENABLED=0`. Before enabling it in production, set the flag to `1` in a test environment and successfully validate a non-legacy APP_AD. Every apply first runs Google Ads `validate_only`, then updates the same ad while preserving unrelated image assets. Google-rejected legacy or unsupported ads are skipped and recorded in `creative_audit_log`.
+
+Creative reservations expire after `CREATIVE_RESERVATION_TTL_MINUTES` (30 by default). Successful use remains blocked only for the same platform, account, and campaign. Uploaded Google assets are cached by customer and creative hash in `google_asset_cache`; campaign reservations and uses remain in `creative_campaign_usage`.
+
+Replacement history is available through `GET /api/ads-replacements/history?sheetsUrl=...`, with optional `accountId`, `campaignId`, `status`, and `from` filters. In an `APPLIED_UNVERIFIED` result, inspect the ad in Google Ads before retrying: the creative is deliberately kept as used to avoid duplication. Failed validation or mutation releases the reservation so it can be retried safely.
 
 ## Docker
 

@@ -11,6 +11,7 @@ import { downloadAdImage } from './services/adImageDownloader.js';
 import {
   CREATIVE_LIBRARY_SYNC_LOG_PATH,
   getCreativeLibrarySheetConfig,
+  listCreativeAuditHistory,
   listCreativeLibrary,
   syncAcceptedCreatives,
   writeCreativeLibrarySyncLog,
@@ -612,7 +613,7 @@ app.post('/api/ads/replace-creative', async (request, response) => {
 
 app.post('/api/ads/low-performers', async (request, response) => {
   try {
-    const { accountId, campaignId, campaignIds, limit, sheetsUrl, selections } = request.body ?? {};
+    const { accountId, campaignId, campaignIds, limit, sheetsUrl, selections, analysisDays, minImpressions, maxAssetsPerAd } = request.body ?? {};
     const source = normalizeAdsSource(request.body?.source);
     const normalizedSelections = normalizeAdsSelections({
       source,
@@ -627,6 +628,9 @@ app.post('/api/ads/low-performers', async (request, response) => {
       selections: normalizedSelections,
       sheetsUrl: sheetsUrl ? String(sheetsUrl).trim() : undefined,
       limit: Number(limit) || 100,
+      analysisDays: Number(analysisDays) || 30,
+      minImpressions: Number(minImpressions ?? 100),
+      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
     });
 
     return response.status(200).json({
@@ -644,6 +648,24 @@ app.post('/api/ads/low-performers', async (request, response) => {
   }
 });
 
+app.get('/api/ads-replacements/history', async (request, response) => {
+  try {
+    const { sheetsUrl, accountId, campaignId, status, from } = request.query ?? {};
+    if (!sheetsUrl) throw new RequestValidationError('sheetsUrl is required.');
+    const entries = await listCreativeAuditHistory({
+      sheetsUrl: String(sheetsUrl).trim(),
+      accountId: String(accountId || ''),
+      campaignId: String(campaignId || ''),
+      status: String(status || ''),
+      from: String(from || ''),
+    });
+    return response.status(200).json({ entries });
+  } catch (error) {
+    if (error instanceof RequestValidationError) return response.status(400).json({ error: error.message });
+    return response.status(500).json({ error: getErrorMessage(error, 'Failed to fetch replacement history.') });
+  }
+});
+
 app.post('/api/ads/replacement-plan', async (request, response) => {
   try {
     const {
@@ -656,6 +678,9 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       lowPerformerCategories,
       replacementMode,
       selections,
+      analysisDays,
+      minImpressions,
+      maxAssetsPerAd,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -678,6 +703,9 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
+      analysisDays: Number(analysisDays) || 30,
+      minImpressions: Number(minImpressions ?? 100),
+      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
     });
 
     return response.status(200).json(plan);
@@ -707,6 +735,9 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       replacementMode,
       allowNewAdCreation,
       selections,
+      analysisDays,
+      minImpressions,
+      maxAssetsPerAd,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -736,6 +767,9 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       lowPerformerCategories,
       replacementMode,
       allowNewAdCreation,
+      analysisDays: Number(analysisDays) || 30,
+      minImpressions: Number(minImpressions ?? 100),
+      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
     });
 
     return response.status(200).json(result);
