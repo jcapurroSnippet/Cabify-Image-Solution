@@ -172,7 +172,15 @@ test('describes Google Ads target types plainly', () => {
   });
   assert.deepEqual(describeGoogleAdType({ adType: 'APP_AD' }), {
     label: 'App install ad',
-    description: 'Needs a manual change in Google Ads.',
+    description: 'Updates the image list on the existing app install ad.',
+  });
+  assert.deepEqual(describeGoogleAdType({ adType: 'LEGACY_APP_INSTALL_AD' }), {
+    label: 'Legacy app install',
+    description: 'Google only allows changes to this campaign in the Google Ads UI.',
+  });
+  assert.deepEqual(describeGoogleAdType({ adType: 'APP_PRE_REGISTRATION_AD' }), {
+    label: 'App pre-registration',
+    description: 'Automatic image replacement is not supported for this ad type.',
   });
 });
 

@@ -154,6 +154,7 @@ export interface ReplacementOperation {
   message: string;
   executionMessage?: string;
   campaignName: string;
+  campaignSubtype?: string;
   adGroupName: string;
   assetGroupName?: string;
   adId?: string;

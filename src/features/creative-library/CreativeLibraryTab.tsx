@@ -396,7 +396,7 @@ export default function CreativeLibraryTab() {
             .map((asset) => [asset.id, asset.detectedCategory || '']),
         ),
       );
-      setSelectedLowPerformerIds(new Set(assets.map((asset) => asset.id).filter(Boolean)));
+      setSelectedLowPerformerIds(new Set(assets.filter((asset) => asset.supportedReplacement).map((asset) => asset.id).filter(Boolean)));
       setPlan(null);
       setExecution(null);
     });
@@ -555,7 +555,7 @@ export default function CreativeLibraryTab() {
   };
 
   const selectAllLowPerformers = () => {
-    setSelectedLowPerformerIds(new Set(lowPerformers.map((asset) => asset.id).filter(Boolean)));
+    setSelectedLowPerformerIds(new Set(lowPerformers.filter((asset) => asset.supportedReplacement).map((asset) => asset.id).filter(Boolean)));
   };
 
   const clearLowPerformers = () => {
@@ -1045,6 +1045,7 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2 text-slate-200">
                           <p>{operation.campaignName}</p>
+                          {operation.campaignSubtype && <p className="text-xs font-medium text-amber-300">{operation.campaignSubtype}</p>}
                           <p className="text-xs text-slate-500">{describeAdsVisibleContext(operation)}</p>
                         </td>
                         <td className="px-3 py-2 text-slate-300">
@@ -1122,8 +1123,9 @@ export default function CreativeLibraryTab() {
                         <button
                           type="button"
                           onClick={() => toggleLowPerformer(asset.id)}
+                          disabled={!asset.supportedReplacement}
                           aria-pressed={selectedLowPerformerIds.has(asset.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/40 text-slate-200"
+                          className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/40 text-slate-200 disabled:cursor-not-allowed disabled:opacity-35"
                         >
                           {selectedLowPerformerIds.has(asset.id) && <Check className="h-4 w-4 text-green-400" />}
                         </button>
@@ -1152,7 +1154,11 @@ export default function CreativeLibraryTab() {
                       </td>
                       <td className="px-3 py-2 text-slate-300">{asset.platformLabel || (asset.platform ? PLATFORM_LABELS[asset.platform] : 'Google Ads')}</td>
                       <td className="px-3 py-2">{renderAdsTargetType(asset)}</td>
-                      <td className="px-3 py-2 text-slate-200">{asset.campaignName}</td>
+                      <td className="px-3 py-2 text-slate-200">
+                        <p>{asset.campaignName}</p>
+                        {asset.campaignSubtype && <p className="text-xs font-medium text-amber-300">{asset.campaignSubtype}</p>}
+                        {!asset.supportedReplacement && <p className="mt-1 text-xs font-medium text-amber-300">Not modifiable: {asset.replacementSupportMessage || asset.replacementSupportReason}</p>}
+                      </td>
                       <td className="px-3 py-2 text-slate-300">{describeAdsVisibleContext(asset)}</td>
                       <td className="px-3 py-2">
                         <select

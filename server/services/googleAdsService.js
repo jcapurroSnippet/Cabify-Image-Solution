@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const oauthTokenPath = path.join(__dirname, '../../.oauth-token.json');
 const SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES = new Set(['IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD']);
+const VISIBLE_UNSUPPORTED_APP_AD_TYPES = new Set(['LEGACY_APP_INSTALL_AD', 'APP_PRE_REGISTRATION_AD']);
 const APP_AD_MANUAL_REPLACEMENT_MESSAGE = 'APP_AD replacement is disabled. Set GOOGLE_APP_AD_REPLACEMENT_ENABLED=1 after validate-only verification.';
 
 const normalizeCustomerId = (value) => String(value || '').replace(/\D/g, '');
@@ -265,6 +266,16 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
     hasReplacementTarget &&
     SUPPORTED_AD_GROUP_AD_REPLACEMENT_TYPES.has(adType)
   );
+  const unsupportedReason = adType === 'LEGACY_APP_INSTALL_AD'
+    ? 'APP_CAMPAIGN_LEGACY_UNSUPPORTED'
+    : adType === 'APP_PRE_REGISTRATION_AD'
+      ? 'APP_PRE_REGISTRATION_UNSUPPORTED'
+      : 'UNSUPPORTED_TARGET';
+  const unsupportedMessage = adType === 'LEGACY_APP_INSTALL_AD'
+    ? 'App Campaign Legacy (installs) can only be modified in the Google Ads UI.'
+    : adType === 'APP_PRE_REGISTRATION_AD'
+      ? 'App pre-registration ads are outside the automatic image replacement flow.'
+      : null;
 
   return {
     id: buildGoogleLowPerformerId({
@@ -308,8 +319,8 @@ const buildLowPerformerEntry = (row, customerId, performanceLabel) => {
     replacementSupportReason:
       supportedReplacement
         ? null
-        : 'UNSUPPORTED_TARGET',
-    replacementSupportMessage: null,
+        : unsupportedReason,
+    replacementSupportMessage: supportedReplacement ? null : unsupportedMessage,
     replacementStrategy: getAdGroupAdReplacementStrategy(adType),
     currentImageAssets: cloneAssetRefs(row.ad_group_ad?.ad?.app_ad?.images).map((image) => image.asset),
   };
@@ -417,7 +428,7 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
     WHERE campaign.status = 'ENABLED'
       AND ad_group.status = 'ENABLED'
       AND ad_group_ad.status = 'ENABLED'
-      AND ad_group_ad.ad.type IN ('IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD')
+      AND ad_group_ad.ad.type IN ('IMAGE_AD', 'APP_AD', 'APP_ENGAGEMENT_AD', 'LEGACY_APP_INSTALL_AD', 'APP_PRE_REGISTRATION_AD')
       AND asset.type = 'IMAGE'
       AND ad_group_ad_asset_view.enabled = TRUE
       AND ad_group_ad_asset_view.performance_label = '${lowLabel}'
@@ -450,7 +461,7 @@ export const getLowPerformingImageAssets = async (customerId, options = {}) => {
     const adKey = `${entry.campaignId}:${entry.adGroupId}:${entry.adId}`;
     const adReplacementCount = replacementsByAd.get(adKey) || 0;
     if (adReplacementCount >= maxAssetsPerAd) continue;
-    if (!entry.supportedReplacement) continue;
+    if (!entry.supportedReplacement && !VISIBLE_UNSUPPORTED_APP_AD_TYPES.has(entry.adType)) continue;
     replacementsByAd.set(adKey, adReplacementCount + 1);
     entry.analysisPeriod = { days: analysisDays, minImpressions, maxAssetsPerAd };
     lowPerformers.push(entry);

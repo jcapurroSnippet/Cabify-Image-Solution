@@ -176,7 +176,21 @@ export const describeAdsTargetType = (target = {}) => {
   if (adType === 'APP_AD') {
     return {
       label: 'App install ad',
-      description: 'Needs a manual change in Google Ads.',
+      description: 'Updates the image list on the existing app install ad.',
+    };
+  }
+
+  if (adType === 'LEGACY_APP_INSTALL_AD') {
+    return {
+      label: 'Legacy app install',
+      description: 'Google only allows changes to this campaign in the Google Ads UI.',
+    };
+  }
+
+  if (adType === 'APP_PRE_REGISTRATION_AD') {
+    return {
+      label: 'App pre-registration',
+      description: 'Automatic image replacement is not supported for this ad type.',
     };
   }
 
@@ -258,6 +272,14 @@ export const describeReplacementStatus = (operation) => {
       label: 'Replaced',
       description: operation.executionMessage || operation.message || 'The creative was replaced.',
       tone: 'ready',
+    };
+  }
+
+  if (operation.status === 'unsupported' || operation.supportedReplacement === false) {
+    return {
+      label: 'Not modifiable',
+      description: operation.blockedMessage || operation.supportMessage || operation.message || 'Google Ads API does not support this campaign type.',
+      tone: 'warning',
     };
   }
 

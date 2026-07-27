@@ -203,6 +203,7 @@ export const buildGoogleReplacementPlan = async ({
       customerId: accountId.replace(/-/g, ''),
       campaignId: asset.campaignId,
       campaignName: asset.campaignName,
+      campaignSubtype: asset.campaignSubtype || '',
       adGroupId: asset.adGroupId,
       adGroupName: asset.adGroupName,
       assetGroupId: asset.assetGroupId,
@@ -254,6 +255,16 @@ export const buildGoogleReplacementPlan = async ({
           replacementCapability.blockedMessage ||
           replacementCapability.blockedReason ||
           'UNSUPPORTED_TARGET',
+      });
+      continue;
+    }
+
+    if (!asset.supportedReplacement) {
+      operations.push({
+        ...baseOperation,
+        ...replacementCapability,
+        status: 'unsupported',
+        message: asset.replacementSupportMessage || asset.replacementSupportReason || 'UNSUPPORTED_TARGET',
       });
       continue;
     }
