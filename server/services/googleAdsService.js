@@ -907,6 +907,7 @@ export const buildAppEngagementAdImageUpdateMutations = ({
       update_mask: { paths: ['app_engagement_ad.images'] },
     },
   ].filter(Boolean);
+};
 
 export const buildAppAdImageUpdateMutations = ({
   assetCreate,
