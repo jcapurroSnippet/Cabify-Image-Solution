@@ -225,6 +225,7 @@ test('updates app engagement ads by replacing the image list on the same ad', ()
     { asset: 'customers/123/assets/-1' },
     { asset: 'customers/123/assets/222' },
   ]);
+  assert.deepEqual(mutations[1].update_mask.paths, ['app_engagement_ad.images']);
   assert.equal('resourceName' in mutations[1].resource, false);
 });
 
@@ -270,13 +271,27 @@ test('verifies app engagement ads reference the created image asset after update
         ],
       },
     },
+    oldAssetResourceName: 'customers/123/assets/111',
     expectedAssetResourceName: 'customers/123/assets/333',
+    previousAssets: ['customers/123/assets/111', 'customers/123/assets/222'],
   });
 
   assert.deepEqual(imageAssets, [
     'customers/123/assets/222',
     'customers/123/assets/333',
   ]);
+});
+
+test('rejects app engagement verification when the old image remains attached', () => {
+  assert.throws(() => assertAppEngagementAdImageUpdate({
+    ad: { app_engagement_ad: { images: [
+      { asset: 'customers/123/assets/111' },
+      { asset: 'customers/123/assets/333' },
+    ] } },
+    oldAssetResourceName: 'customers/123/assets/111',
+    expectedAssetResourceName: 'customers/123/assets/333',
+    previousAssets: ['customers/123/assets/111'],
+  }), /still references the old image asset/);
 });
 
 test('rejects successful app engagement mutates that do not persist the new image asset', () => {

@@ -893,8 +893,9 @@ export const buildAppEngagementAdImageUpdateMutations = ({
           images: replacementImages.assets,
         },
       },
+      update_mask: { paths: ['app_engagement_ad.images'] },
     },
-];
+  ].filter(Boolean);
 
 export const buildAppAdImageUpdateMutations = ({
   assetCreate,
@@ -937,7 +938,7 @@ export const assertAppAdImageUpdate = ({ ad, oldAssetResourceName, expectedAsset
 export const getAppEngagementAdImageAssetNames = (ad) =>
   cloneAssetRefs(ad?.app_engagement_ad?.images).map((image) => image.asset);
 
-export const assertAppEngagementAdImageUpdate = ({ ad, expectedAssetResourceName }) => {
+export const assertAppEngagementAdImageUpdate = ({ ad, oldAssetResourceName, expectedAssetResourceName, previousAssets = [] }) => {
   const expectedAsset = String(expectedAssetResourceName || '').trim();
   if (!expectedAsset) {
     throw new Error('Google Ads response did not include the created image asset resource name.');
@@ -948,6 +949,13 @@ export const assertAppEngagementAdImageUpdate = ({ ad, expectedAssetResourceName
     throw new Error(
       `Google Ads accepted the App Engagement Ad update but the ad does not reference the new image asset ${expectedAsset}.`
     );
+  }
+  if (imageAssets.includes(oldAssetResourceName)) {
+    throw new Error(`App Engagement Ad still references the old image asset ${oldAssetResourceName}.`);
+  }
+  const preservedAssets = previousAssets.filter((asset) => asset !== oldAssetResourceName);
+  if (preservedAssets.some((asset) => !imageAssets.includes(asset))) {
+    throw new Error('App Engagement Ad update removed an unrelated image asset.');
   }
 
   return imageAssets;
@@ -1203,42 +1211,60 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
       existingAd: existingAdRow.ad_group_ad.ad,
       newAssetResourceName: tempAssetResourceName,
     });
+    const previousAssets = getAppEngagementAdImageAssetNames(existingAdRow.ad_group_ad.ad);
+    try {
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_engagement_ad_image_update', 'started');
+      await validateAtomicReplacementMutations(customer, appEngagementReplacementMutations);
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_engagement_ad_image_update', 'success');
+    } catch (error) {
+      pushGoogleAdsTrace(googleAdsTrace, 'validate_app_engagement_ad_image_update', 'error', getGoogleAdsErrorDetails(error));
+      throwWithGoogleAdsTrace(error, googleAdsTrace);
+    }
     const replacement = await runTracedAtomicReplacementMutations(
       customer,
       appEngagementReplacementMutations,
       googleAdsTrace,
       'upload_asset_and_update_app_engagement_ad',
     );
+    const effectiveNewAssetResourceName = replacement.assetResourceName || tempAssetResourceName;
     let verifiedImageAssets = [];
     try {
       pushGoogleAdsTrace(googleAdsTrace, 'verify_app_engagement_ad_image_update', 'started', {
         adGroupId: target.adGroupId,
         adId: target.adId,
-        assetResourceName: replacement.assetResourceName || null,
+        assetResourceName: effectiveNewAssetResourceName,
       });
       const verifiedAdRow = await fetchAdForReplacement(customer, target.adGroupId, target.adId);
       verifiedImageAssets = assertAppEngagementAdImageUpdate({
         ad: verifiedAdRow.ad_group_ad.ad,
-        expectedAssetResourceName: replacement.assetResourceName,
+        oldAssetResourceName: target.oldAssetResourceName,
+        expectedAssetResourceName: effectiveNewAssetResourceName,
+        previousAssets,
       });
       pushGoogleAdsTrace(googleAdsTrace, 'verify_app_engagement_ad_image_update', 'success', {
-        assetResourceName: replacement.assetResourceName,
+        assetResourceName: effectiveNewAssetResourceName,
         imageAssets: verifiedImageAssets,
       });
     } catch (error) {
       pushGoogleAdsTrace(googleAdsTrace, 'verify_app_engagement_ad_image_update', 'error', getGoogleAdsErrorDetails(error));
+      error.appAdAppliedUnverified = true;
+      error.partialReplacement = {
+        assetResourceName: effectiveNewAssetResourceName,
+        updatedAdResourceName: replacement.updatedAdResourceName || buildAdResourceName(cleanCustomerId, target.adId),
+      };
       throwWithGoogleAdsTrace(error, googleAdsTrace);
     }
 
     return {
       success: true,
       replacementType: getAdGroupAdReplacementStrategy(adType),
-      assetResourceName: replacement.assetResourceName,
+      assetResourceName: effectiveNewAssetResourceName,
       updatedAdResourceName: replacement.updatedAdResourceName || buildAdResourceName(cleanCustomerId, target.adId),
       oldAdResourceName,
       oldAdUpdated: true,
       updatedAssetCount: verifiedImageAssets.length,
       verifiedImageAssets,
+      validationStatus: 'success',
       googleAdsTrace,
     };
   }
