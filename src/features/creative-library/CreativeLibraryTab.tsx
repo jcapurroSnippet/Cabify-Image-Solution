@@ -1006,19 +1006,21 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
-                            <button type="button" className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40" onClick={() => (operation.oldAssetPreviewUrl || operation.oldAssetUrl) && setExpandedPreview({ src: getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl), alt: 'Current low performer' })}>
+                            <button type="button" title="Enlarge current creative" aria-label="Enlarge current creative" disabled={!operation.oldAssetPreviewUrl && !operation.oldAssetUrl} className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 disabled:cursor-default" onClick={() => (operation.oldAssetPreviewUrl || operation.oldAssetUrl) && setExpandedPreview({ src: getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl), alt: 'Current low performer' })}>
                               {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
                                 <img src={getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No image</div>
                               )}
+                              {(operation.oldAssetPreviewUrl || operation.oldAssetUrl) && <span className="absolute inset-0 flex items-center justify-center bg-slate-950/55 opacity-0 transition-opacity group-hover:opacity-100"><Search className="h-5 w-5 text-white" /></span>}
                             </button>
-                            <button type="button" className="h-14 w-14 overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40" onClick={() => operation.creative?.drive_url && setExpandedPreview({ src: getPreviewSrc(operation.creative.drive_url), alt: 'Replacement creative' })}>
+                            <button type="button" title="Enlarge replacement creative" aria-label="Enlarge replacement creative" disabled={!operation.creative?.drive_url} className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 disabled:cursor-default" onClick={() => operation.creative?.drive_url && setExpandedPreview({ src: getPreviewSrc(operation.creative.drive_url), alt: 'Replacement creative' })}>
                               {operation.creative?.drive_url ? (
                                 <img src={getPreviewSrc(operation.creative.drive_url)} alt="Replacement creative" className="h-full w-full object-cover" />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] text-slate-500">No match</div>
                               )}
+                              {operation.creative?.drive_url && <span className="absolute inset-0 flex items-center justify-center bg-slate-950/55 opacity-0 transition-opacity group-hover:opacity-100"><Search className="h-5 w-5 text-white" /></span>}
                             </button>
                           </div>
                         </td>
