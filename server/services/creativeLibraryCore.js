@@ -437,7 +437,7 @@ export const describeGoogleReplacementCapability = (target = {}, mode = GOOGLE_R
     supportedReplacement &&
     targetType === 'AD_GROUP_AD' &&
     adType === 'APP_AD';
-  const appAdReplacementEnabled = process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED === '1';
+  const appAdReplacementEnabled = process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED !== '0';
   const isAppAdImageUpdate =
     isAppInstallAd &&
     appAdReplacementEnabled &&

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED ??= '0';
 import {
   canTransitionCreativeStatus,
   describeGoogleReplacementCapability,

@@ -1045,7 +1045,7 @@ export const replaceAdCreative = async (customerId, adGroupIdOrOperation, oldAdI
     imageBytes: imageData.length,
   });
 
-  if (adType === 'APP_AD' && process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED !== '1') {
+  if (adType === 'APP_AD' && process.env.GOOGLE_APP_AD_REPLACEMENT_ENABLED === '0') {
     throwWithGoogleAdsTrace(new Error(APP_AD_MANUAL_REPLACEMENT_MESSAGE), googleAdsTrace);
   }
 
