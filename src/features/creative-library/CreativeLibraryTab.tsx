@@ -111,9 +111,6 @@ export default function CreativeLibraryTab() {
   const [campaignSearchByPlatform, setCampaignSearchByPlatform] = useState<Record<AdsPlatform, string>>(PLATFORM_EMPTY_STRINGS);
   const [openCampaignMenu, setOpenCampaignMenu] = useState<AdsPlatform | null>(null);
   const [limit, setLimit] = useState(10);
-  const [analysisDays, setAnalysisDays] = useState(30);
-  const [minImpressions, setMinImpressions] = useState(100);
-  const [maxAssetsPerAd, setMaxAssetsPerAd] = useState(1);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResponse | null>(null);
@@ -385,7 +382,7 @@ export default function CreativeLibraryTab() {
   const handleLowPerformers = () => {
     if (!validateAds()) return;
     void runAction('low', async () => {
-      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit, { analysisDays, minImpressions, maxAssetsPerAd });
+      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit);
       const assets = result.assets;
       setLowPerformers(assets);
       setCategoryOptions(result.categories.length > 0 ? result.categories : DEFAULT_CATEGORY_OPTIONS);
@@ -431,7 +428,6 @@ export default function CreativeLibraryTab() {
         limit,
         selectedLowIds,
         selectedCategories,
-        { analysisDays, minImpressions, maxAssetsPerAd },
       );
       const executableOperations = nextPlan.operations.filter(
         (operation) => operation.status === 'planned' && operation.executableInMode,
@@ -484,7 +480,6 @@ export default function CreativeLibraryTab() {
         selectedLowIds,
         selectedCategories,
         requiresNewAdPermission,
-        { analysisDays, minImpressions, maxAssetsPerAd },
       );
       console.info('[Creative Library] Ads execution result', result);
       if (result.googleAdsTrace?.length) {
@@ -817,7 +812,7 @@ export default function CreativeLibraryTab() {
       </section>
 
       <section className="panel-surface space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1">
             <span className="text-xs font-medium uppercase text-slate-400">Platform</span>
             <select
@@ -828,18 +823,6 @@ export default function CreativeLibraryTab() {
               <option value="google">Google Ads</option>
               <option value="meta">Meta Ads</option>
             </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Analysis days</span>
-            <input type="number" min={1} max={3650} value={analysisDays} onChange={(event) => setAnalysisDays(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Min impressions</span>
-            <input type="number" min={0} value={minImpressions} onChange={(event) => setMinImpressions(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs font-medium uppercase text-slate-400">Assets per ad</span>
-            <input type="number" min={1} max={20} value={maxAssetsPerAd} onChange={(event) => setMaxAssetsPerAd(Number(event.target.value))} className="w-full rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/70" />
           </label>
           <label className="space-y-1">
             <span className="text-xs font-medium uppercase text-slate-400">Limit</span>
