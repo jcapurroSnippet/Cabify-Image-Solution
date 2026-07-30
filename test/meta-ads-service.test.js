@@ -17,7 +17,7 @@ import {
 
 test('ranks Meta low performers by lowest impressions first', () => {
   const ranked = rankMetaLowPerformers([
-    { id: 'high-impressions', metrics: { conversions: 0, cpa: 100, impressions: 5000 } },
+    { id: 'high-impressions', metrics: { conversions: 0, cpa: 100, impressions: '181,466' } },
     { id: 'lowest-impressions', metrics: { conversions: 8, cpa: 400, impressions: 300 } },
     { id: 'middle-impressions', metrics: { conversions: 0, cpa: 300, impressions: 1000 } },
   ]);
@@ -598,6 +598,7 @@ test('collects Meta low performers with at least 30 running days by lowest impre
   const graphGetImpl = async (endpoint, params) => {
     calls.push({ endpoint, params });
     if (endpoint === '/campaign-1/insights') {
+      if (params?.breakdowns === 'image_asset') return { data: [] };
       return {
         data: [
           { ad_id: 'ad-new', impressions: '100', clicks: '10', spend: '20' },
@@ -661,8 +662,199 @@ test('collects Meta low performers with at least 30 running days by lowest impre
 
   assert.equal(assets.length, 1);
   assert.equal(assets[0].adId, 'ad-low-impressions-old');
-  assert.deepEqual(calls.map((call) => call.endpoint), ['/campaign-1/insights', '/ad-new', '/ad-low-impressions-old']);
+  assert.deepEqual(calls.map((call) => call.endpoint), [
+    '/campaign-1/insights',
+    '/campaign-1/insights',
+    '/ad-new',
+    '/ad-low-impressions-old',
+  ]);
+  assert.equal(calls[0].params.date_preset, 'maximum');
+  assert.equal(calls[0].params.breakdowns, undefined);
+  assert.equal(calls[1].params.breakdowns, 'image_asset');
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
+});
+
+test('does not truncate Meta low performer candidates before age filtering', async () => {
+  const calls = [];
+  const graphGetImpl = async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    if (endpoint === '/campaign-1/insights') {
+      if (params?.breakdowns === 'image_asset') return { data: [] };
+      return {
+        data: [
+          ...Array.from({ length: 6 }, (_, index) => ({
+            ad_id: `ad-new-${index + 1}`,
+            impressions: String(100 + index),
+            clicks: '1',
+            spend: '1',
+          })),
+          { ad_id: 'ad-old-low', impressions: '126', clicks: '1', spend: '0.33' },
+          { ad_id: 'ad-old-high', impressions: '181,466', clicks: '1815', spend: '308.90' },
+        ],
+      };
+    }
+    if (/^\/ad-new-\d+$/.test(endpoint)) {
+      const id = endpoint.slice(1);
+      return {
+        id,
+        name: 'New ad',
+        created_time: '2026-07-24T00:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: `creative-${id}`,
+          image_url: `https://example.com/${id}.png`,
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-old-low') {
+      return {
+        id: 'ad-old-low',
+        name: 'SI_PRECIO - IA',
+        created_time: '2026-04-29T00:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-old-low',
+          name: 'SI_PRECIO - IA',
+          image_url: 'https://example.com/old-low.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-old-high') {
+      throw new Error('High-impression old ad should not be fetched once the lower eligible ad is selected');
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+    now: new Date('2026-07-30T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].adId, 'ad-old-low');
+  assert.equal(assets[0].metrics.impressions, 126);
+  assert.deepEqual(
+    calls.map((call) => call.endpoint),
+    [
+      '/campaign-1/insights',
+      '/campaign-1/insights',
+      '/ad-new-1',
+      '/ad-new-2',
+      '/ad-new-3',
+      '/ad-new-4',
+      '/ad-new-5',
+      '/ad-new-6',
+      '/ad-old-low',
+    ],
+  );
+});
+
+test('skips Meta candidates that already have conversions', async () => {
+  const calls = [];
+  const graphGetImpl = async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    if (endpoint === '/campaign-1/insights') {
+      if (params?.breakdowns === 'image_asset') {
+        return {
+          data: [
+            {
+              ad_id: 'ad-old-with-purchases',
+              impressions: '13',
+              clicks: '0',
+              spend: '0.03',
+              image_asset: { hash: 'converted-low-image-hash' },
+            },
+          ],
+        };
+      }
+      return {
+        data: [
+          {
+            ad_id: 'ad-old-low',
+            impressions: '126',
+            clicks: '1',
+            spend: '0.33',
+          },
+          {
+            ad_id: 'ad-old-with-purchases',
+            impressions: '181,466',
+            clicks: '1815',
+            spend: '308.90',
+            actions: [{ action_type: 'purchase', value: '20' }],
+            cost_per_action_type: [{ action_type: 'purchase', value: '15.45' }],
+          },
+        ],
+      };
+    }
+    if (endpoint === '/ad-old-low') {
+      return {
+        id: 'ad-old-low',
+        name: 'SI_PRECIO - IA',
+        created_time: '2026-04-29T00:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-old-low',
+          image_url: 'https://example.com/old-low.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-old-with-purchases') {
+      throw new Error('Converted Meta ad should not be fetched as a low performer');
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+
+  const assets = await collectMetaLowPerformerAssets({
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 5,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+    now: new Date('2026-07-30T00:00:00Z'),
+  });
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].adId, 'ad-old-low');
+  assert.equal(assets[0].metrics.conversions, 0);
+  assert.deepEqual(calls.map((call) => call.endpoint), [
+    '/campaign-1/insights',
+    '/campaign-1/insights',
+    '/ad-old-low',
+  ]);
 });
 
 test('skips Meta low performers whose ad, ad set, or campaign is not active', async () => {
@@ -739,6 +931,18 @@ test('collects the lowest-impression Meta image asset for each ad', async () => 
   const graphGetImpl = async (endpoint, params) => {
     calls.push({ endpoint, params });
     if (endpoint === '/campaign-1/insights') {
+      if (params?.breakdowns !== 'image_asset') {
+        return {
+          data: [
+            {
+              ad_id: 'ad-1',
+              impressions: '1000',
+              clicks: '100',
+              spend: '100',
+            },
+          ],
+        };
+      }
       return {
         data: [
           {
@@ -802,10 +1006,11 @@ test('collects the lowest-impression Meta image asset for each ad', async () => 
   assert.equal(assets[0].assetId, 'low-hash');
   assert.equal(assets[0].assetUrl, 'https://example.com/low.png');
   assert.equal(assets[0].selectedMetaImageAssetKey, 'low-hash');
-  assert.equal(assets[0].metrics.impressions, 100);
+  assert.equal(assets[0].metrics.impressions, 1000);
   assert.equal(assets[0].supportedReplacement, true);
-  assert.equal(calls[0].params.breakdowns, 'image_asset');
-  assert.doesNotMatch(calls[0].params.fields, /image_asset/);
+  assert.equal(calls[0].params.breakdowns, undefined);
+  assert.equal(calls[1].params.breakdowns, 'image_asset');
+  assert.doesNotMatch(calls[1].params.fields, /image_asset/);
 });
 
 test('does not use generic Meta creative image URL for hash-only dynamic image assets', async () => {

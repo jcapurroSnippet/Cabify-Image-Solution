@@ -124,7 +124,10 @@ const throwWithMetaTrace = (error, trace) => {
 };
 
 const parseNumber = (value) => {
-  const parsed = Number(value ?? 0);
+  const normalized = typeof value === 'string'
+    ? value.trim().replace(/[$,%\s]/g, '').replace(/,/g, '')
+    : value;
+  const parsed = Number(normalized ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
@@ -590,6 +593,7 @@ export const normalizeMetaLowPerformerAd = ({
   insight = {},
   imageResolution = {},
   selectedImageAssetKey = '',
+  analysisPeriod = null,
 }) => {
   const creative = ad?.creative || {};
   const effectiveImageAssetKey = getSelectedMetaImageAssetKey(creative, selectedImageAssetKey);
@@ -652,6 +656,7 @@ export const normalizeMetaLowPerformerAd = ({
     adsUrl: buildMetaAdsUrl(adAccountId, adId),
     targetName: [campaignName, adsetName].filter(Boolean).join(' | '),
     metrics: buildMetaMetrics(insight),
+    analysisPeriod,
     performanceLabel: '',
     reason: 'META_LOW_CONVERSIONS_HIGH_CPA',
     supportedReplacement: safety.supported,
@@ -703,18 +708,38 @@ const normalizeInsightCandidate = (insight = {}) => ({
   imageAssetKey: getMetaInsightImageAssetKey(insight),
 });
 
-const selectLowestImpressionMetaImageAssetPerAd = (candidates = []) => {
+const groupMetaImageAssetCandidatesByAdId = (insights = [], maxAssetsPerAd = 1) => {
+  const imageAssetCandidates = selectLowestImpressionMetaImageAssetsPerAd(
+    insights
+      .map(normalizeInsightCandidate)
+      .filter((candidate) => candidate.adId && candidate.imageAssetKey),
+    maxAssetsPerAd,
+  );
+
+  const byAdId = new Map();
+  for (const candidate of imageAssetCandidates) {
+    const current = byAdId.get(candidate.adId) || [];
+    current.push(candidate);
+    byAdId.set(candidate.adId, current);
+  }
+  return byAdId;
+};
+
+const selectLowestImpressionMetaImageAssetsPerAd = (candidates = [], maxAssetsPerAd = 1) => {
   const selectedByAd = new Map();
+  const maxPerAd = Math.max(1, Math.floor(Number(maxAssetsPerAd || 1)));
 
   for (const candidate of candidates) {
     if (!candidate.adId) continue;
-    const current = selectedByAd.get(candidate.adId);
-    if (!current || parseNumber(candidate.metrics?.impressions) < parseNumber(current.metrics?.impressions)) {
-      selectedByAd.set(candidate.adId, candidate);
-    }
+    const current = selectedByAd.get(candidate.adId) || [];
+    current.push(candidate);
+    current.sort((left, right) =>
+      parseNumber(left.metrics?.impressions) - parseNumber(right.metrics?.impressions),
+    );
+    selectedByAd.set(candidate.adId, current.slice(0, maxPerAd));
   }
 
-  return [...selectedByAd.values()];
+  return [...selectedByAd.values()].flat();
 };
 
 const getMetaAdRunningDays = (ad = {}, now = new Date()) => {
@@ -747,59 +772,92 @@ export const collectMetaLowPerformerAssets = async ({
   adAccountId,
   campaignIds,
   limit,
-  datePreset = 'last_30d',
+  datePreset = 'maximum',
+  minRunningDays = 30,
+  minImpressions = 100,
+  maxConversions = 0,
+  maxAssetsPerAd = 1,
   graphGetImpl = graphGet,
   resolveImageResolutionImpl = resolveImageResolution,
   now = new Date(),
 }) => {
   const maxResults = Math.max(1, Math.min(Number(limit || 100), 500));
+  const minAgeDays = Math.max(0, parseNumber(minRunningDays));
+  const minInsightImpressions = Math.max(0, parseNumber(minImpressions));
+  const maxInsightConversions = Math.max(0, parseNumber(maxConversions));
+  const maxImageAssetsPerAd = Math.min(toPositiveInteger(maxAssetsPerAd, 1), 20);
   const selectedCampaignIds = normalizeCampaignIds({ campaignIds });
-  const insights = [];
+  const adInsights = [];
+  const imageAssetInsights = [];
 
   for (const campaignId of selectedCampaignIds) {
-    const insightsResponse = await graphGetImpl(`/${campaignId}/insights`, {
+    const insightsParams = {
       level: 'ad',
       fields: META_INSIGHTS_FIELDS,
-      breakdowns: 'image_asset',
-      date_preset: datePreset,
       limit: 500,
+    };
+    if (datePreset) insightsParams.date_preset = datePreset;
+
+    const insightsResponse = await graphGetImpl(`/${campaignId}/insights`, insightsParams);
+    adInsights.push(...(insightsResponse?.data || []));
+
+    const imageAssetInsightsResponse = await graphGetImpl(`/${campaignId}/insights`, {
+      ...insightsParams,
+      breakdowns: 'image_asset',
     });
-    insights.push(...(insightsResponse?.data || []));
+    imageAssetInsights.push(...(imageAssetInsightsResponse?.data || []));
   }
 
+  const imageAssetCandidatesByAdId = groupMetaImageAssetCandidatesByAdId(
+    imageAssetInsights,
+    maxImageAssetsPerAd,
+  );
   const rankedCandidates = rankMetaLowPerformers(
-    selectLowestImpressionMetaImageAssetPerAd(
-      insights
-        .map(normalizeInsightCandidate)
-        .filter((candidate) => candidate.adId),
-    ),
-  ).slice(0, Math.min(Math.max(maxResults * 5, maxResults), 100));
+    adInsights
+      .map(normalizeInsightCandidate)
+      .filter((candidate) =>
+        candidate.adId &&
+        parseNumber(candidate.metrics?.impressions) >= minInsightImpressions &&
+        parseNumber(candidate.metrics?.conversions) <= maxInsightConversions,
+      ),
+  );
   const assets = [];
 
   for (const candidate of rankedCandidates) {
     if (assets.length >= maxResults) break;
+    const imageAssetCandidates = imageAssetCandidatesByAdId.get(candidate.adId) || [candidate];
 
     const ad = await graphGetImpl(`/${candidate.adId}`, {
       fields: META_AD_FIELDS,
     });
     if (!isActiveMetaAdHierarchy(ad)) continue;
-    if (getMetaAdRunningDays(ad, now) < 30) continue;
+    if (getMetaAdRunningDays(ad, now) < minAgeDays) continue;
 
     const creative = ad?.creative || {};
     if (isMetaVideoCreative(creative)) continue;
 
-    const imageUrl = getMetaCreativeImageAssetUrl(creative, candidate.imageAssetKey);
-    const previewUrl = getMetaCreativeImageAssetPreviewUrl(creative, candidate.imageAssetKey);
-    if (!imageUrl && !previewUrl) continue;
+    for (const imageAssetCandidate of imageAssetCandidates) {
+      if (assets.length >= maxResults) break;
 
-    const imageResolution = imageUrl ? await resolveImageResolutionImpl(imageUrl) : {};
-    assets.push(normalizeMetaLowPerformerAd({
-      adAccountId,
-      ad,
-      insight: candidate.insight,
-      imageResolution,
-      selectedImageAssetKey: candidate.imageAssetKey,
-    }));
+      const imageUrl = getMetaCreativeImageAssetUrl(creative, imageAssetCandidate.imageAssetKey);
+      const previewUrl = getMetaCreativeImageAssetPreviewUrl(creative, imageAssetCandidate.imageAssetKey);
+      if (!imageUrl && !previewUrl) continue;
+
+      const imageResolution = imageUrl ? await resolveImageResolutionImpl(imageUrl) : {};
+      assets.push(normalizeMetaLowPerformerAd({
+        adAccountId,
+        ad,
+        insight: candidate.insight,
+        imageResolution,
+        selectedImageAssetKey: imageAssetCandidate.imageAssetKey,
+        analysisPeriod: {
+          days: minAgeDays,
+          minImpressions: minInsightImpressions,
+          maxConversions: maxInsightConversions,
+          maxAssetsPerAd: maxImageAssetsPerAd,
+        },
+      }));
+    }
   }
 
   return assets;
@@ -809,7 +867,23 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
   if (!adAccountId) throw new Error('adAccountId is required.');
 
   const limit = Math.max(1, Math.min(Number(options.limit || 100), 500));
-  const datePreset = options.datePreset || 'last_30d';
+  const analysisDays = Math.max(
+    1,
+    Math.min(parseNumber(options.analysisDays || process.env.META_LOW_PERFORMANCE_MIN_RUNNING_DAYS || 30), 3650),
+  );
+  const minImpressions = Math.max(
+    0,
+    parseNumber(options.minImpressions ?? process.env.META_LOW_PERFORMANCE_MIN_IMPRESSIONS ?? 100),
+  );
+  const maxConversions = Math.max(
+    0,
+    parseNumber(options.maxConversions ?? process.env.META_LOW_PERFORMANCE_MAX_CONVERSIONS ?? 0),
+  );
+  const maxAssetsPerAd = Math.min(
+    toPositiveInteger(options.maxAssetsPerAd || process.env.META_MAX_REPLACEMENTS_PER_AD || 1, 1),
+    20,
+  );
+  const datePreset = options.datePreset || process.env.META_LOW_PERFORMANCE_DATE_PRESET || 'maximum';
   const graphGetImpl = options.graphGetImpl || graphGet;
   const selectedCampaignIds = normalizeCampaignIds(options);
   const activeCampaigns = await getCampaigns(adAccountId, graphGetImpl);
@@ -825,8 +899,13 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
     campaignIds,
     limit,
     datePreset,
+    minRunningDays: analysisDays,
+    minImpressions,
+    maxConversions,
+    maxAssetsPerAd,
     graphGetImpl,
     resolveImageResolutionImpl: options.resolveImageResolutionImpl || resolveImageResolution,
+    now: options.now || new Date(),
   });
 };
 

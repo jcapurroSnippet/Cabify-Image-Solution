@@ -205,13 +205,27 @@ const buildReplacementImageDataUrlsByRatio = async (familyCreatives, reservedCre
   };
 };
 
-export const getMetaLowPerformers = async ({ accountId, campaignId, campaignIds, limit, sheetsUrl }) => {
+export const getMetaLowPerformers = async ({
+  accountId,
+  campaignId,
+  campaignIds,
+  limit,
+  sheetsUrl,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
+  datePreset,
+}) => {
   if (!accountId) throw new Error('accountId is required.');
   const config = await getConfigForReplacement(sheetsUrl);
   const selectedCampaignIds = normalizeCampaignIds({ campaignId, campaignIds });
   const assets = await getLowPerformingImageAssets(accountId, {
     campaignIds: selectedCampaignIds,
     limit,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
+    datePreset,
   });
   const recentlyReplacedTargetKeys = await listRecentlyReplacedTargetKeys({
     sheetsUrl,
@@ -241,6 +255,10 @@ const getLowPerformersWithLimit = async ({
   sheetsUrl,
   limit,
   selectedLowPerformerIds,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
+  datePreset,
 }) => {
   const maxResults = Math.max(1, Number(limit || 20));
   const assets = await getMetaLowPerformers({
@@ -248,6 +266,10 @@ const getLowPerformersWithLimit = async ({
     campaignIds,
     sheetsUrl,
     limit: Math.max(maxResults * 4, 50),
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
+    datePreset,
   });
 
   if (selectedLowPerformerIds?.size) {
@@ -266,6 +288,10 @@ export const buildMetaReplacementPlan = async ({
   selectedLowPerformerIds,
   lowPerformerCategories,
   excludedCreativeIds = [],
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
+  datePreset,
 }) => {
   if (!sheetsUrl) throw new Error('sheetsUrl is required.');
   if (!accountId) throw new Error('accountId is required.');
@@ -285,6 +311,10 @@ export const buildMetaReplacementPlan = async ({
     sheetsUrl,
     limit,
     selectedLowPerformerIds: selectedLowIds,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
+    datePreset,
   });
   const plannedCreativeIdsByCampaign = new Map();
   const metaCreativeSetSelections = new Map();
@@ -536,6 +566,10 @@ export const executeMetaReplacements = async ({
   lowPerformerCategories,
   excludedCreativeIds = [],
   allowNewAdCreation = false,
+  analysisDays,
+  minImpressions,
+  maxAssetsPerAd,
+  datePreset,
 }) => {
   if (confirm !== true) {
     throw new Error('confirm must be true to execute replacements.');
@@ -559,6 +593,10 @@ export const executeMetaReplacements = async ({
     selectedLowPerformerIds,
     lowPerformerCategories,
     excludedCreativeIds,
+    analysisDays,
+    minImpressions,
+    maxAssetsPerAd,
+    datePreset,
   });
   const selectedExecutableOperations = plan.operations.filter((operation) =>
     (!selectedIds || selectedIds.has(operation.id)) &&

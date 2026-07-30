@@ -613,7 +613,19 @@ app.post('/api/ads/replace-creative', async (request, response) => {
 
 app.post('/api/ads/low-performers', async (request, response) => {
   try {
-    const { accountId, campaignId, campaignIds, limit, sheetsUrl, selections, analysisDays, minImpressions, maxAssetsPerAd } = request.body ?? {};
+    const {
+      accountId,
+      campaignId,
+      campaignIds,
+      limit,
+      sheetsUrl,
+      selections,
+      analysisDays,
+      minImpressions,
+      maxAssetsPerAd,
+      datePreset,
+      date_preset: datePresetSnake,
+    } = request.body ?? {};
     const source = normalizeAdsSource(request.body?.source);
     const normalizedSelections = normalizeAdsSelections({
       source,
@@ -631,6 +643,7 @@ app.post('/api/ads/low-performers', async (request, response) => {
       analysisDays: Number(analysisDays) || 30,
       minImpressions: Number(minImpressions ?? 100),
       maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      datePreset: datePreset || datePresetSnake,
     });
 
     return response.status(200).json({
@@ -681,6 +694,8 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       analysisDays,
       minImpressions,
       maxAssetsPerAd,
+      datePreset,
+      date_preset: datePresetSnake,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -706,6 +721,7 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       analysisDays: Number(analysisDays) || 30,
       minImpressions: Number(minImpressions ?? 100),
       maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      datePreset: datePreset || datePresetSnake,
     });
 
     return response.status(200).json(plan);
@@ -738,6 +754,8 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       analysisDays,
       minImpressions,
       maxAssetsPerAd,
+      datePreset,
+      date_preset: datePresetSnake,
     } = request.body ?? {};
 
     if (!sheetsUrl) {
@@ -770,6 +788,7 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       analysisDays: Number(analysisDays) || 30,
       minImpressions: Number(minImpressions ?? 100),
       maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      datePreset: datePreset || datePresetSnake,
     });
 
     return response.status(200).json(result);

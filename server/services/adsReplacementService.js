@@ -81,6 +81,7 @@ export const getAdsLowPerformers = async ({
   analysisDays,
   minImpressions,
   maxAssetsPerAd,
+  datePreset,
   sheetsUrl,
   deps,
 } = {}) => {
@@ -101,6 +102,7 @@ export const getAdsLowPerformers = async ({
       analysisDays,
       minImpressions,
       maxAssetsPerAd,
+      datePreset,
     });
 
     assets.push(...platformAssets.map((asset) => tagPlatform(asset, platform, selection.accountId)));
@@ -127,6 +129,7 @@ export const buildAdsReplacementPlan = async ({
   analysisDays,
   minImpressions,
   maxAssetsPerAd,
+  datePreset,
   deps,
 } = {}) => {
   const activePlatforms = normalizeSource(source);
@@ -151,6 +154,7 @@ export const buildAdsReplacementPlan = async ({
       analysisDays,
       minImpressions,
       maxAssetsPerAd,
+      datePreset,
       excludedCreativeIds: [],
     });
 
@@ -189,6 +193,7 @@ export const executeAdsReplacements = async ({
   analysisDays,
   minImpressions,
   maxAssetsPerAd,
+  datePreset,
   deps,
 } = {}) => {
   const activePlatforms = normalizeSource(source);
@@ -217,6 +222,7 @@ export const executeAdsReplacements = async ({
       analysisDays,
       minImpressions,
       maxAssetsPerAd,
+      datePreset,
       excludedCreativeIds: [],
     });
 
