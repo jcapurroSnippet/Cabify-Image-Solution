@@ -129,6 +129,12 @@ const normalizeAdsSource = (value) => {
   return source;
 };
 
+const normalizeOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
 const getActiveAdsPlatforms = (source) => [source];
 
 const normalizeAdsSelections = ({ source, selections, accountId, campaignId, campaignIds }) => {
@@ -620,7 +626,6 @@ app.post('/api/ads/low-performers', async (request, response) => {
       limit,
       sheetsUrl,
       selections,
-      analysisDays,
       minImpressions,
       maxAssetsPerAd,
       datePreset,
@@ -640,9 +645,9 @@ app.post('/api/ads/low-performers', async (request, response) => {
       selections: normalizedSelections,
       sheetsUrl: sheetsUrl ? String(sheetsUrl).trim() : undefined,
       limit: Number(limit) || 100,
-      analysisDays: Number(analysisDays) || 30,
-      minImpressions: Number(minImpressions ?? 100),
-      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      analysisDays: 30,
+      minImpressions: normalizeOptionalNumber(minImpressions) ?? 0,
+      maxAssetsPerAd: normalizeOptionalNumber(maxAssetsPerAd),
       datePreset: datePreset || datePresetSnake,
     });
 
@@ -691,7 +696,6 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       lowPerformerCategories,
       replacementMode,
       selections,
-      analysisDays,
       minImpressions,
       maxAssetsPerAd,
       datePreset,
@@ -718,9 +722,9 @@ app.post('/api/ads/replacement-plan', async (request, response) => {
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
-      analysisDays: Number(analysisDays) || 30,
-      minImpressions: Number(minImpressions ?? 100),
-      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      analysisDays: 30,
+      minImpressions: normalizeOptionalNumber(minImpressions) ?? 0,
+      maxAssetsPerAd: normalizeOptionalNumber(maxAssetsPerAd),
       datePreset: datePreset || datePresetSnake,
     });
 
@@ -751,7 +755,6 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       replacementMode,
       allowNewAdCreation,
       selections,
-      analysisDays,
       minImpressions,
       maxAssetsPerAd,
       datePreset,
@@ -785,9 +788,9 @@ app.post('/api/ads/execute-replacements', async (request, response) => {
       lowPerformerCategories,
       replacementMode,
       allowNewAdCreation,
-      analysisDays: Number(analysisDays) || 30,
-      minImpressions: Number(minImpressions ?? 100),
-      maxAssetsPerAd: Number(maxAssetsPerAd) || 1,
+      analysisDays: 30,
+      minImpressions: normalizeOptionalNumber(minImpressions) ?? 0,
+      maxAssetsPerAd: normalizeOptionalNumber(maxAssetsPerAd),
       datePreset: datePreset || datePresetSnake,
     });
 
@@ -827,6 +830,8 @@ app.post('/api/ads/google/low-performers', async (request, response) => {
       campaignIds: normalizeOptionalStringList(campaignIds ?? campaignId),
       sheetsUrl: sheetsUrl ? String(sheetsUrl).trim() : undefined,
       limit: Number(limit) || 100,
+      analysisDays: 30,
+      minImpressions: 0,
     });
 
     return response.status(200).json({
@@ -872,6 +877,8 @@ app.post('/api/ads/google/replacement-plan', async (request, response) => {
       selectedLowPerformerIds,
       lowPerformerCategories,
       replacementMode,
+      analysisDays: 30,
+      minImpressions: 0,
     });
 
     return response.status(200).json(plan);
@@ -934,6 +941,8 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
       lowPerformerCategories,
       replacementMode,
       allowNewAdCreation,
+      analysisDays: 30,
+      minImpressions: 0,
     });
 
     console.log('[GOOGLE_REPLACEMENT] Execute response', {

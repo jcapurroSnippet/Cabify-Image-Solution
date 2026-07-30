@@ -53,6 +53,11 @@ const DEFAULT_CATEGORY_OPTIONS = [
   'Promo',
   'Alianzas',
 ];
+const DEFAULT_PERFORMANCE_OPTIONS = {
+  analysisDays: 30,
+  minImpressions: 0,
+  maxAssetsPerAd: 1,
+};
 
 const ADS_PLATFORMS: AdsPlatform[] = ['google', 'meta'];
 
@@ -382,7 +387,7 @@ export default function CreativeLibraryTab() {
   const handleLowPerformers = () => {
     if (!validateAds()) return;
     void runAction('low', async () => {
-      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit);
+      const result = await fetchLowPerformers(sheetsUrl.trim(), adsSource, adsSelections, limit, DEFAULT_PERFORMANCE_OPTIONS);
       const assets = result.assets;
       setLowPerformers(assets);
       setCategoryOptions(result.categories.length > 0 ? result.categories : DEFAULT_CATEGORY_OPTIONS);
@@ -428,6 +433,7 @@ export default function CreativeLibraryTab() {
         limit,
         selectedLowIds,
         selectedCategories,
+        DEFAULT_PERFORMANCE_OPTIONS,
       );
       const executableOperations = nextPlan.operations.filter(
         (operation) => operation.status === 'planned' && operation.executableInMode,
@@ -480,6 +486,7 @@ export default function CreativeLibraryTab() {
         selectedLowIds,
         selectedCategories,
         requiresNewAdPermission,
+        DEFAULT_PERFORMANCE_OPTIONS,
       );
       console.info('[Creative Library] Ads execution result', result);
       if (result.googleAdsTrace?.length) {
