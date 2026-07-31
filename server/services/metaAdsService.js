@@ -742,13 +742,44 @@ const selectLowestImpressionMetaImageAssetsPerAd = (candidates = [], maxAssetsPe
   return [...selectedByAd.values()].flat();
 };
 
-const getMetaAdUnchangedDays = (ad = {}, now = new Date()) => {
-  const latestChangeTime = [ad.created_time, ad.updated_time]
+const getLatestMetaAdChangeTime = (ad = {}) =>
+  [ad.created_time, ad.updated_time]
     .map((value) => Date.parse(value || ''))
     .filter(Number.isFinite)
     .reduce((latest, timestamp) => Math.max(latest, timestamp), Number.NEGATIVE_INFINITY);
-  if (!Number.isFinite(latestChangeTime)) return 0;
-  return Math.floor((now.getTime() - latestChangeTime) / (24 * 60 * 60 * 1000));
+
+const addUtcCalendarMonths = (value, months) => {
+  const source = new Date(value);
+  const targetMonthStart = new Date(Date.UTC(
+    source.getUTCFullYear(),
+    source.getUTCMonth() + months,
+    1,
+    source.getUTCHours(),
+    source.getUTCMinutes(),
+    source.getUTCSeconds(),
+    source.getUTCMilliseconds(),
+  ));
+  const lastTargetDay = new Date(Date.UTC(
+    targetMonthStart.getUTCFullYear(),
+    targetMonthStart.getUTCMonth() + 1,
+    0,
+  )).getUTCDate();
+  targetMonthStart.setUTCDate(Math.min(source.getUTCDate(), lastTargetDay));
+  return targetMonthStart;
+};
+
+const hasMetaAdReachedMinimumUnchangedAge = (ad = {}, now = new Date(), minAgeDays = 30) => {
+  if (minAgeDays <= 0) return true;
+
+  const latestChangeTime = getLatestMetaAdChangeTime(ad);
+  if (!Number.isFinite(latestChangeTime)) return false;
+
+  // The fixed Meta 30-day setting represents one full calendar month.
+  if (minAgeDays === 30) {
+    return now.getTime() >= addUtcCalendarMonths(latestChangeTime, 1).getTime();
+  }
+
+  return now.getTime() - latestChangeTime >= minAgeDays * 24 * 60 * 60 * 1000;
 };
 
 /**
@@ -831,7 +862,7 @@ export const collectMetaLowPerformerAssets = async ({
       fields: META_AD_FIELDS,
     });
     if (!isActiveMetaAdHierarchy(ad)) continue;
-    if (getMetaAdUnchangedDays(ad, now) < minAgeDays) continue;
+    if (!hasMetaAdReachedMinimumUnchangedAge(ad, now, minAgeDays)) continue;
 
     const creative = ad?.creative || {};
     if (isMetaVideoCreative(creative)) continue;

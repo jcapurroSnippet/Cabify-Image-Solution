@@ -274,8 +274,9 @@ test('filters selected Meta campaign IDs to active campaigns before reading insi
   assert.deepEqual(assets, []);
   assert.deepEqual(
     calls.map((call) => call.endpoint),
-    ['/act_123/campaigns', '/campaign-active/insights'],
+    ['/act_123/campaigns', '/campaign-active/insights', '/campaign-active/insights'],
   );
+  assert.deepEqual(calls.slice(1).map((call) => call.params.breakdowns), [undefined, 'image_asset']);
 });
 
 test('builds incremented Meta duplicate ad names', () => {
@@ -675,6 +676,59 @@ test('collects Meta low performers unchanged for at least 30 days by lowest impr
   assert.equal(calls[1].params.breakdowns, 'image_asset');
   assert.match(calls.find((call) => call.endpoint === '/ad-new').params.fields, /updated_time/);
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
+});
+
+test('requires a full calendar month for the Meta 30-day age setting', async () => {
+  const graphGetImpl = async (endpoint, params) => {
+    if (endpoint === '/campaign-1/insights') {
+      if (params?.breakdowns === 'image_asset') return { data: [] };
+      return { data: [{ ad_id: 'ad-1', impressions: '100', clicks: '10', spend: '20' }] };
+    }
+    if (endpoint === '/ad-1') {
+      return {
+        id: 'ad-1',
+        name: 'Updated July ad',
+        created_time: '2026-01-01T12:00:00+0000',
+        updated_time: '2026-07-01T12:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-1',
+          image_url: 'https://example.com/image.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'image-hash' },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected endpoint ${endpoint}`);
+  };
+  const options = {
+    adAccountId: 'act_123',
+    campaignIds: ['campaign-1'],
+    limit: 1,
+    minRunningDays: 30,
+    graphGetImpl,
+    resolveImageResolutionImpl: async () => ({ width: 1080, height: 1080 }),
+  };
+
+  const beforeCalendarMonth = await collectMetaLowPerformerAssets({
+    ...options,
+    now: new Date('2026-07-31T13:00:00Z'),
+  });
+  const atCalendarMonth = await collectMetaLowPerformerAssets({
+    ...options,
+    now: new Date('2026-08-01T12:00:00Z'),
+  });
+
+  assert.deepEqual(beforeCalendarMonth, []);
+  assert.deepEqual(atCalendarMonth.map((asset) => asset.adId), ['ad-1']);
 });
 
 test('does not truncate Meta low performer candidates before age filtering', async () => {
