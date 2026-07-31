@@ -593,7 +593,7 @@ test('ignores replacement ratios that are not part of the Meta creative', async 
   });
 });
 
-test('collects Meta low performers with at least 30 running days by lowest impressions', async () => {
+test('collects Meta low performers unchanged for at least 30 days by lowest impressions', async () => {
   const calls = [];
   const graphGetImpl = async (endpoint, params) => {
     calls.push({ endpoint, params });
@@ -611,7 +611,8 @@ test('collects Meta low performers with at least 30 running days by lowest impre
       return {
         id: 'ad-new',
         name: 'New ad',
-        created_time: '2026-03-10T00:00:00+0000',
+        created_time: '2026-01-01T00:00:00+0000',
+        updated_time: '2026-03-10T00:00:00+0000',
         adset: {
           id: 'adset-new',
           name: 'AR | Promo | BUE',
@@ -632,6 +633,7 @@ test('collects Meta low performers with at least 30 running days by lowest impre
         id: 'ad-low-impressions-old',
         name: 'Low ad',
         created_time: '2026-01-01T00:00:00+0000',
+        updated_time: '2026-01-15T00:00:00+0000',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -671,6 +673,7 @@ test('collects Meta low performers with at least 30 running days by lowest impre
   assert.equal(calls[0].params.date_preset, 'maximum');
   assert.equal(calls[0].params.breakdowns, undefined);
   assert.equal(calls[1].params.breakdowns, 'image_asset');
+  assert.match(calls.find((call) => call.endpoint === '/ad-new').params.fields, /updated_time/);
   assert.equal(calls.some((call) => call.endpoint === '/campaign-1/ads'), false);
 });
 

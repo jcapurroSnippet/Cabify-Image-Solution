@@ -9,7 +9,7 @@ const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 const META_CREATIVE_FIELDS =
   'id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec,degrees_of_freedom_spec,url_tags,effective_object_story_id';
 const META_AD_FIELDS =
-  `id,name,created_time,effective_status,adset{id,name,effective_status,campaign{id,name,effective_status}},creative{${META_CREATIVE_FIELDS}}`;
+  `id,name,created_time,updated_time,effective_status,adset{id,name,effective_status,campaign{id,name,effective_status}},creative{${META_CREATIVE_FIELDS}}`;
 const META_ADS_FIELDS = META_AD_FIELDS;
 const META_AD_STATUS_FIELDS = 'id,status,configured_status,effective_status';
 const META_INSIGHTS_FIELDS =
@@ -742,10 +742,13 @@ const selectLowestImpressionMetaImageAssetsPerAd = (candidates = [], maxAssetsPe
   return [...selectedByAd.values()].flat();
 };
 
-const getMetaAdRunningDays = (ad = {}, now = new Date()) => {
-  const createdTime = Date.parse(ad.created_time || '');
-  if (!Number.isFinite(createdTime)) return 0;
-  return Math.floor((now.getTime() - createdTime) / (24 * 60 * 60 * 1000));
+const getMetaAdUnchangedDays = (ad = {}, now = new Date()) => {
+  const latestChangeTime = [ad.created_time, ad.updated_time]
+    .map((value) => Date.parse(value || ''))
+    .filter(Number.isFinite)
+    .reduce((latest, timestamp) => Math.max(latest, timestamp), Number.NEGATIVE_INFINITY);
+  if (!Number.isFinite(latestChangeTime)) return 0;
+  return Math.floor((now.getTime() - latestChangeTime) / (24 * 60 * 60 * 1000));
 };
 
 /**
@@ -828,7 +831,7 @@ export const collectMetaLowPerformerAssets = async ({
       fields: META_AD_FIELDS,
     });
     if (!isActiveMetaAdHierarchy(ad)) continue;
-    if (getMetaAdRunningDays(ad, now) < minAgeDays) continue;
+    if (getMetaAdUnchangedDays(ad, now) < minAgeDays) continue;
 
     const creative = ad?.creative || {};
     if (isMetaVideoCreative(creative)) continue;
