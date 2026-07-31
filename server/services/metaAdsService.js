@@ -658,7 +658,7 @@ export const normalizeMetaLowPerformerAd = ({
     metrics: buildMetaMetrics(insight),
     analysisPeriod,
     performanceLabel: '',
-    reason: 'META_LOW_CONVERSIONS_HIGH_CPA',
+    reason: 'META_LOW_IMPRESSIONS',
     supportedReplacement: safety.supported,
     replacementSupportReason: safety.supported ? null : safety.reason,
     replacementSupportMessage: safety.supported ? null : safety.message,
@@ -775,7 +775,6 @@ export const collectMetaLowPerformerAssets = async ({
   datePreset = 'maximum',
   minRunningDays = 30,
   minImpressions = 100,
-  maxConversions = 0,
   maxAssetsPerAd = 1,
   graphGetImpl = graphGet,
   resolveImageResolutionImpl = resolveImageResolution,
@@ -784,7 +783,6 @@ export const collectMetaLowPerformerAssets = async ({
   const maxResults = Math.max(1, Math.min(Number(limit || 100), 500));
   const minAgeDays = Math.max(0, parseNumber(minRunningDays));
   const minInsightImpressions = Math.max(0, parseNumber(minImpressions));
-  const maxInsightConversions = Math.max(0, parseNumber(maxConversions));
   const maxImageAssetsPerAd = Math.min(toPositiveInteger(maxAssetsPerAd, 1), 20);
   const selectedCampaignIds = normalizeCampaignIds({ campaignIds });
   const adInsights = [];
@@ -817,8 +815,7 @@ export const collectMetaLowPerformerAssets = async ({
       .map(normalizeInsightCandidate)
       .filter((candidate) =>
         candidate.adId &&
-        parseNumber(candidate.metrics?.impressions) >= minInsightImpressions &&
-        parseNumber(candidate.metrics?.conversions) <= maxInsightConversions,
+        parseNumber(candidate.metrics?.impressions) >= minInsightImpressions,
       ),
   );
   const assets = [];
@@ -853,7 +850,6 @@ export const collectMetaLowPerformerAssets = async ({
         analysisPeriod: {
           days: minAgeDays,
           minImpressions: minInsightImpressions,
-          maxConversions: maxInsightConversions,
           maxAssetsPerAd: maxImageAssetsPerAd,
         },
       }));
@@ -874,10 +870,6 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
   const minImpressions = Math.max(
     0,
     parseNumber(options.minImpressions ?? process.env.META_LOW_PERFORMANCE_MIN_IMPRESSIONS ?? 100),
-  );
-  const maxConversions = Math.max(
-    0,
-    parseNumber(options.maxConversions ?? process.env.META_LOW_PERFORMANCE_MAX_CONVERSIONS ?? 0),
   );
   const maxAssetsPerAd = Math.min(
     toPositiveInteger(options.maxAssetsPerAd || process.env.META_MAX_REPLACEMENTS_PER_AD || 1, 1),
@@ -901,7 +893,6 @@ export const getLowPerformingImageAssets = async (adAccountId, options = {}) => 
     datePreset,
     minRunningDays: analysisDays,
     minImpressions,
-    maxConversions,
     maxAssetsPerAd,
     graphGetImpl,
     resolveImageResolutionImpl: options.resolveImageResolutionImpl || resolveImageResolution,

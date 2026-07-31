@@ -773,7 +773,7 @@ test('does not truncate Meta low performer candidates before age filtering', asy
   );
 });
 
-test('skips Meta candidates that already have conversions', async () => {
+test('keeps Meta candidates that already have conversions', async () => {
   const calls = [];
   const graphGetImpl = async (endpoint, params) => {
     calls.push({ endpoint, params });
@@ -833,7 +833,26 @@ test('skips Meta candidates that already have conversions', async () => {
       };
     }
     if (endpoint === '/ad-old-with-purchases') {
-      throw new Error('Converted Meta ad should not be fetched as a low performer');
+      return {
+        id: 'ad-old-with-purchases',
+        name: 'SI_PRECIO - IA with purchases',
+        created_time: '2026-04-24T00:00:00+0000',
+        effective_status: 'ACTIVE',
+        adset: {
+          id: 'adset-1',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-with-purchases',
+          image_url: 'https://example.com/with-purchases.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'converted-low-image-hash' },
+          },
+        },
+      };
     }
     throw new Error(`Unexpected endpoint ${endpoint}`);
   };
@@ -847,13 +866,17 @@ test('skips Meta candidates that already have conversions', async () => {
     now: new Date('2026-07-30T00:00:00Z'),
   });
 
-  assert.equal(assets.length, 1);
-  assert.equal(assets[0].adId, 'ad-old-low');
-  assert.equal(assets[0].metrics.conversions, 0);
+  assert.deepEqual(assets.map((asset) => asset.adId), [
+    'ad-old-low',
+    'ad-old-with-purchases',
+  ]);
+  assert.deepEqual(assets.map((asset) => asset.metrics.conversions), [0, 20]);
+  assert.ok(assets.every((asset) => asset.reason === 'META_LOW_IMPRESSIONS'));
   assert.deepEqual(calls.map((call) => call.endpoint), [
     '/campaign-1/insights',
     '/campaign-1/insights',
     '/ad-old-low',
+    '/ad-old-with-purchases',
   ]);
 });
 
