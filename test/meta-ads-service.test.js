@@ -614,6 +614,7 @@ test('collects Meta low performers unchanged for at least 30 days by lowest impr
         name: 'New ad',
         created_time: '2026-01-01T00:00:00+0000',
         updated_time: '2026-03-10T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-new',
           name: 'AR | Promo | BUE',
@@ -635,6 +636,7 @@ test('collects Meta low performers unchanged for at least 30 days by lowest impr
         name: 'Low ad',
         created_time: '2026-01-01T00:00:00+0000',
         updated_time: '2026-01-15T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -943,6 +945,7 @@ test('skips Meta low performers whose ad, ad set, or campaign is not active', as
       return {
         data: [
           { ad_id: 'ad-paused', impressions: '100', clicks: '10', spend: '20' },
+          { ad_id: 'ad-without-delivery', impressions: '200', clicks: '20', spend: '40' },
           { ad_id: 'ad-active', impressions: '300', clicks: '30', spend: '60' },
         ],
       };
@@ -962,6 +965,27 @@ test('skips Meta low performers whose ad, ad set, or campaign is not active', as
         creative: {
           id: 'creative-paused',
           image_url: 'https://example.com/paused.png',
+          object_story_spec: {
+            page_id: 'page-1',
+            link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
+          },
+        },
+      };
+    }
+    if (endpoint === '/ad-without-delivery') {
+      return {
+        id: 'ad-without-delivery',
+        name: 'Ad without active delivery',
+        created_time: '2026-01-01T00:00:00+0000',
+        adset: {
+          id: 'adset-without-delivery',
+          name: 'AR | Promo | BUE',
+          effective_status: 'ACTIVE',
+          campaign: { id: 'campaign-1', name: 'AR | BUE | Promo', effective_status: 'ACTIVE' },
+        },
+        creative: {
+          id: 'creative-without-delivery',
+          image_url: 'https://example.com/without-delivery.png',
           object_story_spec: {
             page_id: 'page-1',
             link_data: { link: 'https://cabify.com', image_hash: 'old-hash' },
@@ -1047,6 +1071,7 @@ test('collects the lowest-impression Meta image asset for each ad', async () => 
         id: 'ad-1',
         name: 'Dynamic image ad',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -1114,6 +1139,7 @@ test('does not use generic Meta creative image URL for hash-only dynamic image a
         id: 'ad-1',
         name: 'Dynamic image ad',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -1174,6 +1200,7 @@ test('keeps Meta dynamic creatives replaceable when insight image hash is stale'
         id: 'ad-1',
         name: 'Dynamic image ad',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-1',
           name: 'AR | Promo | BUE',
@@ -1244,6 +1271,7 @@ test('collects only Meta image low performers and skips video thumbnails', async
         id: 'ad-video',
         name: 'Video ad',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-video',
           name: 'AR | Promo | BUE',
@@ -1265,6 +1293,7 @@ test('collects only Meta image low performers and skips video thumbnails', async
         id: 'ad-image',
         name: 'Image ad',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-image',
           name: 'AR | Promo | BUE',
@@ -1315,6 +1344,7 @@ test('does not resolve Meta thumbnail-only creatives as image assets', async () 
         id: 'ad-thumb-only',
         name: 'Image ad with thumbnail only',
         created_time: '2026-01-01T00:00:00+0000',
+        effective_status: 'ACTIVE',
         adset: {
           id: 'adset-image',
           name: 'AR | Promo | BUE',

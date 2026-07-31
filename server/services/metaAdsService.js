@@ -173,8 +173,11 @@ const isMetaActiveOrUnknown = (entity = {}) => {
   return !status || status === 'ACTIVE';
 };
 
+const hasActiveMetaAdDelivery = (ad = {}) =>
+  normalizeMetaStatus(ad?.effective_status) === 'ACTIVE';
+
 const isActiveMetaAdHierarchy = (ad = {}) =>
-  isMetaActiveOrUnknown(ad) &&
+  hasActiveMetaAdDelivery(ad) &&
   isMetaActiveOrUnknown(ad.adset) &&
   isMetaActiveOrUnknown(ad.adset?.campaign);
 
