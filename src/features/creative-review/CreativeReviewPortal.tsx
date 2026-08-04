@@ -112,6 +112,9 @@ const formatDate = (value?: string) => {
   return new Intl.DateTimeFormat('es-AR', { dateStyle: 'long' }).format(date);
 };
 
+const formatCount = (value: number, singular: string, plural: string) =>
+  `${value} ${value === 1 ? singular : plural}`;
+
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
 const normalizeRatio = (value: string) => {
@@ -130,6 +133,26 @@ const getMissingMetaRatios = (familyItems: CreativeReviewItem[]) => {
   );
   if (approvedRatios.size === 0) return [];
   return META_REQUIRED_RATIOS.filter((ratio) => !approvedRatios.has(ratio));
+};
+
+const getFamilyContextLabel = (familyItems: CreativeReviewItem[]) => {
+  const categories = Array.from(new Set(
+    familyItems.map((item) => item.category.trim()).filter(Boolean),
+  ));
+  const plazas = Array.from(new Set(
+    familyItems.map((item) => item.plaza.trim()).filter((value) => value && value !== 'Sin plaza'),
+  ));
+
+  const categoryLabel = categories.length > 2
+    ? `${categories.length} categorías`
+    : categories.join(' + ');
+  const plazaLabel = plazas.length === 1
+    ? (plazas[0].toUpperCase() === 'ALL' ? 'Todas las plazas' : plazas[0])
+    : plazas.length > 1
+      ? `${plazas.length} plazas`
+      : '';
+
+  return [categoryLabel, plazaLabel].filter(Boolean).join(' · ');
 };
 
 const getStatusPresentation = (status: ReviewItemStatus) => {
@@ -377,9 +400,16 @@ export default function CreativeReviewPortal({
     [activeItems],
   );
   const families = useMemo(
-    () => Array.from(new Set(activeItems.map((item) => item.familyId).filter(Boolean))).sort(),
+    () => Array.from(new Set(activeItems.map((item) => item.familyId).filter(Boolean))),
     [activeItems],
   );
+  const familyLabels = useMemo(() => {
+    const numberWidth = Math.max(2, String(families.length).length);
+    return new Map(families.map((familyId, index) => [
+      familyId,
+      `Familia ${String(index + 1).padStart(numberWidth, '0')}`,
+    ]));
+  }, [families]);
   const visibleItems = useMemo(() => activeItems.filter((item) => (
     (statusFilter === 'all' || item.status === statusFilter || savingIds.has(item.id))
     && (ratioFilter === 'all' || item.ratio === ratioFilter)
@@ -787,9 +817,15 @@ export default function CreativeReviewPortal({
                     className="review-filter-select h-9 max-w-xs appearance-none truncate rounded-full border border-slate-200 bg-white pl-3 pr-8 text-sm font-medium text-slate-700 outline-none hover:border-violet-300 focus:border-violet-500"
                   >
                     <option value="all">Todas las familias</option>
-                    {families.map((familyId) => (
-                      <option key={familyId} value={familyId}>{familyId}</option>
-                    ))}
+                    {families.map((familyId) => {
+                      const familyLabel = familyLabels.get(familyId) || 'Familia';
+                      const familyContext = getFamilyContextLabel(allFamilies.get(familyId) || []);
+                      return (
+                        <option key={familyId} value={familyId}>
+                          {familyLabel}{familyContext ? ` · ${familyContext}` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400" />
                 </label>
@@ -852,20 +888,30 @@ export default function CreativeReviewPortal({
           ));
           const visibleApprovedCount = reviewedItems.filter((item) => item.status === 'approved').length;
           const visibleRejectedCount = reviewedItems.filter((item) => item.status === 'rejected').length;
+          const familyLabel = familyLabels.get(familyId) || 'Familia';
+          const familyContext = getFamilyContextLabel(completeFamily);
           return (
             <section key={familyId} className="review-family-panel overflow-hidden rounded-2xl border border-violet-100 bg-white shadow-sm">
               <div className="review-family-header flex flex-col gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-base font-semibold text-slate-900">Familia {familyId}</h2>
+                    <h2 className="text-base font-semibold text-slate-900">{familyLabel}</h2>
                     {isPartial && <span title={`Ratios faltantes para Meta: ${missingMetaRatios.join(', ')}`} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Faltan ratios: {missingMetaRatios.join(', ')}</span>}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">{completeFamily.length} piezas · {approvedCount} aprobadas · {rejectedCount} rechazadas · {pendingCount} pendientes</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {[
+                      familyContext,
+                      formatCount(completeFamily.length, 'pieza', 'piezas'),
+                      formatCount(approvedCount, 'aprobada', 'aprobadas'),
+                      formatCount(rejectedCount, 'rechazada', 'rechazadas'),
+                      formatCount(pendingCount, 'pendiente', 'pendientes'),
+                    ].filter(Boolean).join(' · ')}
+                  </p>
                 </div>
                 {!isLocked && (
                   <div className="flex shrink-0 gap-2">
                     <button type="button" onClick={() => decideIds(completeFamily.map((item) => item.id), 'approved')} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><Check className="h-3.5 w-3.5" /> Aprobar familia</button>
-                    <button type="button" onClick={() => openRejectDialog(completeFamily.map((item) => item.id), `Familia ${familyId}`)} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"><X className="h-3.5 w-3.5" /> Rechazar familia</button>
+                    <button type="button" onClick={() => openRejectDialog(completeFamily.map((item) => item.id), familyLabel)} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"><X className="h-3.5 w-3.5" /> Rechazar familia</button>
                   </div>
                 )}
               </div>
@@ -886,7 +932,7 @@ export default function CreativeReviewPortal({
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span className="text-sm font-semibold text-slate-800">Creativos revisados</span>
                         <span className="text-xs text-slate-500">
-                          {reviewedItems.length} revisados · {visibleApprovedCount} aprobados · {visibleRejectedCount} rechazados
+                          {formatCount(reviewedItems.length, 'revisado', 'revisados')} · {formatCount(visibleApprovedCount, 'aprobado', 'aprobados')} · {formatCount(visibleRejectedCount, 'rechazado', 'rechazados')}
                         </span>
                       </div>
                       <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />

@@ -454,7 +454,7 @@ export default function ReviewBatchesTab({ isActive = true }: ReviewBatchesTabPr
         </section>
       )}
 
-      <details className="panel-surface group order-first">
+      <details hidden>
         <summary className="cursor-pointer list-none marker:hidden">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
