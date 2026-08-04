@@ -27,15 +27,55 @@ import {
   executeAdsReplacements,
   getAdsLowPerformers,
 } from './services/adsReplacementService.js';
+import {
+  cacheCreativeReviewPreviewAuthorization,
+  clearCreativeReviewSession,
+  clearCreativeReviewPreviewAuthorization,
+  getCreativeReviewPreviewAuthorization,
+  getCreativeReviewSessionToken,
+  isCreativeReviewWriterAuthorized,
+  isReviewRuntimeApiAllowed,
+  normalizeCreativeReviewDecisionPayload,
+  serializeCreativeReviewSession,
+} from './services/creativeReviewHttp.js';
+import { CreativeReviewError } from './services/creativeReviewCore.js';
+import {
+  createReviewBatch,
+  ensureReviewSheets,
+  exchangeReviewToken,
+  finalizeReviewBatch,
+  getPublicReviewBatch,
+  getReviewBatch,
+  importLegacyReviewBatch,
+  issueReviewLink,
+  listReviewBatches,
+  registerReviewItems,
+  retryReviewPublication,
+  revokeReviewBatch,
+  saveReviewDecisions,
+} from './services/creativeReviewService.js';
+import { findOrCreateDriveFolder, getShareableLink, uploadBufferToDrive } from './services/driveService.js';
+import { sanitizeFileName } from './services/creativeLibraryCore.js';
 
 class RequestValidationError extends Error {}
 
 const app = express();
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
+const appMode = String(process.env.APP_MODE || 'studio').trim().toLowerCase();
 
 app.set('trust proxy', true);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '30mb' }));
+app.use((request, response, next) => {
+  if (
+    appMode === 'review' &&
+    request.path.startsWith('/api/') &&
+    !isReviewRuntimeApiAllowed(request.path)
+  ) {
+    return response.status(404).json({ error: 'Route not found.' });
+  }
+  return next();
+});
 
 const PROMPT_LIMITATIONS = `**Role & Mission**
 You are the Cabify Creative Refiner. Your sole task is to generate exactly one modified version of the provided base image, applying only the specific change requested by the user — nothing more.
@@ -115,6 +155,37 @@ const parseDataUrl = (imageDataUrl) => {
   return { imageData, mimeType };
 };
 
+const getImageFileExtension = (mimeType) => {
+  if (/jpe?g/i.test(mimeType)) return 'jpg';
+  if (/webp/i.test(mimeType)) return 'webp';
+  if (/gif/i.test(mimeType)) return 'gif';
+  return 'png';
+};
+
+const persistEditorReference = async ({ imageDataUrl, batchId, sourceAssetName }) => {
+  const { imageData, mimeType } = parseDataUrl(imageDataUrl);
+  const config = getCreativeLibraryConfig();
+  const root = await findOrCreateDriveFolder('Creative Reviews', config.driveRootFolderId);
+  const batchFolder = await findOrCreateDriveFolder(batchId, root.folderId);
+  const referenceFolder = await findOrCreateDriveFolder('References', batchFolder.folderId);
+  const baseName = sanitizeFileName(sourceAssetName || 'reference');
+  const fileName = `${baseName}_original.${getImageFileExtension(mimeType)}`;
+  const upload = await uploadBufferToDrive(Buffer.from(imageData, 'base64'), fileName, mimeType, referenceFolder.folderId);
+  return getShareableLink(upload.fileId);
+};
+
+const sendCreativeReviewError = (response, error, fallbackMessage) => {
+  if (error instanceof CreativeReviewError) {
+    return response.status(error.statusCode || 400).json({
+      error: error.message,
+      code: error.code,
+      details: error.details,
+    });
+  }
+  console.error('[CREATIVE_REVIEW]', error);
+  return response.status(500).json({ error: getErrorMessage(error, fallbackMessage) });
+};
+
 const normalizeOptionalStringList = (value) => {
   if (value === undefined || value === null || value === '') return [];
   const rawValues = Array.isArray(value) ? value : [value];
@@ -186,6 +257,17 @@ app.get('/api/image-preview', async (request, response) => {
       throw new RequestValidationError('url query param is required.');
     }
 
+    if (appMode === 'review') {
+      const token = getCreativeReviewSessionToken(request);
+      const allowedUrls = await getCreativeReviewPreviewAuthorization({
+        token,
+        load: () => getPublicReviewBatch({ token }),
+      });
+      if (!allowedUrls.has(imageUrl)) {
+        return response.status(403).json({ error: 'This preview does not belong to the active review batch.' });
+      }
+    }
+
     const dataUrl = await downloadSheetImageAsDataUrl(imageUrl);
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
@@ -200,13 +282,17 @@ app.get('/api/image-preview', async (request, response) => {
       return response.status(400).json({ error: error.message });
     }
 
+    if (error instanceof CreativeReviewError) {
+      return sendCreativeReviewError(response, error, 'Failed to authorize image preview.');
+    }
+
     return sendImagePreviewPlaceholder(response, error);
   }
 });
 
 app.post('/api/nano-editor', async (request, response) => {
   try {
-    const { imageDataUrl, prompt } = request.body ?? {};
+    const { imageDataUrl, prompt, reviewContext } = request.body ?? {};
 
     if (typeof prompt !== 'string' || prompt.trim().length === 0) {
       throw new RequestValidationError('prompt is required.');
@@ -241,10 +327,72 @@ app.post('/api/nano-editor', async (request, response) => {
       return response.status(502).json({ error: 'The model did not return an image.' });
     }
 
-    return response.status(200).json({ imageUrl });
+    if (!reviewContext) {
+      return response.status(200).json({ imageUrl });
+    }
+
+    if (typeof reviewContext !== 'object' || Array.isArray(reviewContext)) {
+      throw new RequestValidationError('reviewContext must be an object.');
+    }
+    const sheetsUrl = String(reviewContext.sheetsUrl || '').trim();
+    const batchId = String(reviewContext.batchId || reviewContext.reviewBatchId || '').trim();
+    const familyId = String(reviewContext.familyId || '').trim();
+    const generationId = String(reviewContext.generationId || reviewContext.generation_id || '').trim();
+    const category = String(reviewContext.category || '').trim();
+    const plazas = normalizeOptionalStringList(reviewContext.plazas);
+    if (!sheetsUrl || !batchId || !familyId || !generationId || !category || plazas.length === 0) {
+      throw new RequestValidationError(
+        'reviewContext requires sheetsUrl, batchId, familyId, generationId, category and at least one plaza.',
+      );
+    }
+
+    const sourceAssetName = String(reviewContext.sourceAssetName || `asset-${reviewContext.sourceIndex || 1}`).trim();
+    const referenceUrl = await persistEditorReference({
+      imageDataUrl,
+      batchId,
+      sourceAssetName,
+    });
+    const registration = await registerReviewItems({
+      sheetsUrl,
+      batchId,
+      items: [{
+        familyId,
+        generationId,
+        variantIndex: 1,
+        imageUrl,
+        referenceUrl,
+        category,
+        plazas,
+        // Editor assets have no stable Sheet cell across separate batches, so
+        // their lineage is intentionally scoped to this review batch.
+        sourceOutput: `editor_batch:${batchId}:${reviewContext.sourceIndex || sourceAssetName}`,
+        metadata: {
+          sourceAssetName,
+          sourceIndex: reviewContext.sourceIndex || '',
+          prompt: prompt.trim(),
+        },
+      }],
+    });
+    const registeredItem = registration.items?.[0];
+    const stableImageUrl = registeredItem?.image_url || registeredItem?.imageUrl;
+    if (!stableImageUrl) {
+      throw new Error('The generated image was not persisted in the review batch.');
+    }
+
+    return response.status(200).json({
+      imageUrl: `/api/image-preview?url=${encodeURIComponent(stableImageUrl)}`,
+      stableImageUrl,
+      batchId,
+      reviewBatchId: batchId,
+      reviewItemId: registeredItem.review_item_id || registeredItem.reviewItemId || registeredItem.itemId,
+    });
   } catch (error) {
     if (error instanceof RequestValidationError) {
       return response.status(400).json({ error: error.message });
+    }
+
+    if (error instanceof CreativeReviewError) {
+      return sendCreativeReviewError(response, error, 'Failed to persist generated review image.');
     }
 
     return response.status(500).json({
@@ -289,7 +437,16 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
 app.post('/api/batch-aspect-ratio', async (request, response) => {
   try {
-    const { sheetsUrl, sheetName, driveFolderUrl, driveFolderId } = request.body ?? {};
+    const {
+      sheetsUrl,
+      sheetName,
+      driveFolderUrl,
+      driveFolderId,
+      title,
+      category,
+      plazas,
+      createdBy,
+    } = request.body ?? {};
 
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
       throw new RequestValidationError('sheetsUrl is required.');
@@ -345,6 +502,10 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       sheetName: sheetName ? sheetName.trim() : undefined,
       driveFolderUrl: driveFolderUrl ? String(driveFolderUrl).trim() : undefined,
       driveFolderId: driveFolderId ? String(driveFolderId).trim() : undefined,
+      title,
+      category,
+      plazas,
+      createdBy,
       baseUrl: `${protocol}://${host}`,
       onProgress,
     })
@@ -405,6 +566,252 @@ app.post('/api/batch-status', async (request, response) => {
     return response.status(500).json({
       error: getErrorMessage(error, 'Unexpected batch status error.'),
     });
+  }
+});
+
+// ── Creative review endpoints ──────────────────────────────────────────────
+
+const creativeReviewWriterActions = new Map([
+  ['ensureReviewSheets', ensureReviewSheets],
+  ['createReviewBatch', createReviewBatch],
+  ['registerReviewItems', registerReviewItems],
+  ['issueReviewLink', issueReviewLink],
+  ['revokeReviewBatch', revokeReviewBatch],
+  ['saveReviewDecisions', saveReviewDecisions],
+  ['finalizeReviewBatch', finalizeReviewBatch],
+  ['retryReviewPublication', retryReviewPublication],
+  ['importLegacyReviewBatch', importLegacyReviewBatch],
+]);
+
+app.post('/api/creative-reviews/internal/writer', async (request, response) => {
+  if (appMode !== 'review') return response.status(404).json({ error: 'Route not found.' });
+  if (!isCreativeReviewWriterAuthorized({
+    providedSecret: request.get('x-creative-review-writer-secret'),
+  })) {
+    return response.status(401).json({
+      error: 'Creative review writer authentication failed.',
+      code: 'REVIEW_WRITER_UNAUTHORIZED',
+    });
+  }
+
+  try {
+    const action = String(request.body?.action || '').trim();
+    const handler = creativeReviewWriterActions.get(action);
+    if (!handler) {
+      throw new CreativeReviewError(
+        `Unsupported creative review writer action "${action || '(missing)'}".`,
+        'REVIEW_WRITER_ACTION_INVALID',
+        400,
+      );
+    }
+    const result = await handler(request.body?.input || {});
+    return response.status(200).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Creative review writer mutation failed.');
+  }
+});
+
+app.get('/api/creative-reviews/batches', async (request, response) => {
+  try {
+    const sheetsUrl = String(request.query.sheetsUrl || '').trim();
+    const batches = await listReviewBatches({
+      sheetsUrl,
+      status: request.query.status,
+      sourceType: request.query.sourceType,
+    });
+    return response.status(200).json({ batches });
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to list creative review batches.');
+  }
+});
+
+app.post('/api/creative-reviews/batches', async (request, response) => {
+  try {
+    const batch = await createReviewBatch(request.body || {});
+    return response.status(201).json(batch);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to create creative review batch.');
+  }
+});
+
+app.get('/api/creative-reviews/batches/:batchId', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const batch = await getReviewBatch({
+      sheetsUrl: request.query.sheetsUrl,
+      batchId: request.params.batchId,
+    });
+    return response.status(200).json(batch);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to read creative review batch.');
+  }
+});
+
+app.patch('/api/creative-reviews/batches/:batchId/decisions', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const result = await saveReviewDecisions({
+      sheetsUrl: request.body?.sheetsUrl || request.query.sheetsUrl,
+      batchId: request.params.batchId,
+      decisions: normalizeCreativeReviewDecisionPayload(request.body),
+      reviewerName: request.body?.reviewerName,
+      reviewerEmail: request.body?.reviewerEmail,
+    });
+    return response.status(200).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to save internal creative review decisions.');
+  }
+});
+
+app.post('/api/creative-reviews/batches/:batchId/finalize', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const result = await finalizeReviewBatch({
+      sheetsUrl: request.body?.sheetsUrl || request.query.sheetsUrl,
+      batchId: request.params.batchId,
+      reviewerName: request.body?.reviewerName,
+      reviewerEmail: request.body?.reviewerEmail,
+    });
+    return response.status(200).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to finalize internal creative review.');
+  }
+});
+
+app.post('/api/creative-reviews/batches/:batchId/items', async (request, response) => {
+  try {
+    const result = await registerReviewItems({
+      ...(request.body || {}),
+      batchId: request.params.batchId,
+    });
+    return response.status(201).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to register creative review items.');
+  }
+});
+
+const issueReviewLinkHandler = async (request, response) => {
+  try {
+    const result = await issueReviewLink({
+      ...(request.body || {}),
+      batchId: request.params.batchId,
+    });
+    return response.status(200).json({
+      ...result,
+      privateUrl: result.privateUrl || result.reviewUrl,
+    });
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to issue creative review link.');
+  }
+};
+
+app.post('/api/creative-reviews/batches/:batchId/send', issueReviewLinkHandler);
+app.post('/api/creative-reviews/batches/:batchId/prepare', issueReviewLinkHandler);
+app.post('/api/creative-reviews/batches/:batchId/renew', issueReviewLinkHandler);
+
+app.post('/api/creative-reviews/batches/:batchId/revoke', async (request, response) => {
+  try {
+    const batch = await revokeReviewBatch({
+      ...(request.body || {}),
+      batchId: request.params.batchId,
+    });
+    return response.status(200).json({ batch });
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to revoke creative review batch.');
+  }
+});
+
+app.post('/api/creative-reviews/batches/:batchId/retry', async (request, response) => {
+  try {
+    const result = await retryReviewPublication({
+      ...(request.body || {}),
+      batchId: request.params.batchId,
+    });
+    return response.status(200).json(result?.batch ? result : { batch: result });
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to retry creative review publication.');
+  }
+});
+
+app.post('/api/creative-reviews/import-legacy', async (request, response) => {
+  try {
+    const result = await importLegacyReviewBatch(request.body || {});
+    return response.status(201).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to import legacy creative review data.');
+  }
+});
+
+app.post('/api/creative-reviews/session', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const token = String(request.body?.token || '').trim();
+    const session = await exchangeReviewToken({ token });
+    response.setHeader('Set-Cookie', serializeCreativeReviewSession({
+      token: session.sessionToken || session.cookieToken || token,
+      expiresAt: session.expiresAt,
+      secure: request.secure || request.get('x-forwarded-proto')?.split(',')[0]?.trim() === 'https',
+    }));
+    return response.status(200).json({
+      batchId: session.batchId,
+      expiresAt: session.expiresAt,
+    });
+  } catch (error) {
+    clearCreativeReviewPreviewAuthorization(String(request.body?.token || '').trim());
+    response.setHeader('Set-Cookie', clearCreativeReviewSession({
+      secure: request.secure || request.get('x-forwarded-proto')?.split(',')[0]?.trim() === 'https',
+    }));
+    return sendCreativeReviewError(response, error, 'Failed to start creative review session.');
+  }
+});
+
+app.get('/api/creative-reviews/public', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const token = getCreativeReviewSessionToken(request);
+    const result = await getPublicReviewBatch({ token });
+    cacheCreativeReviewPreviewAuthorization({ token, payload: result });
+    return response.status(200).json(result);
+  } catch (error) {
+    clearCreativeReviewPreviewAuthorization(getCreativeReviewSessionToken(request));
+    return sendCreativeReviewError(response, error, 'Failed to read creative review.');
+  }
+});
+
+app.patch('/api/creative-reviews/public/decisions', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const result = await saveReviewDecisions({
+      token: getCreativeReviewSessionToken(request),
+      decisions: normalizeCreativeReviewDecisionPayload(request.body),
+    });
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof CreativeReviewError && error.statusCode >= 401 && error.statusCode <= 410) {
+      clearCreativeReviewPreviewAuthorization(getCreativeReviewSessionToken(request));
+    }
+    return sendCreativeReviewError(response, error, 'Failed to save creative review decisions.');
+  }
+});
+
+app.post('/api/creative-reviews/public/finalize', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const result = await finalizeReviewBatch({
+      token: getCreativeReviewSessionToken(request),
+      reviewerName: request.body?.reviewerName,
+      reviewerEmail: request.body?.reviewerEmail,
+    });
+    cacheCreativeReviewPreviewAuthorization({
+      token: getCreativeReviewSessionToken(request),
+      payload: result,
+    });
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof CreativeReviewError && error.statusCode >= 401 && error.statusCode <= 410) {
+      clearCreativeReviewPreviewAuthorization(getCreativeReviewSessionToken(request));
+    }
+    return sendCreativeReviewError(response, error, 'Failed to finalize creative review.');
   }
 });
 
@@ -976,11 +1383,19 @@ const __dirname = path.dirname(__filename);
 const distDir = path.resolve(__dirname, '..', 'dist');
 const indexFile = path.resolve(distDir, 'index.html');
 
+if (appMode === 'review') {
+  app.get('/', (_request, response) => response.redirect('/review'));
+}
+
 app.use(express.static(distDir));
 
 app.get(/.*/, (request, response) => {
   if (request.path.startsWith('/api/')) {
     return response.status(404).json({ error: 'Route not found.' });
+  }
+
+  if (appMode === 'review' && request.path !== '/review' && !request.path.startsWith('/r/')) {
+    return response.redirect('/review');
   }
 
   if (!existsSync(indexFile)) {
@@ -992,5 +1407,9 @@ app.get(/.*/, (request, response) => {
   return response.sendFile(indexFile);
 });
 
-app.listen(port, () => {
-});
+export { app };
+
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  app.listen(port, () => {});
+}

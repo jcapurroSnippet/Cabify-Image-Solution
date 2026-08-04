@@ -525,7 +525,7 @@ export const isCreativeAvailableForPlatform = (creative, adsPlatform = '') => {
 
   const platform = normalizeAdsPlatform(adsPlatform);
   const status = String(creative.status || '').toLowerCase();
-  if (!platform) return ['available', 'used'].includes(status);
+  if (!platform) return status === 'available';
   if (['reserved', 'failed', 'archived'].includes(status)) return false;
   if (!['available', 'used'].includes(status)) return false;
 

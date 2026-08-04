@@ -3,7 +3,9 @@ import {
   AlertCircle,
   CheckCircle,
   ChevronDown,
+  Copy,
   Download,
+  ExternalLink,
   ImagePlus,
   Loader2,
   Wand2,
@@ -12,7 +14,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import type { UploadedImage } from './types';
 import { scenes } from './scenes';
-import { generateVariant } from './services/adOptimizerApi';
+import { createEditorReviewBatch, generateVariant } from './services/adOptimizerApi';
 
 const MIN_IMAGES = 3;
 const MAX_IMAGES = 20;
@@ -78,6 +80,16 @@ export default function AdOptimizerTab() {
   const [isDragging, setIsDragging] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
+  const [reviewForm, setReviewForm] = useState({
+    title: '',
+    category: '',
+    plazas: '',
+    createdBy: '',
+  });
+  const [reviewBatch, setReviewBatch] = useState<{
+    batchId: string;
+    sheetsUrl: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
@@ -114,20 +126,64 @@ export default function AdOptimizerTab() {
   );
 
   const handleProcess = async () => {
-    if (images.length < MIN_IMAGES) return;
+    const reviewFieldsComplete = Object.values(reviewForm).every(
+      (value) => value.trim().length > 0,
+    );
+    if (images.length < MIN_IMAGES || !reviewFieldsComplete) {
+      if (!reviewFieldsComplete) {
+        setGlobalError('Completá título, categoría, plazas y creador antes de procesar.');
+      }
+      return;
+    }
     const prompt = buildPrompt(selectedSceneId);
+    const plazas = reviewForm.plazas
+      .split(',')
+      .map((plaza) => plaza.trim())
+      .filter(Boolean);
 
     setIsProcessing(true);
     setGlobalError(null);
     setDoneCount(0);
+    setReviewBatch(null);
     setImages((prev) =>
       prev.map((img) => ({ ...img, processedUrl: null, isProcessing: true, error: null })),
     );
 
+    let createdBatch;
+    try {
+      createdBatch = await createEditorReviewBatch({
+        title: reviewForm.title.trim(),
+        category: reviewForm.category.trim(),
+        plazas,
+        createdBy: reviewForm.createdBy.trim(),
+        expectedItemCount: images.length,
+      });
+      setReviewBatch({
+        batchId: createdBatch.batchId,
+        sheetsUrl: createdBatch.sheetsUrl,
+      });
+    } catch (err) {
+      const message = (err as { message?: string })?.message ?? 'No se pudo crear la tanda de revisión.';
+      setGlobalError(message);
+      setImages((previous) => previous.map((image) => ({ ...image, isProcessing: false })));
+      setIsProcessing(false);
+      return;
+    }
+
     let processed = 0;
-    for (const img of images) {
+    for (const [sourceIndex, img] of images.entries()) {
       try {
-        const result = await generateVariant(img.previewUrl, prompt);
+        const result = await generateVariant(img.previewUrl, prompt, {
+          sheetsUrl: createdBatch.sheetsUrl,
+          batchId: createdBatch.batchId,
+          sourceAssetName: img.file.name,
+          sourceIndex: sourceIndex + 1,
+          generationId: globalThis.crypto?.randomUUID?.()
+            || `${createdBatch.batchId}-${sourceIndex + 1}-${Date.now()}`,
+          familyId: `${createdBatch.batchId}:asset:${sourceIndex + 1}`,
+          category: reviewForm.category.trim(),
+          plazas,
+        });
         setImages((prev) =>
           prev.map((i) => i.id === img.id ? { ...i, processedUrl: result, isProcessing: false } : i),
         );
@@ -146,7 +202,10 @@ export default function AdOptimizerTab() {
 
   const processedImages = images.filter((img) => img.processedUrl);
   const hasResults = processedImages.length > 0;
-  const canProcess = images.length >= MIN_IMAGES && !isProcessing;
+  const isReviewFormComplete = Object.values(reviewForm).every(
+    (value) => value.trim().length > 0,
+  );
+  const canProcess = images.length >= MIN_IMAGES && isReviewFormComplete && !isProcessing;
   const selectedScene = scenes.find((s) => s.id === selectedSceneId)!;
 
   const handleDownloadAll = () => {
@@ -266,6 +325,59 @@ export default function AdOptimizerTab() {
           </div>
         </div>
 
+        <div className="space-y-3">
+          <div>
+            <p className="text-sm font-medium text-slate-300">Datos de revisión</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Estos datos identifican la tanda que se enviará al cliente.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <input
+              type="text"
+              value={reviewForm.title}
+              onChange={(event) => setReviewForm((previous) => ({ ...previous, title: event.target.value }))}
+              disabled={isProcessing}
+              placeholder="Título de la tanda"
+              aria-label="Título de la tanda"
+              className="rounded-xl border border-slate-700/80 bg-slate-900/70 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-cyan-300/70 disabled:opacity-50"
+            />
+            <select
+              value={reviewForm.category}
+              onChange={(event) => setReviewForm((previous) => ({ ...previous, category: event.target.value }))}
+              disabled={isProcessing}
+              aria-label="Categoría"
+              className="rounded-xl border border-slate-700/80 bg-slate-900/70 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-cyan-300/70 disabled:opacity-50"
+            >
+              <option value="">Seleccioná una categoría</option>
+              <option value="Generic">Generic</option>
+              <option value="Promo">Promo</option>
+              <option value="Alianzas">Alianzas</option>
+            </select>
+            <div>
+              <input
+                type="text"
+                value={reviewForm.plazas}
+                onChange={(event) => setReviewForm((previous) => ({ ...previous, plazas: event.target.value }))}
+                disabled={isProcessing}
+                placeholder="Plazas (separadas por comas)"
+                aria-label="Plazas"
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-cyan-300/70 disabled:opacity-50"
+              />
+              <p className="mt-1 text-xs text-slate-500">Ejemplo: Buenos Aires, Córdoba</p>
+            </div>
+            <input
+              type="text"
+              value={reviewForm.createdBy}
+              onChange={(event) => setReviewForm((previous) => ({ ...previous, createdBy: event.target.value }))}
+              disabled={isProcessing}
+              placeholder="Creado por (nombre o email)"
+              aria-label="Creado por"
+              className="self-start rounded-xl border border-slate-700/80 bg-slate-900/70 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-cyan-300/70 disabled:opacity-50"
+            />
+          </div>
+        </div>
+
         {/* Process button */}
         <div className="flex items-center gap-4">
           <button
@@ -288,6 +400,39 @@ export default function AdOptimizerTab() {
             <span className="text-sm text-yellow-400">Necesitás al menos {MIN_IMAGES} imágenes.</span>
           )}
         </div>
+
+        {reviewBatch && (
+          <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">
+                  Tanda de revisión
+                </p>
+                <p className="mt-1 break-all font-mono text-sm text-white">{reviewBatch.batchId}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(reviewBatch.batchId)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs font-medium text-cyan-100 hover:border-cyan-300/60"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copiar ID
+                </button>
+                <a
+                  href={`/?tab=review&sheetsUrl=${encodeURIComponent(reviewBatch.sheetsUrl)}&batchId=${encodeURIComponent(reviewBatch.batchId)}`}
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-cyan-200"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Abrir tanda
+                </a>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Las imágenes guardadas ya son URLs estables. Abrí la tanda para prepararla y compartirla.
+            </p>
+          </div>
+        )}
 
         <AnimatePresence>
           {globalError && (

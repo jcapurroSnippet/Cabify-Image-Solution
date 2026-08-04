@@ -11,6 +11,8 @@ import {
   CREATIVE_CATEGORIES_SHEET,
   CREATIVE_LIBRARY_HEADERS,
   CREATIVE_LIBRARY_SHEET,
+  CREATIVE_REVIEW_ITEM_HEADERS,
+  CREATIVE_REVIEW_ITEMS_SHEET,
   SOURCE_STATUS_COLUMNS,
   getCreativeLibraryConfig,
 } from './creativeLibraryConfig.js';
@@ -45,6 +47,11 @@ import {
   getImageResolutionFromDataUrl,
   normalizeAspectRatio,
 } from './imageRatio.js';
+import {
+  assertReviewImageHash,
+  buildReviewPublicationIdempotencyKey,
+  resolveVerifiedReviewAspectRatio,
+} from './creativeReviewCore.js';
 
 const DEFAULT_MAX_ROWS = Number(process.env.CREATIVE_LIBRARY_MAX_SCAN_ROWS || 500);
 const DEFAULT_REPLACEMENT_EXCLUSION_DAYS = Number(process.env.CREATIVE_REPLACEMENT_EXCLUSION_DAYS || 30);
@@ -898,28 +905,21 @@ export const findOutputColumns = (headers) => {
   return [...outputColumns].sort((left, right) => left - right);
 };
 
-export const resolveOutputReviewStatus = ({ cell, columnHeader, rowHasAcceptedOutput, config }) => {
-  const reviewStatus = classifyBackgroundColor(cell, config);
-  if (reviewStatus === 'PENDING' && rowHasAcceptedOutput && isSixteenNineOutputHeader(columnHeader)) {
-    return 'ACCEPTED';
-  }
-
-  return reviewStatus;
-};
+export const resolveOutputReviewStatus = ({ cell, config }) =>
+  classifyBackgroundColor(cell, config);
 
 const readLibraryRows = async (sheets, spreadsheetId) => {
-  try {
-    const lastColumn = columnIndexToLetter(CREATIVE_LIBRARY_HEADERS.length - 1);
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: buildRange(CREATIVE_LIBRARY_SHEET, `A:${lastColumn}`),
-      valueRenderOption: 'FORMULA',
-    });
+  const lastColumn = columnIndexToLetter(CREATIVE_LIBRARY_HEADERS.length - 1);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(CREATIVE_LIBRARY_SHEET, `A:${lastColumn}`),
+    valueRenderOption: 'FORMULA',
+  });
 
-    return valuesToObjects(response.data.values || []).map(normalizeLibraryLinkFields);
-  } catch {
-    return [];
-  }
+  // Callers that can create the library tab do so before this read. Any 403,
+  // 429 or transient API error must propagate: treating it as an empty library
+  // would bypass de-duplication and could append a duplicate review creative.
+  return valuesToObjects(response.data.values || []).map(normalizeLibraryLinkFields);
 };
 
 const appendLibraryRows = async (sheets, spreadsheetId, rows) => {
@@ -965,6 +965,36 @@ const formatLibraryUrlColumns = async (sheets, spreadsheetId, libraryRows) => {
       data: updates,
     },
   });
+};
+
+const buildExplicitReviewSourceKey = (spreadsheetId, sourceTab, sourceCell) => [
+  String(spreadsheetId || '').trim(),
+  normalizeSheetTitleForMatch(sourceTab),
+  String(sourceCell || '').trim().toUpperCase(),
+].join(':');
+
+const readExplicitReviewSourceKeys = async (sheets, spreadsheetId) => {
+  const metadata = await getSheetMetadata(sheets, spreadsheetId);
+  if (!getSheetByTitle(metadata, CREATIVE_REVIEW_ITEMS_SHEET)) return new Set();
+
+  // Once the review tab exists, fail closed. A transient read/permission error
+  // must not reactivate the legacy color publisher for managed source cells.
+  const lastColumn = columnIndexToLetter(CREATIVE_REVIEW_ITEM_HEADERS.length - 1);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(CREATIVE_REVIEW_ITEMS_SHEET, `A:${lastColumn}`),
+    valueRenderOption: 'FORMULA',
+  });
+  return new Set(
+    valuesToObjects(response.data.values || [])
+      .filter((item) => String(item.decision || '').toLowerCase() !== 'superseded')
+      .filter((item) => item.source_sheet_id && item.source_tab && item.source_cell)
+      .map((item) => buildExplicitReviewSourceKey(
+        item.source_sheet_id,
+        item.source_tab,
+        item.source_cell,
+      )),
+  );
 };
 
 const getCanonicalCreativeCategory = (value, config) =>
@@ -1612,6 +1642,160 @@ export const listCreativeLibrary = async ({ sheetsUrl }) => {
   };
 };
 
+/**
+ * Store one explicitly approved review item in the Creative Library.
+ *
+ * This is intentionally a narrow entry point for the review workflow. It keeps
+ * the existing library schema, Drive layout, image metadata, audit log and hash
+ * de-duplication rules in one place. Retrying the same review item is safe: the
+ * primary idempotency key is review_item_id + image_hash.
+ */
+export const ingestApprovedReviewCreative = async ({ spreadsheetId, item }) => {
+  if (!spreadsheetId) throw new Error('spreadsheetId is required.');
+  if (!item?.review_item_id) throw new Error('review_item_id is required.');
+  if (String(item.decision || '').toLowerCase() !== 'approved') {
+    throw new Error(`Review item ${item.review_item_id} is not approved.`);
+  }
+
+  const imageUrl = getUrlFromSheetValue(item.image_url) || String(item.image_url || '').trim();
+  if (!imageUrl || (!/^https?:\/\//i.test(imageUrl) && !imageUrl.startsWith('data:image/'))) {
+    throw new Error(`Review item ${item.review_item_id} has no valid image URL.`);
+  }
+
+  const sheets = await getSheetsClient();
+  const config = await getCreativeConfigForSpreadsheet(sheets, spreadsheetId);
+  await ensureLibraryAndAuditSheets(sheets, spreadsheetId, config);
+
+  const imageDataUrl = imageUrl.startsWith('data:image/')
+    ? imageUrl
+    : await downloadImageAsDataUrl(imageUrl);
+  const { buffer, mimeType } = dataUrlToBuffer(imageDataUrl);
+  const imageHash = hashBuffer(buffer);
+  assertReviewImageHash(item.image_hash, imageHash);
+  const libraryRows = await readLibraryRows(sheets, spreadsheetId);
+
+  const idempotencyKey = buildReviewPublicationIdempotencyKey({
+    review_item_id: item.review_item_id,
+    image_hash: imageHash,
+  });
+  const exactMatch = libraryRows.find(
+    (row) => buildReviewPublicationIdempotencyKey(row) === idempotencyKey,
+  );
+  if (exactMatch) {
+    return {
+      status: 'already_stored',
+      creativeId: exactMatch.creative_id,
+      creative: exactMatch,
+      imageHash,
+    };
+  }
+
+  const duplicateByHash = libraryRows.find((row) => String(row.image_hash || '') === imageHash);
+  if (duplicateByHash) {
+    if (!duplicateByHash.review_item_id && duplicateByHash.__rowNumber) {
+      await updateLibraryRow(spreadsheetId, duplicateByHash.__rowNumber, {
+        review_batch_id: item.review_batch_id || '',
+        review_item_id: item.review_item_id,
+      });
+      duplicateByHash.review_batch_id = item.review_batch_id || '';
+      duplicateByHash.review_item_id = item.review_item_id;
+    }
+    await appendAuditLog(spreadsheetId, [{
+      event: 'CREATIVE_REVIEW_REUSED',
+      creative_id: duplicateByHash.creative_id,
+      category: duplicateByHash.category || item.category || '',
+      status: 'success',
+      message: `Review item ${item.review_item_id} reused an existing Creative Library image.`,
+      payload_json: {
+        reviewBatchId: item.review_batch_id || '',
+        reviewItemId: item.review_item_id,
+        imageHash,
+      },
+    }]);
+    return {
+      status: 'already_stored',
+      creativeId: duplicateByHash.creative_id,
+      creative: duplicateByHash,
+      imageHash,
+    };
+  }
+
+  const category = normalizeCategory(item.category, config.categories);
+  if (!category) throw new Error(`Review item ${item.review_item_id} has no valid category.`);
+
+  const imageResolution = await getImageResolutionFromBuffer(buffer);
+  const imageResolutionText = formatResolution(imageResolution);
+  const aspectRatio = resolveVerifiedReviewAspectRatio({
+    declared: normalizeAspectRatio(item.aspect_ratio) || '',
+    detected: classifyAspectRatio(imageResolution) || '',
+  });
+  const creativeId = buildCreativeId(category);
+  const sourceDriveFileId = String(item.drive_file_id || '').trim() || extractDriveFileId(imageUrl);
+  let driveFileId = sourceDriveFileId;
+  let driveUrl = sourceDriveFileId ? imageUrl : '';
+
+  if (!driveFileId) {
+    const categoryFolderId = await getOrCreateCategoryFolder(new Map(), category, config);
+    const extension = getExtensionForMimeType(mimeType);
+    const sourceLabel = item.source_tab || item.source_output || 'review';
+    const sourceCell = item.source_cell || item.review_item_id;
+    const fileName = `${creativeId}_${sanitizeFileName(sourceLabel)}_${sanitizeFileName(sourceCell)}.${extension}`;
+    const upload = await uploadBufferToDrive(buffer, fileName, mimeType, categoryFolderId);
+    driveFileId = upload.fileId;
+    driveUrl = await makeFilePublic(upload.fileId);
+  }
+
+  const createdAt = nowIso();
+  const libraryRow = {
+    creative_id: creativeId,
+    status: 'available',
+    category,
+    plazas: item.plazas || '',
+    creative_family_id: item.creative_family_id || '',
+    source_sheet_id: item.source_sheet_id || spreadsheetId,
+    source_tab: item.source_tab || '',
+    source_row: item.source_row || '',
+    source_cell: item.source_cell || '',
+    resized_image_url: imageUrl,
+    drive_file_id: driveFileId,
+    drive_url: driveUrl,
+    aspect_ratio: aspectRatio,
+    image_resolution: imageResolutionText,
+    image_hash: imageHash,
+    created_at: createdAt,
+    reserved_at: '',
+    used_at_google: '',
+    used_at_meta: '',
+    ads_platform: '',
+    ads_resource_name: '',
+    google_ads_asset_resource_name: '',
+    replacement_operation_id: '',
+    review_batch_id: item.review_batch_id || '',
+    review_item_id: item.review_item_id,
+    notes: '',
+  };
+
+  await appendLibraryRows(sheets, spreadsheetId, [libraryRow]);
+  await appendAuditLog(spreadsheetId, [{
+    event: 'CREATIVE_REVIEW_PUBLISHED',
+    creative_id: creativeId,
+    category,
+    status: 'success',
+    message: `Published approved review item ${item.review_item_id}.`,
+    payload_json: {
+      reviewBatchId: item.review_batch_id || '',
+      reviewItemId: item.review_item_id,
+      imageHash,
+      driveFileId,
+      driveUrl,
+      aspectRatio,
+      imageResolution: imageResolutionText,
+    },
+  }]);
+
+  return { status: 'stored', creativeId, creative: libraryRow, imageHash };
+};
+
 export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedSheetName }) => {
   if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
     throw new Error('sheetsUrl is required.');
@@ -1661,6 +1845,7 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
   const inferredPlazas = '';
 
   const libraryRows = await readLibraryRows(sheets, spreadsheetId);
+  const explicitReviewSourceKeys = await readExplicitReviewSourceKeys(sheets, spreadsheetId);
   await normalizeLibraryRowCategories(sheets, spreadsheetId, libraryRows, config);
   await normalizeLibraryRowPlazas(sheets, spreadsheetId, libraryRows, config);
   await normalizeLibraryRowCreativeFamilies(sheets, spreadsheetId, libraryRows);
@@ -1738,11 +1923,6 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
     let rowCreativeFamilyId = normalizeCreativeFamilyId(creativeFamilyRaw);
     if (isGeneratedRowFamilyId(rowCreativeFamilyId)) rowCreativeFamilyId = '';
     if (!rowCreativeFamilyId && inferredSourceRowsFamilyId) rowCreativeFamilyId = inferredSourceRowsFamilyId;
-    const rowHasAcceptedOutput = outputColumns.some((columnIndex) => {
-      const cell = cells[columnIndex];
-      return getCellUrl(cell) && classifyBackgroundColor(cell, config) === 'ACCEPTED';
-    });
-
     for (const columnIndex of outputColumns) {
       const cell = cells[columnIndex];
       const resizedImageUrl = getCellUrl(cell);
@@ -1771,11 +1951,15 @@ export const syncAcceptedCreatives = async ({ sheetsUrl, sheetName: providedShee
       }
       const reviewStatus = resolveOutputReviewStatus({
         cell,
-        columnHeader: headers[columnIndex],
-        rowHasAcceptedOutput,
         config,
       });
       const sourceCell = `${columnIndexToLetter(columnIndex)}${rowNumber}`;
+      // Once a source cell belongs to the explicit review workflow, colors are
+      // only a visual mirror. Publication is performed exclusively by
+      // finalizeReviewBatch and the legacy color sync must never ingest it.
+      if (explicitReviewSourceKeys.has(buildExplicitReviewSourceKey(spreadsheetId, sourceSheetName, sourceCell))) {
+        continue;
+      }
 
       if (reviewStatus === 'REJECTED') {
         rowCounts.rejected += 1;
@@ -2096,7 +2280,9 @@ export const getUnavailableCreativeIdsForCampaign = (usageRows = [], context = {
       .filter((row) => {
         if (String(row.status).toLowerCase() !== 'reserved') return true;
         const reservedAt = Date.parse(row.reserved_at || row.updated_at || '');
-        return Number.isFinite(reservedAt) && Date.now() - reservedAt <= reservationTtlMs;
+        // Legacy reservations may not have a timestamp. Keep those blocked
+        // conservatively; only an explicitly dated stale reservation expires.
+        return !Number.isFinite(reservedAt) || Date.now() - reservedAt <= reservationTtlMs;
       })
       .filter((row) => buildCreativeCampaignUsageKey(row).startsWith(`${prefix}::`))
       .map((row) => normalizeUsageId(row.creative_id || row.creativeId))

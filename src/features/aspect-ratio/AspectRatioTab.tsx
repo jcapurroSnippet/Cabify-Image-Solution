@@ -10,6 +10,8 @@ import {
   CheckCircle,
   AlertTriangle,
   Clock,
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
 import { generateAspectRatioImages } from '../../lib/api';
 import {
@@ -40,6 +42,13 @@ const HARDCODED_DRIVE_FOLDER = 'https://drive.google.com/drive/u/0/folders/1gWY-
 const INITIAL_BATCH_STATE: BatchState = {
   sheetsUrl: '',
   driveFolderUrl: HARDCODED_DRIVE_FOLDER,
+  review: {
+    title: '',
+    category: '',
+    plazas: '',
+    createdBy: '',
+  },
+  reviewBatchId: null,
   isProcessing: false,
   progress: {
     totalRows: 0,
@@ -235,6 +244,23 @@ export default function AspectRatioTab() {
     }));
   };
 
+  const handleBatchReviewChange = (
+    field: keyof BatchState['review'],
+    value: string,
+  ) => {
+    setBatchState((previous) => ({
+      ...previous,
+      review: {
+        ...previous.review,
+        [field]: value,
+      },
+    }));
+  };
+
+  const isBatchReviewFormComplete = Object.values(batchState.review).every(
+    (value) => value.trim().length > 0,
+  );
+
   const validateBatchInputs = (): boolean => {
     if (!batchState.sheetsUrl.trim()) {
       setBatchState((p) => ({ ...p, error: 'Please enter a Google Sheets URL.' }));
@@ -243,6 +269,14 @@ export default function AspectRatioTab() {
 
     if (!isValidSheetsUrl(batchState.sheetsUrl)) {
       setBatchState((p) => ({ ...p, error: 'Invalid Google Sheets URL format.' }));
+      return false;
+    }
+
+    if (!isBatchReviewFormComplete) {
+      setBatchState((p) => ({
+        ...p,
+        error: 'Complete title, category, plazas and creator before starting the batch.',
+      }));
       return false;
     }
 
@@ -259,6 +293,7 @@ export default function AspectRatioTab() {
       isProcessing: true,
       error: null,
       results: {},
+      reviewBatchId: null,
       progress: {
         totalRows: 0,
         processedRows: 0,
@@ -309,6 +344,7 @@ export default function AspectRatioTab() {
 
           return {
             ...previous,
+            reviewBatchId: event.reviewBatchId || previous.reviewBatchId,
             progress: {
               ...progress,
               processedRows,
@@ -325,6 +361,7 @@ export default function AspectRatioTab() {
           return {
             ...previous,
             isProcessing: false,
+            reviewBatchId: result.reviewBatchId || previous.reviewBatchId,
             progress: {
               ...previous.progress,
               totalRows,
@@ -341,7 +378,16 @@ export default function AspectRatioTab() {
           isProcessing: false,
           error,
         }));
-      }
+      },
+      {
+        title: batchState.review.title.trim(),
+        category: batchState.review.category.trim(),
+        plazas: batchState.review.plazas
+          .split(',')
+          .map((plaza) => plaza.trim())
+          .filter(Boolean),
+        createdBy: batchState.review.createdBy.trim(),
+      },
     );
   };
 
@@ -412,7 +458,64 @@ export default function AspectRatioTab() {
               />
             </div>
 
-
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Título de la tanda
+                </label>
+                <input
+                  type="text"
+                  value={batchState.review.title}
+                  onChange={(event) => handleBatchReviewChange('title', event.target.value)}
+                  disabled={batchState.isProcessing}
+                  placeholder="Riders Argentina · Agosto"
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Categoría
+                </label>
+                <select
+                  value={batchState.review.category}
+                  onChange={(event) => handleBatchReviewChange('category', event.target.value)}
+                  disabled={batchState.isProcessing}
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="">Seleccioná una categoría</option>
+                  <option value="Generic">Generic</option>
+                  <option value="Promo">Promo</option>
+                  <option value="Alianzas">Alianzas</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Plazas
+                </label>
+                <input
+                  type="text"
+                  value={batchState.review.plazas}
+                  onChange={(event) => handleBatchReviewChange('plazas', event.target.value)}
+                  disabled={batchState.isProcessing}
+                  placeholder="Buenos Aires, Córdoba"
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                />
+                <p className="mt-1 text-xs text-slate-500">Separá varias plazas con comas.</p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Creado por
+                </label>
+                <input
+                  type="text"
+                  value={batchState.review.createdBy}
+                  onChange={(event) => handleBatchReviewChange('createdBy', event.target.value)}
+                  disabled={batchState.isProcessing}
+                  placeholder="nombre@cabify.com"
+                  className="w-full rounded-lg border border-slate-700/80 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                />
+              </div>
+            </div>
 
             {batchState.error && (
               <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
@@ -426,7 +529,8 @@ export default function AspectRatioTab() {
               onClick={handleStartBatch}
               disabled={
                 batchState.isProcessing ||
-                !batchState.sheetsUrl.trim()
+                !batchState.sheetsUrl.trim() ||
+                !isBatchReviewFormComplete
               }
               className={`w-full rounded-lg px-4 py-2 font-semibold text-sm transition-colors ${
                 batchState.isProcessing
@@ -443,6 +547,41 @@ export default function AspectRatioTab() {
                 'Start Batch Processing'
               )}
             </button>
+
+            {batchState.reviewBatchId && (
+              <div className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">
+                      Tanda de revisión
+                    </p>
+                    <p className="mt-1 break-all font-mono text-sm text-slate-100">
+                      {batchState.reviewBatchId}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(batchState.reviewBatchId!)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs font-medium text-cyan-100 hover:border-cyan-300/60"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copiar ID
+                    </button>
+                    <a
+                      href={`/?tab=review&sheetsUrl=${encodeURIComponent(batchState.sheetsUrl)}&batchId=${encodeURIComponent(batchState.reviewBatchId)}`}
+                      className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-cyan-200"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Abrir tanda
+                    </a>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  Cuando termine el procesamiento, abrí la tanda para prepararla y compartirla.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

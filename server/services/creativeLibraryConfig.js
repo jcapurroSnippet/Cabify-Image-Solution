@@ -34,6 +34,72 @@ export const CREATIVE_AUDIT_SHEET = 'creative_audit_log';
 export const CREATIVE_CAMPAIGN_USAGE_SHEET = 'creative_campaign_usage';
 export const GOOGLE_ASSET_CACHE_SHEET = 'google_asset_cache';
 export const CREATIVE_CATEGORIES_SHEET = 'creative_categories';
+export const CREATIVE_REVIEW_BATCHES_SHEET = 'creative_review_batches';
+export const CREATIVE_REVIEW_ITEMS_SHEET = 'creative_review_items';
+
+export const CREATIVE_REVIEW_BATCH_HEADERS = [
+  'review_batch_id',
+  'source_type',
+  'status',
+  'title',
+  'context',
+  'created_by',
+  'created_at',
+  'updated_at',
+  'issued_at',
+  'expires_at',
+  'token_hash',
+  'revoked_at',
+  'reviewer_name',
+  'reviewer_email',
+  'review_started_at',
+  'finalized_at',
+  'published_at',
+  'source_sheet_id',
+  'source_tab',
+  'version',
+  'item_count',
+  'approved_count',
+  'rejected_count',
+  'pending_count',
+  'publish_error',
+  'metadata_json',
+];
+
+export const CREATIVE_REVIEW_ITEM_HEADERS = [
+  'review_item_id',
+  'review_batch_id',
+  'creative_family_id',
+  'creative_version',
+  'generation_id',
+  'version',
+  'aspect_ratio',
+  'variant',
+  'reference_url',
+  'image_url',
+  'drive_file_id',
+  'image_hash',
+  'category',
+  'plazas',
+  'decision',
+  'feedback',
+  'reviewer_name',
+  'reviewer_email',
+  'decided_at',
+  'publication_status',
+  'creative_id',
+  'publication_error',
+  'published_at',
+  'source_sheet_id',
+  'source_tab',
+  'source_row',
+  'source_cell',
+  'source_output',
+  'created_at',
+  'updated_at',
+  'superseded_at',
+  'metadata_json',
+];
 
 export const CREATIVE_CATEGORIES_HEADERS = [
   'category',
@@ -76,6 +142,8 @@ export const CREATIVE_LIBRARY_HEADERS = [
   'ads_resource_name',
   'google_ads_asset_resource_name',
   'replacement_operation_id',
+  'review_batch_id',
+  'review_item_id',
   'notes',
 ];
 
@@ -165,4 +233,18 @@ export const getCreativeLibraryConfig = () => ({
     alianzas: ['alianza', 'alianzas', 'partner', 'partners', 'partnership', 'aliado', 'aliados', 'co-brand', 'cobrand', 'cobranding'],
   }),
   googleLowPerformanceLabel: process.env.GOOGLE_LOW_PERFORMANCE_LABEL || 'LOW',
+  reviewSheetsUrl:
+    process.env.CREATIVE_REVIEW_SHEETS_URL ||
+    process.env.CREATIVE_LIBRARY_SHEETS_URL ||
+    process.env.DEFAULT_SHEETS_URL ||
+    '',
+  reviewBaseUrl:
+    process.env.CREATIVE_REVIEW_PUBLIC_BASE_URL ||
+    process.env.CREATIVE_REVIEW_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    '',
+  reviewLinkDays: parseNumberEnv(
+    'CREATIVE_REVIEW_TOKEN_TTL_DAYS',
+    parseNumberEnv('CREATIVE_REVIEW_LINK_DAYS', 30),
+  ),
 });

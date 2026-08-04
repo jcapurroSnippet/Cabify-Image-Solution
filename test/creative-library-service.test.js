@@ -55,7 +55,7 @@ test('detects 16.9 IMG source output columns for library sync', () => {
   assert.deepEqual(columns, [1, 2, 3]);
 });
 
-test('loads pending 16.9 output cells when the row has an accepted output', () => {
+test('keeps every pending output pending until it is explicitly approved', () => {
   assert.equal(
     resolveOutputReviewStatus({
       cell: pendingCell(),
@@ -63,7 +63,7 @@ test('loads pending 16.9 output cells when the row has an accepted output', () =
       rowHasAcceptedOutput: true,
       config,
     }),
-    'ACCEPTED',
+    'PENDING',
   );
   assert.equal(
     resolveOutputReviewStatus({

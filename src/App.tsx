@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Crop, Library, Sparkles, TrendingDown } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ClipboardCheck, Crop, Library, Sparkles, TrendingDown } from 'lucide-react';
 import AspectRatioTab from './features/aspect-ratio/AspectRatioTab';
 import NanoEditorTab from './features/nano-editor/NanoEditorTab';
 import AdOptimizerTab from './features/ad-optimizer/AdOptimizerTab';
 import CreativeLibraryTab from './features/creative-library/CreativeLibraryTab';
+import CreativeReviewPortal from './features/creative-review/CreativeReviewPortal';
+import ReviewBatchesTab from './features/creative-review/ReviewBatchesTab';
 
-type TabId = 'nano' | 'ratio' | 'optimizer' | 'library';
+type TabId = 'nano' | 'ratio' | 'optimizer' | 'library' | 'review';
 
 const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   {
@@ -28,14 +30,64 @@ const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
     label: 'Creative Library',
     icon: <Library className="h-4 w-4" />,
   },
+  {
+    id: 'review',
+    label: 'Creative Review',
+    icon: <ClipboardCheck className="h-4 w-4" />,
+  },
 ];
 
+const getPublicReviewToken = (pathname: string, hash: string) => {
+  const fragment = hash.replace(/^#/, '');
+  if (fragment) {
+    const tokenFromParams = new URLSearchParams(fragment).get('token');
+    const fragmentToken = tokenFromParams || fragment;
+    try {
+      return decodeURIComponent(fragmentToken);
+    } catch {
+      return fragmentToken;
+    }
+  }
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
+  const match = normalizedPath.match(/^\/r\/([^/]+)$/);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+};
+
+const getTabFromLocation = (): TabId => {
+  const requestedTab = new URLSearchParams(window.location.search).get('tab');
+  return TAB_ITEMS.some((item) => item.id === requestedTab) ? requestedTab as TabId : 'nano';
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('nano');
+  const [activeTab, setActiveTab] = useState<TabId>(getTabFromLocation);
+  const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  const publicReviewToken = getPublicReviewToken(window.location.pathname, window.location.hash);
+  const isPublicReview = normalizedPath === '/review' || normalizedPath === '/r' || normalizedPath.startsWith('/r/');
+
+  useEffect(() => {
+    const syncTabFromLocation = () => setActiveTab(getTabFromLocation());
+    window.addEventListener('popstate', syncTabFromLocation);
+    return () => window.removeEventListener('popstate', syncTabFromLocation);
+  }, []);
+
+  const selectTab = (tabId: TabId) => {
+    setActiveTab(tabId);
+    const url = new URL(window.location.href);
+    if (tabId === 'nano') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', tabId);
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  if (isPublicReview) return <CreativeReviewPortal token={publicReviewToken} />;
 
   return (
     <div className="min-h-screen px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-4">
+      <div className={`mx-auto space-y-4 ${activeTab === 'review' ? 'max-w-[1600px]' : 'max-w-7xl'}`}>
         <header className="panel-surface">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3 sm:gap-4">
@@ -52,7 +104,7 @@ export default function App() {
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => selectTab(tab.id)}
                 data-active={activeTab === tab.id}
                 className="tab-pill"
               >
@@ -74,6 +126,9 @@ export default function App() {
           </section>
           <section aria-hidden={activeTab !== 'library'} className={activeTab === 'library' ? 'block' : 'hidden'}>
             <CreativeLibraryTab />
+          </section>
+          <section aria-hidden={activeTab !== 'review'} className={activeTab === 'review' ? 'block' : 'hidden'}>
+            <ReviewBatchesTab isActive={activeTab === 'review'} />
           </section>
         </main>
       </div>

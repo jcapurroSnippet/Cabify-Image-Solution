@@ -1,4 +1,9 @@
-import { BatchProgressEvent, BatchResult, BatchProgressStatus } from '../types';
+import {
+  BatchProgressEvent,
+  BatchResult,
+  BatchProgressStatus,
+  BatchReviewMetadata,
+} from '../types';
 
 export interface BatchStatusRow {
   status: BatchProgressStatus;
@@ -24,7 +29,8 @@ export const startBatchProcessing = async (
   sheetsUrl: string,
   onProgress: (event: BatchProgressEvent) => void,
   onComplete: (result: BatchResult) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  reviewMetadata?: BatchReviewMetadata
 ): Promise<void> => {
   try {
     let sawCompleted = false;
@@ -39,6 +45,7 @@ export const startBatchProcessing = async (
       },
       body: JSON.stringify({
         sheetsUrl,
+        ...(reviewMetadata || {}),
       }),
     });
 

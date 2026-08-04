@@ -996,7 +996,7 @@ export default function CreativeLibraryTab() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
-                            <button type="button" title="Enlarge current creative" aria-label="Enlarge current creative" disabled={!operation.oldAssetPreviewUrl && !operation.oldAssetUrl} className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 disabled:cursor-default" onClick={() => (operation.oldAssetPreviewUrl || operation.oldAssetUrl) && setExpandedPreview({ src: getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl), alt: 'Current low performer' })}>
+                            <button type="button" title="Enlarge current creative" aria-label="Enlarge current creative" disabled={!operation.oldAssetPreviewUrl && !operation.oldAssetUrl} className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-md border border-slate-700/70 bg-slate-900/40 disabled:cursor-default" onClick={() => (operation.oldAssetUrl || operation.oldAssetPreviewUrl) && setExpandedPreview({ src: getPreviewSrc(operation.oldAssetUrl || operation.oldAssetPreviewUrl), alt: 'Current low performer' })}>
                               {operation.oldAssetPreviewUrl || operation.oldAssetUrl ? (
                                 <img src={getPreviewSrc(operation.oldAssetPreviewUrl || operation.oldAssetUrl)} alt="Current low performer" className="h-full w-full object-cover" />
                               ) : (
@@ -1125,7 +1125,7 @@ export default function CreativeLibraryTab() {
                           type="button"
                           aria-label={`Expand preview for ${asset.campaignName || 'low performer'}`}
                           onClick={() => {
-                            const previewUrl = asset.assetPreviewUrl || asset.assetUrl;
+                            const previewUrl = asset.assetUrl || asset.assetPreviewUrl;
                             if (previewUrl) {
                               setExpandedPreview({
                                 src: getPreviewSrc(previewUrl),
@@ -1216,13 +1216,13 @@ export default function CreativeLibraryTab() {
           onClick={() => setExpandedPreview(null)}
         >
           <div
-            className="relative flex max-h-[92vh] max-w-[92vw] items-center justify-center"
+            className="relative flex h-[90dvh] w-[92vw] items-center justify-center"
             onClick={(event) => event.stopPropagation()}
           >
             <img
               src={expandedPreview.src}
               alt={expandedPreview.alt}
-              className="max-h-[88vh] max-w-[88vw] rounded-xl object-contain shadow-2xl"
+              className="h-full w-full rounded-xl object-contain drop-shadow-2xl"
             />
             <button
               type="button"

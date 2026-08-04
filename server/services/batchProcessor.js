@@ -7,12 +7,13 @@ import {
   columnIndexToLetter,
   getFirstSheetName,
 } from './sheetsService.js';
-import { uploadImageToDrive, makeFilePublic, extractFolderId } from './driveService.js';
+import { uploadImageToDrive, makeFilePublic, getShareableLink, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
 import { generateAspectRatioImages } from './imageGenerator.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 import { getCreativeLibraryConfig } from './creativeLibraryConfig.js';
+import { createReviewBatch, registerReviewItems } from './creativeReviewService.js';
 
 const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
 const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
@@ -51,6 +52,101 @@ const getTargetRatios = (ratioColumns) =>
     : LEGACY_BATCH_ASPECT_RATIOS;
 
 const getRatioFileSlug = (ratio) => ratio.replace(/\./g, '-').replace(/:/g, '-');
+
+const normalizePlazas = (value) => {
+  const candidates = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(candidates.map((entry) => String(entry || '').trim()).filter(Boolean))];
+};
+
+const getReviewMetadata = (options) => {
+  const nested = options.reviewMetadata && typeof options.reviewMetadata === 'object'
+    ? options.reviewMetadata
+    : {};
+  const metadata = {
+    title: String(nested.title ?? options.title ?? '').trim(),
+    category: String(nested.category ?? options.category ?? '').trim(),
+    plazas: normalizePlazas(nested.plazas ?? options.plazas),
+    createdBy: String(nested.createdBy ?? options.createdBy ?? '').trim(),
+  };
+  const wasProvided = Boolean(
+    metadata.title || metadata.category || metadata.plazas.length || metadata.createdBy
+  );
+
+  if (!wasProvided) return null;
+
+  const missingFields = [
+    !metadata.title && 'title',
+    !metadata.category && 'category',
+    metadata.plazas.length === 0 && 'plazas',
+    !metadata.createdBy && 'createdBy',
+  ].filter(Boolean);
+  if (missingFields.length > 0) {
+    throw new Error(`Incomplete review metadata. Missing: ${missingFields.join(', ')}.`);
+  }
+
+  return metadata;
+};
+
+const getCreatedReviewBatchId = (batch) =>
+  String(batch?.reviewBatchId || batch?.batchId || batch?.id || '').trim();
+
+const getRowValue = (row, candidateNames) => {
+  for (const name of candidateNames) {
+    const value = row?.[name];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return '';
+};
+
+/**
+ * Convert the uploaded outputs for one source row into normalized review items.
+ * Kept pure and exported so the exact row/cell/ratio mapping can be tested.
+ */
+export const buildBatchReviewItems = ({
+  batchId,
+  spreadsheetId,
+  sheetName,
+  row,
+  rowNumber,
+  referenceUrl,
+  uploadedLinks,
+  outputCells,
+  category,
+  plazas,
+}) => {
+  const resolvedCategory = String(category || '').trim()
+    || getRowValue(row, ['Categoria', 'Categoría', 'Category']);
+  const resolvedPlazas = normalizePlazas(plazas);
+  const rowPlaza = getRowValue(row, ['Ciudad', 'Plaza', 'City']);
+  const resolvedItemPlazas = resolvedPlazas.length > 0
+    ? resolvedPlazas
+    : normalizePlazas(rowPlaza);
+  const familyId = `${batchId}:row:${rowNumber}`;
+
+  return BATCH_ASPECT_RATIOS.flatMap((ratio) =>
+    (uploadedLinks?.[ratio] || []).map((imageUrl, index) => {
+      const sourceCell = outputCells?.[ratio]?.[index] || '';
+      return {
+      familyId,
+      version: 1,
+      generationId: `${batchId}:${sourceCell || `${rowNumber}:${ratio}:${index + 1}`}`,
+      ratio,
+      variantIndex: index + 1,
+      sourceTab: sheetName,
+      sourceSpreadsheetId: spreadsheetId,
+      sourceRowNumber: rowNumber,
+      sourceCell,
+      imageUrl,
+      referenceUrl,
+      category: resolvedCategory,
+      plazas: resolvedItemPlazas,
+      decision: 'pending',
+      };
+    })
+  );
+};
 
 export const getBatchRatioColumns = getRatioColumns;
 export const getBatchTargetRatios = getTargetRatios;
@@ -831,21 +927,26 @@ export const processBatch = async (options) => {
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
+  const reviewMetadata = getReviewMetadata(options);
+  let reviewBatchId = null;
 
   // FIXED Drive folder ID for all uploads (fallback if Photos fails)
   const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
   const runtimeConfig = getCreativeLibraryConfig();
+  // Review assets must stay in private Drive storage. Google Photos is kept
+  // only for the legacy non-review batch workflow.
+  const useGooglePhotos = runtimeConfig.preferGooglePhotosForBatch && !reviewMetadata;
   const PHOTOS_ALBUM_SHARE_URL =
     process.env.PHOTOS_ALBUM_SHARE_URL?.trim() || 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
 
-  if (runtimeConfig.preferGooglePhotosForBatch && !process.env.PHOTOS_ALBUM_SHARE_URL?.trim()) {
+  if (useGooglePhotos && !process.env.PHOTOS_ALBUM_SHARE_URL?.trim()) {
     console.warn(
       '[BATCH] PHOTOS_ALBUM_SHARE_URL is not set. If you want the album to stay public, share it manually in Google Photos and put that public link in .env.'
     );
   }
 
   let photosAlbumId = null;
-  if (runtimeConfig.preferGooglePhotosForBatch) {
+  if (useGooglePhotos) {
     try {
       photosAlbumId = await resolveAlbumIdFromShareUrl(PHOTOS_ALBUM_SHARE_URL);
       console.log(`[BATCH] Google Photos album resolved: ${photosAlbumId}`);
@@ -853,7 +954,9 @@ export const processBatch = async (options) => {
       console.warn(`[BATCH] Could not resolve Photos album, will fallback to Drive: ${e.message}`);
     }
   } else {
-    console.log('[BATCH] Using Drive for batch output links by default.');
+    console.log(reviewMetadata
+      ? '[BATCH] Using private Drive links for review assets.'
+      : '[BATCH] Using Drive for batch output links by default.');
   }
 
   try {
@@ -913,10 +1016,11 @@ export const processBatch = async (options) => {
     } else {
       console.log(`[BATCH] Using provided sheet: "${sheetName}"`);
     }
-    
+
     onProgress?.({
       state: 'sheet-detected',
       message: `Using sheet: "${sheetName}"`,
+      ...(reviewBatchId && { reviewBatchId }),
     });
 
     // Step 3: Detect which column contains image URLs (prefer column F)
@@ -960,6 +1064,7 @@ export const processBatch = async (options) => {
       ranges: [`${sheetName}!A:Z`],
       includeGridData: true,
     });
+    const sourceSheetId = headerResponse.data.sheets?.[0]?.properties?.sheetId;
 
     let imageUrlColumnName = columnLetter;
     let headerRowIndex = 0;
@@ -1018,14 +1123,53 @@ export const processBatch = async (options) => {
       throw new Error('No data rows found in the sheet');
     }
 
+    if (reviewMetadata) {
+      const expectedSourceRows = rows.filter((row) => normalizeUrl(row[imageUrlColumnName])).length;
+      const expectedItemCount = expectedSourceRows * targetRatios.length * EXPECTED_VARIATIONS_PER_RATIO;
+      const reviewBatch = await createReviewBatch({
+        sheetsUrl,
+        title: reviewMetadata.title,
+        sourceType: 'batch_sheets',
+        sourceSheetName: sheetName,
+        sourceTab: sheetName,
+        sourceSpreadsheetId: spreadsheetId,
+        createdBy: reviewMetadata.createdBy,
+        category: reviewMetadata.category,
+        plazas: reviewMetadata.plazas,
+        metadata: {
+          expectedItemCount,
+          expectedSourceRows,
+          targetRatios,
+          expectedVariantsPerRatio: EXPECTED_VARIATIONS_PER_RATIO,
+        },
+      });
+      reviewBatchId = getCreatedReviewBatchId(reviewBatch);
+      if (!reviewBatchId) {
+        throw new Error('Review batch was created without an identifier.');
+      }
+
+      onProgress?.({
+        state: 'review-batch-created',
+        message: `Review batch ${reviewBatchId} created`,
+        reviewBatchId,
+      });
+    }
+
     // Step 5: Process each row
     const updates = [];
+    const outputFormatRanges = [];
+    let failedRows = 0;
 
     console.log(`[BATCH] Starting row loop. imageUrlColumnName="${imageUrlColumnName}", ratioColumns=${JSON.stringify(ratioColumns)}, targetRatios=${targetRatios.join(',')}`);
 
     for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
       const row = rows[rowIndex];
       const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex); // Prefer real sheet row
+      let uploadedLinks = createEmptyRatioLinks();
+      let outputCells = createEmptyRatioLinks();
+      let reviewRegistrationAttempted = false;
+      const rowUpdateStart = updates.length;
+      const rowFormatStart = outputFormatRanges.length;
 
       try {
         // Get image URL from the detected column (now using column name as key)
@@ -1070,7 +1214,35 @@ export const processBatch = async (options) => {
           });
 
           const { images } = await generateAspectRatioImages(imageDataUrl, ratio);
+          if (!Array.isArray(images) || images.length === 0) {
+            throw new Error(`No ${ratio} variants were generated for row ${rowNumber}.`);
+          }
+          if (explicitRatioColumns && images.length > (ratioColumns[ratio]?.length || 0)) {
+            throw new Error(
+              `Generated ${images.length} ${ratio} variants, but the Sheet only has ${ratioColumns[ratio]?.length || 0} matching output columns.`,
+            );
+          }
           generatedImagesByRatio[ratio] = images;
+        }
+
+        if (explicitRatioColumns) {
+          for (const ratio of targetRatios) {
+            outputCells[ratio] = (generatedImagesByRatio[ratio] || []).map((_, index) => {
+              const columnIndex = ratioColumns[ratio]?.[index];
+              return columnIndex === undefined
+                ? ''
+                : `${columnIndexToLetter(columnIndex)}${rowNumber}`;
+            });
+          }
+        } else {
+          let outputIndex = 0;
+          for (const ratio of targetRatios) {
+            outputCells[ratio] = (generatedImagesByRatio[ratio] || []).map(() => {
+              const cell = `${columnIndexToLetter(imageUrlColumnIndex + 1 + outputIndex)}${rowNumber}`;
+              outputIndex += 1;
+              return cell;
+            });
+          }
         }
 
         // Upload all variations to Drive
@@ -1082,8 +1254,6 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
-        const uploadedLinks = createEmptyRatioLinks();
-
         for (const ratio of targetRatios) {
           const images = generatedImagesByRatio[ratio] || [];
           for (let i = 0; i < images.length; i++) {
@@ -1093,7 +1263,9 @@ export const processBatch = async (options) => {
               link = await uploadImageToPhotos(images[i], fileName, photosAlbumId);
             } else {
               const upload = await uploadImageToDrive(images[i], fileName, folderId);
-              link = await makeFilePublic(upload.fileId);
+              link = reviewMetadata
+                ? await getShareableLink(upload.fileId)
+                : await makeFilePublic(upload.fileId);
             }
             uploadedLinks[ratio].push(link);
           }
@@ -1114,6 +1286,12 @@ export const processBatch = async (options) => {
               range: `${sheetName}!${columnIndexToLetter(colIdx)}${rowNumber}`,
               values: [[links[i]]],
             });
+            outputFormatRanges.push({
+              startRowIndex: rowNumber - 1,
+              endRowIndex: rowNumber,
+              startColumnIndex: colIdx,
+              endColumnIndex: colIdx + 1,
+            });
           }
 
           return true;
@@ -1124,13 +1302,45 @@ export const processBatch = async (options) => {
         // Fallback: if no ratio columns detected, write after image URL column as before
         if (!explicitRatioColumns && !usedRatioColumns.some(Boolean)) {
           const outputColumnStart = imageUrlColumnIndex + 1;
-          const fallbackLinks = targetRatios.flatMap((ratio) => uploadedLinks[ratio]);
-          for (let i = 0; i < fallbackLinks.length; i++) {
-            updates.push({
-              range: `${sheetName}!${columnIndexToLetter(outputColumnStart + i)}${rowNumber}`,
-              values: [[fallbackLinks[i]]],
-            });
+          let fallbackIndex = 0;
+          for (const ratio of targetRatios) {
+            const links = uploadedLinks[ratio] || [];
+            for (let variantIndex = 0; variantIndex < links.length; variantIndex++) {
+              const columnIndex = outputColumnStart + fallbackIndex;
+              updates.push({
+                range: `${sheetName}!${columnIndexToLetter(columnIndex)}${rowNumber}`,
+                values: [[links[variantIndex]]],
+              });
+              outputFormatRanges.push({
+                startRowIndex: rowNumber - 1,
+                endRowIndex: rowNumber,
+                startColumnIndex: columnIndex,
+                endColumnIndex: columnIndex + 1,
+              });
+              fallbackIndex += 1;
+            }
           }
+        }
+
+        if (reviewBatchId) {
+          const reviewItems = buildBatchReviewItems({
+            batchId: reviewBatchId,
+            spreadsheetId,
+            sheetName,
+            row,
+            rowNumber,
+            referenceUrl: imageUrl,
+            uploadedLinks,
+            outputCells,
+            category: reviewMetadata.category,
+            plazas: reviewMetadata.plazas,
+          });
+          reviewRegistrationAttempted = true;
+          await registerReviewItems({
+            sheetsUrl,
+            batchId: reviewBatchId,
+            items: reviewItems,
+          });
         }
 
         onProgress?.({
@@ -1140,8 +1350,44 @@ export const processBatch = async (options) => {
           status: 'completed',
           links: uploadedLinks,
           rowData: row,
+          ...(reviewBatchId && { reviewBatchId }),
         });
       } catch (error) {
+        failedRows += 1;
+        if (reviewBatchId) {
+          // A review row is atomic from the operator's perspective: do not
+          // expose links in the source Sheet if its review items were not
+          // registered successfully.
+          updates.splice(rowUpdateStart);
+          outputFormatRanges.splice(rowFormatStart);
+        }
+        if (reviewBatchId && !reviewRegistrationAttempted) {
+          const partiallyUploadedItems = buildBatchReviewItems({
+            batchId: reviewBatchId,
+            spreadsheetId,
+            sheetName,
+            row,
+            rowNumber,
+            referenceUrl: row[imageUrlColumnName]?.trim() || '',
+            uploadedLinks,
+            outputCells,
+            category: reviewMetadata.category,
+            plazas: reviewMetadata.plazas,
+          });
+          if (partiallyUploadedItems.length > 0) {
+            try {
+              await registerReviewItems({
+                sheetsUrl,
+                batchId: reviewBatchId,
+                items: partiallyUploadedItems,
+              });
+            } catch (registrationError) {
+              console.error(
+                `[BATCH] Could not register partially uploaded row ${rowNumber}: ${registrationError.message}`
+              );
+            }
+          }
+        }
         onProgress?.({
           rowNumber,
           currentRow: rowIndex + 1,
@@ -1149,6 +1395,7 @@ export const processBatch = async (options) => {
           status: 'error',
           error: error.message,
           rowData: row,
+          ...(reviewBatchId && { reviewBatchId }),
         });
       }
     }
@@ -1161,18 +1408,53 @@ export const processBatch = async (options) => {
       });
 
       await updateSheetCells(spreadsheetId, updates);
+
+      if (reviewBatchId && Number.isInteger(sourceSheetId) && outputFormatRanges.length > 0) {
+        try {
+          await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              requests: outputFormatRanges.map((range) => ({
+                repeatCell: {
+                  range: {
+                    sheetId: sourceSheetId,
+                    ...range,
+                  },
+                  cell: { userEnteredFormat: {} },
+                  fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle',
+                },
+              })),
+            },
+          });
+        } catch (formatError) {
+          console.warn(`[BATCH] Could not clear inherited output colors: ${formatError.message}`);
+          onProgress?.({
+            state: 'warning',
+            message: 'Outputs were saved, but inherited cell colors could not be cleared.',
+            ...(reviewBatchId && { reviewBatchId }),
+          });
+        }
+      }
+    }
+
+    if (reviewBatchId && failedRows > 0) {
+      throw new Error(
+        `Batch review ${reviewBatchId} is incomplete: ${failedRows} source row(s) failed and no review link should be issued yet.`,
+      );
     }
 
     onProgress?.({
       state: 'completed',
       message: 'Batch processing completed successfully',
       totalRows,
+      ...(reviewBatchId && { reviewBatchId }),
     });
 
     return {
       success: true,
       totalRows,
-      processedRows: totalRows,
+      processedRows: totalRows - failedRows,
+      ...(reviewBatchId && { reviewBatchId }),
     };
   } catch (error) {
     console.error('Batch processing error:', error);

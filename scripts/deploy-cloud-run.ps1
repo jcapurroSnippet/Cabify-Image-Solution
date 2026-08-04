@@ -6,13 +6,19 @@ param(
   [string]$Service = "cabify-image-suite",
   [string]$SecretName = "gemini-api-key",
   [string]$EnvFile = ".env",
+  [ValidateSet("studio", "review")]
+  [string]$AppMode = "studio",
   [switch]$CreateSecretsFromEnvFile,
   [switch]$RequireAuthentication
 )
 
 $ErrorActionPreference = "Stop"
 
-$allowUnauthenticatedFlag = if ($RequireAuthentication) { "" } else { "--allow-unauthenticated" }
+$authenticationFlag = if ($AppMode -eq "review" -and -not $RequireAuthentication) {
+  "--allow-unauthenticated"
+} else {
+  "--no-allow-unauthenticated"
+}
 $secretEnvNames = @(
   "GEMINI_API_KEY",
   "GOOGLE_OAUTH_CLIENT_SECRET",
@@ -22,7 +28,8 @@ $secretEnvNames = @(
   "GOOGLE_ADS_DEVELOPER_TOKEN",
   "GOOGLE_ADS_REFRESH_TOKEN",
   "META_ACCESS_TOKEN",
-  "META_APP_SECRET"
+  "META_APP_SECRET",
+  "CREATIVE_REVIEW_WRITER_SECRET"
 )
 
 function Convert-ToSecretName {
@@ -82,6 +89,7 @@ Write-Host "Using project: $ProjectId"
 gcloud.cmd services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --project $ProjectId
 
 $envValues = Read-DotEnvFile -Path $EnvFile
+$envValues["APP_MODE"] = $AppMode
 $setEnvPairs = @()
 $setSecretPairs = @()
 
@@ -112,6 +120,11 @@ $deployArgs = @(
   "--project", $ProjectId
 )
 
+# Both runtimes write the same Sheet-backed state (Studio also handles import,
+# regeneration and publication retry). Serialize every writer until the state
+# moves to a store with distributed compare-and-set semantics.
+$deployArgs += @("--max-instances", "1", "--concurrency", "1")
+
 if ($setSecretPairs.Count -gt 0) {
   $deployArgs += "--set-secrets"
   $deployArgs += ("^~^" + ($setSecretPairs -join "~"))
@@ -122,9 +135,7 @@ if ($setEnvPairs.Count -gt 0) {
   $deployArgs += ("^~^" + ($setEnvPairs -join "~"))
 }
 
-if ($allowUnauthenticatedFlag) {
-  $deployArgs += $allowUnauthenticatedFlag
-}
+$deployArgs += $authenticationFlag
 
 Write-Host "Deploying service '$Service' in region '$Region'..."
 gcloud.cmd @deployArgs

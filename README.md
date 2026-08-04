@@ -51,6 +51,29 @@ Run container:
 
 The Docker image does not include `.env`. Runtime values are configured on Cloud Run as environment variables.
 
+## Creative review portal
+
+The creative review workflow uses the same Google Sheet as the operational source of truth and adds two normalized tabs: `creative_review_batches` and `creative_review_items`. Internal users prepare batches in the studio; clients receive a private, expiring link and can approve or reject each creative without opening the Sheet. Rejections require feedback, and only explicitly approved creatives are published to `creative_library`.
+
+Two runtime modes are built from the same image:
+
+- `studio`: the full internal application. Deploy it with Cloud Run authentication.
+- `review`: the public client surface. It exposes only review, preview, and health endpoints; batch links are protected by revocable bearer tokens stored only as hashes.
+
+The deployment helper keeps both the private Studio and public review service at one instance with concurrency 1 while state is persisted in Sheets. This serializes generation, migration, decisions and publication retries across each writer runtime; keep this setting until the workflow moves to a datastore with distributed compare-and-set semantics.
+
+Run the legacy migration from the authenticated Studio API after configuring credentials:
+
+```bash
+curl -X POST "https://STUDIO_URL/api/creative-reviews/import-legacy" \
+  -H "Content-Type: application/json" \
+  -d '{"sheetsUrl":"https://docs.google.com/spreadsheets/d/SHEET_ID/edit","sheetName":"RIDERS | AR"}'
+```
+
+The importer creates a native backup by default, maps each cell color independently, preserves rejection feedback, marks existing Creative Library matches, and returns the existing migration on retries unless `force: true` is supplied.
+
+Configure `CREATIVE_REVIEW_SHEETS_URL` with the operational Google Sheet, `CREATIVE_REVIEW_PUBLIC_BASE_URL` with the public review service URL, and `CREATIVE_REVIEW_STUDIO_BASE_URL` with the private Studio URL used by token-free links mirrored into the Sheet. Keep the default 30-day expiry or override `CREATIVE_REVIEW_TOKEN_TTL_DAYS`. Preview authorization is coalesced and cached for 10 seconds by default; stale `publishing` batches become retryable after 300 seconds.
+
 ## Deploy to Google Cloud Run
 
 1. Set variables:
@@ -71,7 +94,11 @@ The Docker image does not include `.env`. Runtime values are configured on Cloud
    ```
 3. Deploy from PowerShell. The script reads local `.env` and sends its values to Cloud Run with `--set-env-vars`:
    ```powershell
-   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE
+   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service $env:SERVICE -AppMode studio -RequireAuthentication
+   ```
+   Deploy the client review surface separately from the same source:
+   ```powershell
+   .\scripts\deploy-cloud-run.ps1 -ProjectId $env:PROJECT_ID -Region $env:REGION -Service "cabify-creative-review" -AppMode review
    ```
    If a GitHub/Cloud Build trigger already deployed the image, sync local `.env` into the Cloud Run service:
    ```powershell

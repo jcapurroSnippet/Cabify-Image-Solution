@@ -51,6 +51,7 @@ export interface BatchProgressEvent {
   ratio?: BatchAspectRatio;
   imageUrl?: string;
   reason?: string;
+  reviewBatchId?: string;
   rowData?: BatchRowData;
   links?: {
     '1:1': string[];
@@ -63,15 +64,32 @@ export interface BatchResult {
   success: boolean;
   totalRows: number;
   processedRows: number;
+  reviewBatchId?: string;
   errors?: {
     rowNumber: number;
     error: string;
   }[];
 }
 
+export interface BatchReviewMetadata {
+  title: string;
+  category: string;
+  plazas: string[];
+  createdBy: string;
+}
+
+export interface BatchReviewForm {
+  title: string;
+  category: string;
+  plazas: string;
+  createdBy: string;
+}
+
 export interface BatchState {
   sheetsUrl: string;
   driveFolderUrl: string;
+  review: BatchReviewForm;
+  reviewBatchId: string | null;
   isProcessing: boolean;
   progress: {
     totalRows: number;
