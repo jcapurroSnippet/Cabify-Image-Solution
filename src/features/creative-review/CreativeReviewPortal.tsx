@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertCircle,
   Check,
@@ -1008,13 +1009,14 @@ export default function CreativeReviewPortal({
         </div>
       )}
 
-      {zoomedImage && (
+      {zoomedImage && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={zoomedImage.label} onClick={() => setZoomedImage(null)}>
           <div className="relative flex max-h-[94vh] max-w-[94vw] items-center justify-center" onClick={(event) => event.stopPropagation()}>
             <img src={getPreviewSrc(zoomedImage.url)} alt={zoomedImage.label} className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl" />
             <button type="button" onClick={() => setZoomedImage(null)} aria-label="Cerrar imagen ampliada" className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/80 text-white hover:bg-slate-800"><X className="h-5 w-5" /></button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
