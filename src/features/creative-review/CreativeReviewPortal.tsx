@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
+  EyeOff,
   Image as ImageIcon,
   Loader2,
   Lock,
@@ -491,6 +492,28 @@ export default function CreativeReviewPortal({
     void applyDecisions(decisions);
   };
 
+  /**
+   * Snippet's pre-approval cull. A discarded piece is superseded, so it drops
+   * out of the totals and the client never sees it. Studio-only: the public
+   * portal has no path to this.
+   */
+  const discardIds = (ids: string[]) => {
+    if (!isInternalWorkspace || isLocked || isSaving) return;
+    const idSet = new Set(ids);
+    const targets = activeItems.filter((item) => idSet.has(item.id));
+    if (targets.length === 0) return;
+    if (!window.confirm(
+      `Descartar ${targets.length} pieza${targets.length !== 1 ? 's' : ''}? No se van a mostrar al cliente.`,
+    )) return;
+
+    void applyDecisions(targets.map((item) => ({
+      reviewItemId: item.id,
+      version: item.version,
+      status: 'superseded' as const,
+      reason: 'Descartada en la pre-aprobación de Snippet',
+    })));
+  };
+
   const openRejectDialog = (ids: string[], title: string) => {
     const uniqueIds = Array.from(new Set(ids));
     if (uniqueIds.length === 0 || isLocked || isSaving) return;
@@ -843,6 +866,9 @@ export default function CreativeReviewPortal({
                     <span className="text-sm font-medium text-slate-600">{selectedCount} seleccionados</span>
                     <button type="button" onClick={() => decideIds(Array.from(selectedIds), 'approved')} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"><Check className="h-4 w-4" /> Aprobar</button>
                     <button type="button" onClick={() => openRejectDialog(Array.from(selectedIds), `${selectedCount} creativos seleccionados`)} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"><X className="h-4 w-4" /> Rechazar</button>
+                    {isInternalWorkspace && (
+                      <button type="button" onClick={() => discardIds(Array.from(selectedIds))} disabled={isSaving} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-800 disabled:opacity-50" title="No se muestra al cliente"><EyeOff className="h-4 w-4" /> Descartar</button>
+                    )}
                   </>
                 )}
               </div>

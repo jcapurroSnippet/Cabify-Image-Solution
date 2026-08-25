@@ -36,6 +36,102 @@ export const GOOGLE_ASSET_CACHE_SHEET = 'google_asset_cache';
 export const CREATIVE_CATEGORIES_SHEET = 'creative_categories';
 export const CREATIVE_REVIEW_BATCHES_SHEET = 'creative_review_batches';
 export const CREATIVE_REVIEW_ITEMS_SHEET = 'creative_review_items';
+export const CREATIVE_RUNS_SHEET = 'creative_runs';
+export const CREATIVE_RUN_TARGETS_SHEET = 'creative_run_targets';
+export const BATCH_VARIATIONS_SHEET = 'batch_variations';
+
+/**
+ * One row per variation produced by Batch from Sheets. This is where the batch
+ * writes its output: the source tab is read-only, so no operator has to
+ * pre-build ratio columns and nothing in their sheet gets overwritten.
+ *
+ * `review_item_id` is the link into `creative_review_items`, which is how a row
+ * here is traced through the rest of the ciclo (review, approval, publication).
+ * Append-only, like the review tabs — a re-run adds a batch, it never rewrites
+ * history.
+ */
+export const BATCH_VARIATION_HEADERS = [
+  'variation_id',
+  'review_batch_id',
+  'review_item_id',
+  'creative_family_id',
+  'batch_title',
+  'source_sheet_id',
+  'source_tab',
+  'source_row',
+  'source_image_url',
+  'aspect_ratio',
+  'variant',
+  'image_url',
+  'drive_file_id',
+  'category',
+  'plazas',
+  'status',
+  'error',
+  'created_at',
+];
+
+/**
+ * One row per funnel run (ciclo). The run is the entity that spans all five
+ * steps: detection, generation, internal review, client approval and placement.
+ */
+export const CREATIVE_RUN_HEADERS = [
+  'run_id',
+  'status',
+  'title',
+  'created_by',
+  'created_at',
+  'updated_at',
+  'platform',
+  'account_id',
+  'campaign_ids',
+  'category',
+  'plazas',
+  'source_sheet_id',
+  'review_batch_id',
+  'private_url',
+  'sent_at',
+  'target_count',
+  'generated_count',
+  'approved_count',
+  'replaced_count',
+  'error',
+  'version',
+  'metadata_json',
+];
+
+/**
+ * One row per detected low performer. This is the table that links a failing
+ * creative (step 1) to the pieces generated to replace it (step 2), the review
+ * items they became (steps 3-4) and the creative that finally shipped (step 5).
+ */
+export const CREATIVE_RUN_TARGET_HEADERS = [
+  'run_id',
+  'target_id',
+  'status',
+  'platform',
+  'account_id',
+  'campaign_id',
+  'campaign_name',
+  'ad_group_id',
+  'ad_group_name',
+  'ad_id',
+  'asset_id',
+  'asset_resource_name',
+  'old_image_url',
+  'required_ratio',
+  'detected_category',
+  'detected_plazas',
+  'source_image_origin',
+  'source_image_url',
+  'creative_family_id',
+  'review_item_ids',
+  'creative_id',
+  'error',
+  'created_at',
+  'updated_at',
+  'metrics_json',
+];
 
 export const CREATIVE_REVIEW_BATCH_HEADERS = [
   'review_batch_id',
@@ -223,6 +319,7 @@ export const getCreativeLibraryConfig = () => ({
     process.env.CREATIVE_LIBRARY_DRIVE_FOLDER_ID ||
     process.env.BATCH_DRIVE_FOLDER_ID ||
     '0APcMUrimfyziUk9PVA',
+  sourceBankFolderId: process.env.CREATIVE_SOURCE_BANK_FOLDER_ID || '',
   preferGooglePhotosForBatch: process.env.BATCH_USE_GOOGLE_PHOTOS === '1',
   dryRunDefault: process.env.REPLACEMENT_DRY_RUN_DEFAULT !== '0',
   selectionStrategy: process.env.CREATIVE_SELECTION_STRATEGY || 'oldest_first',

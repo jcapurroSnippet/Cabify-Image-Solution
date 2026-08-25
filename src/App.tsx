@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { ClipboardCheck, Crop, Library, Sparkles, TrendingDown } from 'lucide-react';
+import { ClipboardCheck, Crop, Library, Sparkles, TrendingDown, Workflow, Wrench } from 'lucide-react';
 import AspectRatioTab from './features/aspect-ratio/AspectRatioTab';
 import NanoEditorTab from './features/nano-editor/NanoEditorTab';
 import AdOptimizerTab from './features/ad-optimizer/AdOptimizerTab';
 import CreativeLibraryTab from './features/creative-library/CreativeLibraryTab';
 import CreativeReviewPortal from './features/creative-review/CreativeReviewPortal';
 import ReviewBatchesTab from './features/creative-review/ReviewBatchesTab';
+import RunFunnelTab from './features/run-funnel/RunFunnelTab';
 
-type TabId = 'nano' | 'ratio' | 'optimizer' | 'library' | 'review';
+type ToolId = 'nano' | 'ratio' | 'optimizer' | 'library' | 'review';
+type TabId = 'funnel' | ToolId;
 
-const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
+const TOOL_ITEMS: Array<{ id: ToolId; label: string; icon: React.ReactNode }> = [
   {
     id: 'nano',
     label: 'Nano Editor',
@@ -37,6 +39,8 @@ const TAB_ITEMS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   },
 ];
 
+const TOOL_IDS = TOOL_ITEMS.map((tool) => tool.id);
+
 const getPublicReviewToken = (pathname: string, hash: string) => {
   const fragment = hash.replace(/^#/, '');
   if (fragment) {
@@ -60,7 +64,8 @@ const getPublicReviewToken = (pathname: string, hash: string) => {
 
 const getTabFromLocation = (): TabId => {
   const requestedTab = new URLSearchParams(window.location.search).get('tab');
-  return TAB_ITEMS.some((item) => item.id === requestedTab) ? requestedTab as TabId : 'nano';
+  if (requestedTab === 'funnel') return 'funnel';
+  return TOOL_IDS.includes(requestedTab as ToolId) ? requestedTab as ToolId : 'funnel';
 };
 
 export default function App() {
@@ -78,16 +83,19 @@ export default function App() {
   const selectTab = (tabId: TabId) => {
     setActiveTab(tabId);
     const url = new URL(window.location.href);
-    if (tabId === 'nano') url.searchParams.delete('tab');
+    if (tabId === 'funnel') url.searchParams.delete('tab');
     else url.searchParams.set('tab', tabId);
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   };
 
   if (isPublicReview) return <CreativeReviewPortal token={publicReviewToken} />;
 
+  const isToolsSection = activeTab !== 'funnel';
+  const isWide = activeTab === 'review' || activeTab === 'funnel';
+
   return (
     <div className="min-h-screen px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className={`mx-auto space-y-4 ${activeTab === 'review' ? 'max-w-[1600px]' : 'max-w-7xl'}`}>
+      <div className={`mx-auto space-y-4 ${isWide ? 'max-w-[1600px]' : 'max-w-7xl'}`}>
         <header className="panel-surface">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3 sm:gap-4">
@@ -98,23 +106,48 @@ export default function App() {
           </div>
         </header>
 
-        <section className="panel-surface">
+        {/* Primary navigation: the funnel is the product, the tools are the workshop. */}
+        <section className="panel-surface space-y-3">
           <div className="flex flex-wrap gap-2">
-            {TAB_ITEMS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => selectTab(tab.id)}
-                data-active={activeTab === tab.id}
-                className="tab-pill"
-              >
-                <span className="inline-flex items-center gap-1.5">{tab.icon}{tab.label}</span>
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => selectTab('funnel')}
+              data-active={activeTab === 'funnel'}
+              className="tab-pill"
+            >
+              <span className="inline-flex items-center gap-1.5"><Workflow className="h-4 w-4" />Ciclo</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectTab(isToolsSection ? activeTab : 'nano')}
+              data-active={isToolsSection}
+              className="tab-pill"
+            >
+              <span className="inline-flex items-center gap-1.5"><Wrench className="h-4 w-4" />Herramientas</span>
+            </button>
           </div>
+
+          {isToolsSection && (
+            <div className="flex flex-wrap gap-2 border-t border-slate-700/60 pt-3">
+              {TOOL_ITEMS.map((tool) => (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => selectTab(tool.id)}
+                  data-active={activeTab === tool.id}
+                  className="tab-pill"
+                >
+                  <span className="inline-flex items-center gap-1.5">{tool.icon}{tool.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         <main className="space-y-4">
+          <section aria-hidden={activeTab !== 'funnel'} className={activeTab === 'funnel' ? 'block' : 'hidden'}>
+            <RunFunnelTab isActive={activeTab === 'funnel'} />
+          </section>
           <section aria-hidden={activeTab !== 'nano'} className={activeTab === 'nano' ? 'block' : 'hidden'}>
             <NanoEditorTab />
           </section>

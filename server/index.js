@@ -56,6 +56,20 @@ import {
 } from './services/creativeReviewService.js';
 import { findOrCreateDriveFolder, getShareableLink, uploadBufferToDrive } from './services/driveService.js';
 import { sanitizeFileName } from './services/creativeLibraryCore.js';
+import { RunOrchestratorError } from './services/runOrchestratorCore.js';
+import {
+  advanceRun,
+  buildRunPlacementPlan,
+  createRun,
+  detectRunTargets,
+  executeRunPlacement,
+  generateRunCreatives,
+  getRun,
+  listRuns,
+  markRunSent,
+  submitRunForClientReview,
+  syncRunFromReview,
+} from './services/runOrchestratorService.js';
 
 class RequestValidationError extends Error {}
 
@@ -545,7 +559,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
 
 app.post('/api/batch-status', async (request, response) => {
   try {
-    const { sheetsUrl, sheetName } = request.body ?? {};
+    const { sheetsUrl, sheetName, reviewBatchId } = request.body ?? {};
 
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
       throw new RequestValidationError('sheetsUrl is required.');
@@ -554,6 +568,7 @@ app.post('/api/batch-status', async (request, response) => {
     const status = await getBatchStatus({
       sheetsUrl: sheetsUrl.trim(),
       sheetName: sheetName ? String(sheetName).trim() : undefined,
+      reviewBatchId: reviewBatchId ? String(reviewBatchId).trim() : undefined,
     });
 
     return response.status(200).json(status);
@@ -1373,6 +1388,169 @@ app.post('/api/ads/google/execute-replacements', async (request, response) => {
     return response.status(500).json({
       error: getErrorMessage(error, 'Failed to execute Google Ads replacements.'),
     });
+  }
+});
+
+// ── Funnel run endpoints (studio only) ──────────────────────────────────────
+
+const sendRunError = (response, error, fallbackMessage) => {
+  if (error instanceof RunOrchestratorError) {
+    return response.status(error.statusCode || 400).json({
+      error: error.message,
+      code: error.code,
+      details: error.details,
+    });
+  }
+  if (error instanceof CreativeReviewError) {
+    return sendCreativeReviewError(response, error, fallbackMessage);
+  }
+  if (error instanceof RequestValidationError) {
+    return response.status(400).json({ error: error.message });
+  }
+  console.error('[RUN] Request failed', {
+    message: error?.message || String(error),
+    stack: error?.stack || null,
+  });
+  return response.status(500).json({ error: getErrorMessage(error, fallbackMessage) });
+};
+
+app.post('/api/runs', async (request, response) => {
+  try {
+    return response.status(201).json(await createRun(request.body ?? {}));
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to create the run.');
+  }
+});
+
+app.get('/api/runs', async (request, response) => {
+  try {
+    return response.status(200).json({ runs: await listRuns({ sheetsUrl: request.query.sheetsUrl }) });
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to list runs.');
+  }
+});
+
+app.get('/api/runs/:runId', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await getRun({ sheetsUrl: request.query.sheetsUrl, runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to load the run.');
+  }
+});
+
+app.post('/api/runs/:runId/detect', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await detectRunTargets({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to detect low performers.');
+  }
+});
+
+/**
+ * Generation streams NDJSON because a run can hold many targets and each one
+ * costs three model calls per ratio. Same contract as /api/batch-aspect-ratio.
+ */
+app.post('/api/runs/:runId/generate', async (request, response) => {
+  response.setHeader('Content-Type', 'application/x-ndjson');
+  response.setHeader('Transfer-Encoding', 'chunked');
+  response.setHeader('Cache-Control', 'no-cache');
+  response.setHeader('X-Accel-Buffering', 'no');
+  if (typeof response.flushHeaders === 'function') response.flushHeaders();
+
+  const write = (payload) => {
+    if (response.writableEnded || response.destroyed) return;
+    response.write(`${JSON.stringify(payload)}\n`);
+    if (typeof response.flush === 'function') response.flush();
+  };
+
+  const keepAlive = setInterval(() => {
+    if (response.writableEnded || response.destroyed) {
+      clearInterval(keepAlive);
+      return;
+    }
+    write({ state: 'keepalive' });
+  }, 15000);
+  const stopKeepAlive = () => clearInterval(keepAlive);
+  response.on('close', stopKeepAlive);
+  response.on('finish', stopKeepAlive);
+
+  try {
+    const result = await generateRunCreatives(
+      { ...(request.body ?? {}), runId: request.params.runId },
+      write,
+    );
+    stopKeepAlive();
+    write({ state: 'done', ...result });
+    return response.end();
+  } catch (error) {
+    stopKeepAlive();
+    console.error('[RUN] Generation failed', { message: error?.message || String(error) });
+    write({ state: 'error', error: getErrorMessage(error, 'Run generation failed.') });
+    return response.end();
+  }
+});
+
+app.post('/api/runs/:runId/submit-review', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await submitRunForClientReview({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to prepare the client review link.');
+  }
+});
+
+app.post('/api/runs/:runId/mark-sent', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await markRunSent({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to mark the run as sent.');
+  }
+});
+
+app.post('/api/runs/:runId/sync', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await syncRunFromReview({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to sync the run with its review batch.');
+  }
+});
+
+app.post('/api/runs/:runId/plan', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await buildRunPlacementPlan({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to build the placement plan.');
+  }
+});
+
+app.post('/api/runs/:runId/execute', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await executeRunPlacement({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to execute the placement.');
+  }
+});
+
+app.post('/api/runs/:runId/advance', async (request, response) => {
+  try {
+    return response.status(200).json(
+      await advanceRun({ ...(request.body ?? {}), runId: request.params.runId }),
+    );
+  } catch (error) {
+    return sendRunError(response, error, 'Failed to advance the run.');
   }
 });
 

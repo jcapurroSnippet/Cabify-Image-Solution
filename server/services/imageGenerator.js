@@ -2,8 +2,70 @@ import { GoogleGenAI } from '@google/genai';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Gemini's imageConfig.aspectRatio only accepts a fixed enum: "1:1", "2:3",
+ * "3:2", "3:4", "4:3", "9:16", "16:9", "21:9". Ratios outside that enum
+ * (e.g. "1.91:1", the standard Google marketing-image ratio) get silently
+ * mishandled by the API. For those we request the closest supported enum
+ * value instead and center-crop the result down to the exact target ratio
+ * afterward.
+ */
+const GEMINI_SUPPORTED_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'];
+
+const parseAspectRatioValue = (ratio) => {
+  const [w, h] = String(ratio).split(':').map(Number);
+  return w > 0 && h > 0 ? w / h : null;
+};
+
+const resolveGeminiAspectRatio = (targetRatio) => {
+  if (GEMINI_SUPPORTED_ASPECT_RATIOS.includes(targetRatio)) return targetRatio;
+  const targetValue = parseAspectRatioValue(targetRatio);
+  if (targetValue == null) return targetRatio;
+  return GEMINI_SUPPORTED_ASPECT_RATIOS.reduce((closest, candidate) => {
+    const diff = Math.abs(parseAspectRatioValue(candidate) - targetValue);
+    const closestDiff = Math.abs(parseAspectRatioValue(closest) - targetValue);
+    return diff < closestDiff ? candidate : closest;
+  });
+};
+
+const needsAspectRatioCrop = (targetRatio) => !GEMINI_SUPPORTED_ASPECT_RATIOS.includes(targetRatio);
+
+/** Center-crops a data URL image down to the exact target "W:H" ratio. */
+const cropDataUrlToAspectRatio = async (dataUrl, targetRatio) => {
+  const match = typeof dataUrl === 'string' && dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  const targetValue = parseAspectRatioValue(targetRatio);
+  if (!match || targetValue == null) return dataUrl;
+
+  const buffer = Buffer.from(match[2], 'base64');
+  const image = sharp(buffer);
+  const { width, height } = await image.metadata();
+  if (!width || !height) return dataUrl;
+
+  const currentValue = width / height;
+  let cropWidth = width;
+  let cropHeight = height;
+  if (currentValue > targetValue) {
+    cropWidth = Math.max(1, Math.round(height * targetValue));
+  } else if (currentValue < targetValue) {
+    cropHeight = Math.max(1, Math.round(width / targetValue));
+  } else {
+    return dataUrl;
+  }
+
+  const left = Math.max(0, Math.floor((width - cropWidth) / 2));
+  const top = Math.max(0, Math.floor((height - cropHeight) / 2));
+
+  const outputBuffer = await image
+    .extract({ left, top, width: cropWidth, height: cropHeight })
+    .png()
+    .toBuffer();
+
+  return `data:image/png;base64,${outputBuffer.toString('base64')}`;
+};
 
 const BRAND_LOCK =
   'BRAND LOCK - do NOT modify, replace, recolor, restyle, resize, or reinterpret typography or brand colors under any circumstance. Keep exact original font, weight, proportions, letter-spacing, and all colors unchanged.';
@@ -12,6 +74,16 @@ const CARD_REFERENCE_FOLDERS = {
   '1:1': '1-1',
   '9:16': '9-16',
   '1.91:1': '1-91-1',
+};
+
+/**
+ * Ratios whose own reference folder may be absent. Landscape has no shipped
+ * references yet, so it borrows the square card styling rather than generating
+ * with no style guidance at all. Drop 1200x628 PNGs into
+ * assets/card-references/1-91-1/ to make it use its own.
+ */
+const CARD_REFERENCE_FALLBACKS = {
+  '1.91:1': ['1-1'],
 };
 
 const CARD_COPY_EXTRACTION_SCHEMA = {
@@ -315,11 +387,15 @@ ${SCENE_PROHIBITIONS}
 };
 
 export const loadCardReferences = (targetRatio) => {
-  const folderName = CARD_REFERENCE_FOLDERS[String(targetRatio).trim()];
+  const ratio = String(targetRatio).trim();
+  const folderName = CARD_REFERENCE_FOLDERS[ratio];
   if (!folderName) return [];
 
-  const folder = path.join(__dirname, `../assets/card-references/${folderName}`);
-  if (!existsSync(folder)) return [];
+  const candidates = [folderName, ...(CARD_REFERENCE_FALLBACKS[ratio] || [])];
+  const folder = candidates
+    .map((name) => path.join(__dirname, `../assets/card-references/${name}`))
+    .find((candidate) => existsSync(candidate));
+  if (!folder) return [];
 
   return readdirSync(folder)
     .filter((fileName) => /\.(png|jpg|jpeg|webp)$/i.test(fileName))
@@ -393,10 +469,12 @@ export const placeCardOnScene = async (
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: { parts },
-    config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
+    config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
   });
 
-  return extractFirstImageFromResponse(response);
+  const finalUrl = extractFirstImageFromResponse(response);
+  if (!finalUrl) return null;
+  return needsAspectRatioCrop(targetRatio) ? await cropDataUrlToAspectRatio(finalUrl, targetRatio) : finalUrl;
 };
 
 export const generateAspectRatioImages = async (imageDataUrl, targetRatio) => {
@@ -424,13 +502,16 @@ export const generateAspectRatioImages = async (imageDataUrl, targetRatio) => {
       const sceneResponse = await ai.models.generateContent({
         model: 'gemini-3-pro-image-preview',
         contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
-        config: { imageConfig: { aspectRatio: targetRatio, imageSize: '1K' } },
+        config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
       });
 
-      const sceneUrl = extractFirstImageFromResponse(sceneResponse);
+      let sceneUrl = extractFirstImageFromResponse(sceneResponse);
       if (!sceneUrl) {
         errors.push('Pass 1 returned no scene.');
         continue;
+      }
+      if (needsAspectRatioCrop(targetRatio)) {
+        sceneUrl = await cropDataUrlToAspectRatio(sceneUrl, targetRatio);
       }
 
       const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio, cardCopy);

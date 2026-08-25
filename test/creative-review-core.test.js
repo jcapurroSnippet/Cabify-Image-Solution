@@ -341,3 +341,34 @@ test('in-memory review flow publishes approved creatives once and retries only p
   for (const entry of retryPlan.publishable) storedKeys.add(buildReviewPublicationIdempotencyKey(entry));
   assert.deepEqual([...storedKeys].sort(), ['creative-a:hash-a', 'creative-b:hash-b']);
 });
+
+test('Snippet can discard a piece internally, but the client portal never can', () => {
+  const items = [item({ review_item_id: 'creative-a' }), item({ review_item_id: 'creative-b' })];
+  const discard = [{ reviewItemId: 'creative-a', status: 'superseded', reason: 'fuera de brief', version: 1 }];
+
+  // Studio (token-less) pre-approval: the discard is applied and the reason kept.
+  const internal = applyReviewDecisions(items, discard, { allowSuperseded: true });
+  const discarded = internal.items.find((entry) => entry.review_item_id === 'creative-a');
+  assert.equal(discarded.decision, 'superseded');
+  assert.equal(discarded.feedback, 'fuera de brief');
+  // Superseded items drop out of the totals the client is asked to decide on.
+  assert.equal(internal.summary.total, 1);
+  assert.equal(internal.summary.superseded, 1);
+  assert.equal(internal.summary.pending, 1);
+
+  // The public portal must not be able to supersede anything.
+  assert.throws(
+    () => applyReviewDecisions(items, discard),
+    (error) => error.code === 'INVALID_REVIEW_DECISION',
+  );
+});
+
+test('an already-discarded piece cannot be decided on again', () => {
+  const items = [item({ review_item_id: 'creative-a', decision: 'superseded' })];
+  assert.throws(
+    () => applyReviewDecisions(items, [
+      { reviewItemId: 'creative-a', status: 'approved', version: 1 },
+    ], { allowSuperseded: true }),
+    (error) => error.code === 'REVIEW_ITEM_SUPERSEDED',
+  );
+});

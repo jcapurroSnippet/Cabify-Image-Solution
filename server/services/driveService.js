@@ -113,6 +113,50 @@ export const extractFolderId = (folderUrl) => {
   return match[1];
 };
 
+/**
+ * List image files inside a Drive folder, newest first.
+ * Used by the source-image bank fallback when a low performer's own image
+ * cannot be downloaded.
+ */
+export const listDriveFolderImages = async (folderId, { pageSize = 200 } = {}) => {
+  if (!folderId) return [];
+
+  try {
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`,
+      fields: 'files(id, name, mimeType, webViewLink, webContentLink, createdTime)',
+      orderBy: 'createdTime desc',
+      pageSize,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    return response.data.files || [];
+  } catch (error) {
+    throw new Error(`Failed to list Drive folder images: ${getApiErrorDetails(error)}`);
+  }
+};
+
+/**
+ * Download a Drive file's raw bytes as a data URL.
+ */
+export const downloadDriveFileAsDataUrl = async (fileId) => {
+  try {
+    const drive = await getDriveClient();
+    const response = await drive.files.get(
+      { fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' },
+    );
+
+    const mimeType = response.headers?.['content-type'] || 'image/png';
+    const base64 = Buffer.from(response.data).toString('base64');
+    return `data:${mimeType};base64,${base64}`;
+  } catch (error) {
+    throw new Error(`Failed to download Drive file: ${getApiErrorDetails(error)}`);
+  }
+};
+
 export const findOrCreateDriveFolder = async (folderName, parentFolderId) => {
   try {
     const drive = await getDriveClient();

@@ -49,6 +49,7 @@ const INITIAL_BATCH_STATE: BatchState = {
     createdBy: '',
   },
   reviewBatchId: null,
+  variationsSheetUrl: null,
   isProcessing: false,
   progress: {
     totalRows: 0,
@@ -111,7 +112,7 @@ export default function AspectRatioTab() {
 
     const pollStatus = async () => {
       try {
-        const snapshot = await fetchBatchStatus(batchState.sheetsUrl);
+        const snapshot = await fetchBatchStatus(batchState.sheetsUrl, batchState.reviewBatchId);
         if (!isActive) return;
 
         setBatchState((previous) => {
@@ -161,6 +162,7 @@ export default function AspectRatioTab() {
   }, [
     batchState.isProcessing,
     batchState.sheetsUrl,
+    batchState.reviewBatchId,
     batchState.progress.totalRows,
     batchState.progress.processedRows,
   ]);
@@ -294,6 +296,7 @@ export default function AspectRatioTab() {
       error: null,
       results: {},
       reviewBatchId: null,
+      variationsSheetUrl: null,
       progress: {
         totalRows: 0,
         processedRows: 0,
@@ -345,6 +348,7 @@ export default function AspectRatioTab() {
           return {
             ...previous,
             reviewBatchId: event.reviewBatchId || previous.reviewBatchId,
+            variationsSheetUrl: event.variationsSheetUrl || previous.variationsSheetUrl,
             progress: {
               ...progress,
               processedRows,
@@ -362,6 +366,7 @@ export default function AspectRatioTab() {
             ...previous,
             isProcessing: false,
             reviewBatchId: result.reviewBatchId || previous.reviewBatchId,
+            variationsSheetUrl: result.variationsSheetUrl || previous.variationsSheetUrl,
             progress: {
               ...previous.progress,
               totalRows,
@@ -579,6 +584,33 @@ export default function AspectRatioTab() {
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
                   Cuando termine el procesamiento, abrí la tanda para prepararla y compartirla.
+                </p>
+              </div>
+            )}
+
+            {batchState.variationsSheetUrl && (
+              <div className="rounded-lg border border-slate-600/40 bg-slate-900/40 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                      Variaciones generadas
+                    </p>
+                    <p className="mt-1 text-sm text-slate-200">
+                      Pestaña <span className="font-mono">batch_variations</span>
+                    </p>
+                  </div>
+                  <a
+                    href={batchState.variationsSheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-medium text-slate-200 hover:border-slate-400"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Abrir pestaña
+                  </a>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  Una fila por variación. Tu pestaña de origen no se modifica.
                 </p>
               </div>
             )}

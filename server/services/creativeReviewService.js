@@ -29,7 +29,14 @@ import {
 } from './creativeReviewCore.js';
 import { getDriveClient, getSheetsClient } from './googleAuth.js';
 import { findOrCreateDriveFolder, uploadBufferToDrive } from './driveService.js';
-import { columnIndexToLetter, extractSpreadsheetId } from './sheetsService.js';
+import {
+  appendRows,
+  buildRange,
+  columnIndexToLetter,
+  extractSpreadsheetId,
+  objectToRow,
+  valuesToObjects,
+} from './sheetsService.js';
 import {
   classifyBackgroundColor,
   dataUrlToBuffer,
@@ -144,8 +151,6 @@ const runReviewWriterMutation = async (action, input) => {
   }
 };
 
-const quoteSheetName = (name) => `'${String(name).replace(/'/g, "''")}'`;
-const buildRange = (sheetName, range) => `${quoteSheetName(sheetName)}!${range}`;
 const nowIso = () => new Date().toISOString();
 const canonicalSheetsUrl = (spreadsheetId) =>
   `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
@@ -153,19 +158,6 @@ const clean = (value) => String(value ?? '').trim();
 const cleanInteger = (value, fallback = 0) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) ? parsed : fallback;
-};
-const objectToRow = (headers, object) => headers.map((header) => object?.[header] ?? '');
-const rowToObject = (headers, row, rowNumber) => {
-  const object = { __rowNumber: rowNumber };
-  headers.forEach((header, index) => {
-    object[header] = row?.[index] ?? '';
-  });
-  return object;
-};
-const valuesToObjects = (values = []) => {
-  if (!Array.isArray(values) || values.length === 0) return [];
-  const headers = values[0] || [];
-  return values.slice(1).map((row, index) => rowToObject(headers, row, index + 2));
 };
 const parseJson = (value, fallback = {}) => {
   if (value && typeof value === 'object') return value;
@@ -356,18 +348,6 @@ const readExistingReviewRows = async (sheets, spreadsheetId) => {
     throw new CreativeReviewError('Review link is invalid.', 'REVIEW_TOKEN_INVALID', 401);
   }
   return rows;
-};
-
-const appendRows = async (sheets, spreadsheetId, sheetName, headers, rows) => {
-  if (!rows.length) return;
-  const lastColumn = columnIndexToLetter(headers.length - 1);
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: buildRange(sheetName, `A:${lastColumn}`),
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: rows.map((row) => objectToRow(headers, row)) },
-  });
 };
 
 const updateRows = async (sheets, spreadsheetId, sheetName, headers, rows) => {
@@ -1592,6 +1572,9 @@ export const saveReviewDecisions = async (input = {}) => {
     const applied = applyReviewDecisions(hydratedItems, decisions, {
       reviewerName: args.reviewerName,
       reviewerEmail: args.reviewerEmail,
+      // Only the internal (token-less) Studio surface may discard a piece.
+      // The public client portal can approve or reject, never supersede.
+      allowSuperseded: !context.token,
     });
     if (canStartInternalDraft) {
       // Studio can begin reviewing an imported draft without minting a public

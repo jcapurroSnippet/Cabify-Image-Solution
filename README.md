@@ -1,9 +1,77 @@
 # Cabify Image Suite
 
-Single Vite + React app that combines two image workflows in separate tabs:
+Single Vite + React app. The primary surface is **Ciclo**, the five-step creative
+replacement funnel; the individual tools stay available under **Herramientas** for
+one-off work:
 
 - `Nano Editor`: prompt-driven image editing with strict Cabify constraints.
-- `Aspect Ratio`: generates `1:1`, `9:16`, and `1.91:1` variants from one source image.
+- `Aspect Ratio`: generates `1:1`, `9:16`, and `1.91:1` variants from one source image,
+  or in bulk from a Google Sheet (`Batch from Sheets`).
+- `Editor Batch`: bulk scene transformation for 3-20 uploaded images.
+- `Creative Library`: Google Ads + Meta low-performer detection and creative replacement.
+- `Creative Review`: review batches and the tokenized client approval portal.
+
+## The funnel (Ciclo)
+
+A **run** spans all five steps and is what ties the tools together — before it,
+each tool ran alone and nothing linked a failing creative to the piece generated
+to replace it.
+
+1. **Detección** — `getAdsLowPerformers` finds low performers in the selected campaigns.
+2. **Generación** — three variants in each of the three ratios per target, via the
+   existing `generateAspectRatioImages` pipeline. The source image is the low
+   performer's own creative, falling back to the Drive bank in
+   `CREATIVE_SOURCE_BANK_FOLDER_ID` when it cannot be downloaded.
+3. **Pre-aprobación Snippet** — discard pieces the client should not see. A discard
+   marks the item `superseded`; only the Studio (token-less) endpoint may do this.
+4. **Aprobación Cabify** — the app does **not** send mail. It shows the private link
+   and a ready-to-paste message; the sender marks it as sent.
+5. **Ubicación** — the replacement plan is pre-built from each creative's detected
+   category; confirm or override the destination, then execute.
+
+State lives in two Sheets tabs, created and migrated automatically:
+
+- `creative_runs` — one row per run.
+- `creative_run_targets` — one row per detected low performer. Carries the
+  `target_id → creative_family_id → review_item_ids → creative_id` chain, so every
+  shipped creative is traceable back to the one it replaced.
+
+`Batch from Sheets` adds a third, created and migrated the same way:
+
+- `batch_variations` — one row per generated variation, linked to the review
+  portal through `review_item_id`.
+
+## Batch from Sheets
+
+Point it at a Google Sheet (any URL form, including `.../edit?gid=NNN#gid=NNN`)
+and it generates three variants in each of the three ratios for every row that
+carries a source image URL.
+
+**The source tab is read-only.** Output goes to a `batch_variations` tab that the
+app creates and migrates itself — one row per generated variation, carrying the
+`review_batch_id → review_item_id` pair that ties it to the review portal. You do
+not prepare output columns, and nothing in your sheet is overwritten.
+
+The only thing detected in the source tab is which column holds the images: the
+column with the most URLs wins, reading plain text, `HYPERLINK()` formulas,
+native hyperlinks and rich-text links alike. A row with no URL is skipped, not
+failed. Header detection scans the first 20 rows for a row containing at least
+two of `categoria`, `ciudad`, `copy`, `preview`.
+
+A row's variations are appended only after its review items are registered, so
+the tab never advertises pieces the review portal does not know about. Because
+the tab is written per row rather than in one final flush, `POST /api/batch-status`
+can rebuild progress from it — closing the browser mid-run no longer loses the
+work. The tab is append-only and accumulative across batches; pass
+`reviewBatchId` to scope a status read, otherwise the most recent batch for that
+source tab is used.
+
+Steps 1 and 2 chain without user input; the funnel only stops at the approval
+gates. Generation streams NDJSON and is **resumable** — targets in a terminal
+state are skipped, so reopening a run after a closed tab continues where it left
+off rather than regenerating. There is no worker or cron: the browser drives
+`POST /api/runs/:runId/advance`. These routes are Studio-only and return 404 when
+`APP_MODE=review`.
 
 ## Requirements
 

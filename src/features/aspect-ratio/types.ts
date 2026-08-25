@@ -52,6 +52,7 @@ export interface BatchProgressEvent {
   imageUrl?: string;
   reason?: string;
   reviewBatchId?: string;
+  variationsSheetUrl?: string;
   rowData?: BatchRowData;
   links?: {
     '1:1': string[];
@@ -65,6 +66,7 @@ export interface BatchResult {
   totalRows: number;
   processedRows: number;
   reviewBatchId?: string;
+  variationsSheetUrl?: string;
   errors?: {
     rowNumber: number;
     error: string;
@@ -90,6 +92,7 @@ export interface BatchState {
   driveFolderUrl: string;
   review: BatchReviewForm;
   reviewBatchId: string | null;
+  variationsSheetUrl: string | null;
   isProcessing: boolean;
   progress: {
     totalRows: number;

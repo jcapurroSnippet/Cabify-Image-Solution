@@ -194,7 +194,7 @@ const sameDecision = (item, decision, feedback) =>
 export const applyReviewDecisions = (
   items = [],
   decisions = [],
-  { reviewerName = '', reviewerEmail = '', now = new Date() } = {},
+  { reviewerName = '', reviewerEmail = '', now = new Date(), allowSuperseded = false } = {},
 ) => {
   if (!Array.isArray(decisions) || decisions.length === 0) {
     throw new CreativeReviewError('At least one review decision is required.', 'REVIEW_DECISIONS_REQUIRED');
@@ -230,7 +230,9 @@ export const applyReviewDecisions = (
       throw new CreativeReviewError(`Review item ${itemId} was superseded.`, 'REVIEW_ITEM_SUPERSEDED', 409);
     }
 
-    const decision = normalizeReviewDecision(input.decision || input.status);
+    // `superseded` is the internal discard used by the Snippet pre-approval
+    // gate. It is never accepted from the public client portal.
+    const decision = normalizeReviewDecision(input.decision || input.status, { allowSuperseded });
     const feedback = clean(input.feedback ?? input.reason);
     if (decision === 'rejected' && !feedback) {
       throw new CreativeReviewError(
@@ -254,7 +256,7 @@ export const applyReviewDecisions = (
       throw new ReviewVersionConflictError(itemId, expectedVersion, currentVersion);
     }
 
-    const normalizedFeedback = decision === 'rejected' ? feedback : '';
+    const normalizedFeedback = ['rejected', 'superseded'].includes(decision) ? feedback : '';
     if (sameDecision(item, decision, normalizedFeedback)) {
       unchanged.push(item);
       continue;

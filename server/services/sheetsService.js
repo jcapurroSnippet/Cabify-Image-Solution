@@ -1,4 +1,5 @@
 import { getSheetsClient } from './googleAuth.js';
+import { normalizeHeader } from './creativeLibraryCore.js';
 
 /**
  * Extract spreadsheet ID from various Google Sheets URL formats
@@ -182,4 +183,160 @@ export const columnIndexToLetter = (index) => {
   }
 
   return letter;
+};
+
+// ---------------------------------------------------------------------------
+// Generic tab helpers
+//
+// These used to live privately inside creativeLibraryService, creativeReviewService
+// and runOrchestratorService, in three identical copies. They belong here: this
+// module only depends on googleAuth, so any service can import them without
+// creating a cycle (creativeLibraryService already imports from batchProcessor,
+// which is why batchProcessor cannot import from it).
+// ---------------------------------------------------------------------------
+
+export const quoteSheetName = (sheetName) => `'${String(sheetName).replace(/'/g, "''")}'`;
+
+export const buildRange = (sheetName, a1) => `${quoteSheetName(sheetName)}!${a1}`;
+
+export const objectToRow = (headers, object) => headers.map((header) => object?.[header] ?? '');
+
+export const rowToObject = (headers, row, rowNumber) => {
+  const object = { __rowNumber: rowNumber };
+  headers.forEach((header, index) => {
+    object[header] = row?.[index] ?? '';
+  });
+  return object;
+};
+
+export const valuesToObjects = (values = []) => {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  const headers = values[0] || [];
+  return values.slice(1).map((row, index) => rowToObject(headers, row, index + 2));
+};
+
+export const getSheetMetadata = async (sheets, spreadsheetId) => {
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),merges)',
+  });
+
+  return response.data.sheets || [];
+};
+
+export const getSheetByTitle = (metadata, title) =>
+  metadata.find((sheet) => sheet.properties?.title === title);
+
+const HEADER_ALIASES = {
+  creative_family_id: ['creative_family_id', 'creative_family', 'family_id', 'creative_set_id', 'set_id'],
+  used_at_google: ['used_at_google', 'used_at'],
+};
+
+export const migrateRowsToHeaders = (values, targetHeaders) => {
+  if (!Array.isArray(values) || values.length <= 1) return [];
+
+  const sourceHeaders = values[0] || [];
+  const sourceIndexes = new Map();
+  sourceHeaders.forEach((header, index) => {
+    const normalized = normalizeHeader(header);
+    if (normalized && !sourceIndexes.has(normalized)) sourceIndexes.set(normalized, index);
+  });
+
+  return values.slice(1).map((row) =>
+    targetHeaders.map((header) => {
+      const aliases = HEADER_ALIASES[normalizeHeader(header)] || [header];
+      const sourceIndex = aliases
+        .map((alias) => sourceIndexes.get(normalizeHeader(alias)))
+        .find((index) => index !== undefined);
+      return sourceIndex === undefined ? '' : row?.[sourceIndex] ?? '';
+    }),
+  );
+};
+
+export const ensureSheetWithHeaders = async (sheets, spreadsheetId, sheetName, headers) => {
+  let metadata = await getSheetMetadata(sheets, spreadsheetId);
+  let sheet = getSheetByTitle(metadata, sheetName);
+
+  if (!sheet) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: {
+                title: sheetName,
+                gridProperties: {
+                  rowCount: 1000,
+                  columnCount: Math.max(headers.length, 26),
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    metadata = await getSheetMetadata(sheets, spreadsheetId);
+    sheet = getSheetByTitle(metadata, sheetName);
+  }
+
+  const existing = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(sheetName, 'A1:ZZ1'),
+  });
+
+  const currentHeaders = existing.data.values?.[0] || [];
+  const shouldWriteHeaders =
+    currentHeaders.length < headers.length ||
+    headers.some((header, index) => currentHeaders[index] !== header);
+
+  if (shouldWriteHeaders) {
+    const dataColumnCount = Math.max(headers.length, currentHeaders.length || headers.length);
+    const existingValues = currentHeaders.length > 0
+      ? await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: buildRange(sheetName, `A1:${columnIndexToLetter(dataColumnCount - 1)}`),
+          valueRenderOption: 'FORMULA',
+        })
+      : null;
+    const migratedRows = migrateRowsToHeaders(existingValues?.data?.values || [], headers);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: buildRange(sheetName, `A1:${columnIndexToLetter(headers.length - 1)}${Math.max(1, migratedRows.length + 1)}`),
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [headers, ...migratedRows] },
+    });
+  }
+
+  return sheet?.properties?.sheetId;
+};
+
+export const appendRows = async (sheets, spreadsheetId, sheetName, headers, rows) => {
+  if (!rows.length) return;
+  const lastColumn = columnIndexToLetter(headers.length - 1);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: buildRange(sheetName, `A:${lastColumn}`),
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: rows.map((row) => objectToRow(headers, row)) },
+  });
+};
+
+/**
+ * Read a tab without creating it. Returns null when the tab does not exist yet,
+ * so callers can distinguish "nothing written yet" from "no rows".
+ */
+export const readRowsIfPresent = async (sheets, spreadsheetId, sheetName, headers) => {
+  const metadata = await getSheetMetadata(sheets, spreadsheetId);
+  if (!getSheetByTitle(metadata, sheetName)) return null;
+
+  const lastColumn = columnIndexToLetter(headers.length - 1);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildRange(sheetName, `A:${lastColumn}`),
+    valueRenderOption: 'FORMULA',
+  });
+  const values = response.data.values || [];
+  return values.slice(1).map((row, index) => rowToObject(headers, row, index + 2));
 };

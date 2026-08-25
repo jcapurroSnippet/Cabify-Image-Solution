@@ -86,7 +86,11 @@ export interface CreateReviewBatchInput {
 export interface ReviewDecisionInput {
   reviewItemId: string;
   version: number;
-  status: Extract<ReviewItemStatus, 'approved' | 'rejected'>;
+  /**
+   * `superseded` is the internal Snippet discard and is only accepted by the
+   * Studio (token-less) decisions endpoint — never by the client portal.
+   */
+  status: Extract<ReviewItemStatus, 'approved' | 'rejected' | 'superseded'>;
   reason: string;
 }
 

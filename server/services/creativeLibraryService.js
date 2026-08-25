@@ -33,10 +33,23 @@ import {
   sanitizeFileName,
 } from './creativeLibraryCore.js';
 import {
+  buildRange,
   columnIndexToLetter,
+  ensureSheetWithHeaders,
   extractSheetId,
   extractSpreadsheetId,
+  getSheetByTitle,
+  getSheetMetadata,
+  migrateRowsToHeaders,
+  objectToRow,
+  quoteSheetName,
+  rowToObject,
+  valuesToObjects,
 } from './sheetsService.js';
+
+// Re-exported for the modules that already import them from here
+// (runOrchestratorService, creative-library-service tests).
+export { ensureSheetWithHeaders, migrateRowsToHeaders };
 import { getSheetsClient } from './googleAuth.js';
 import { findOrCreateDriveFolder, makeFilePublic, uploadBufferToDrive } from './driveService.js';
 import { downloadImageAsDataUrl } from './batchProcessor.js';
@@ -58,10 +71,6 @@ const DEFAULT_REPLACEMENT_EXCLUSION_DAYS = Number(process.env.CREATIVE_REPLACEME
 export const CREATIVE_LIBRARY_SYNC_LOG_PATH =
   process.env.CREATIVE_LIBRARY_SYNC_LOG_PATH ||
   path.join(process.env.TMP || process.env.TEMP || 'C:\\tmp', 'cabify-creative-library-sync.log');
-
-const quoteSheetName = (sheetName) => `'${String(sheetName).replace(/'/g, "''")}'`;
-
-const buildRange = (sheetName, a1) => `${quoteSheetName(sheetName)}!${a1}`;
 
 const nowIso = () => new Date().toISOString();
 
@@ -95,22 +104,6 @@ export const writeCreativeLibrarySyncLog = (level, message, details = {}) => {
 };
 
 const writeSyncLog = writeCreativeLibrarySyncLog;
-
-const rowToObject = (headers, values, rowNumber) => {
-  const object = { __rowNumber: rowNumber };
-  headers.forEach((header, index) => {
-    object[header] = values[index] ?? '';
-  });
-  return object;
-};
-
-const valuesToObjects = (values) => {
-  if (!Array.isArray(values) || values.length === 0) return [];
-  const headers = values[0] || [];
-  return values.slice(1).map((row, index) => rowToObject(headers, row || [], index + 2));
-};
-
-const objectToRow = (headers, object) => headers.map((header) => object[header] ?? '');
 
 const parseAuditPayload = (value) => {
   if (!value || typeof value !== 'string') return {};
@@ -317,18 +310,6 @@ const findHeaderRowIndex = (rowData) => {
   return bestIndex;
 };
 
-const getSheetMetadata = async (sheets, spreadsheetId) => {
-  const response = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),merges)',
-  });
-
-  return response.data.sheets || [];
-};
-
-const getSheetByTitle = (metadata, title) =>
-  metadata.find((sheet) => sheet.properties?.title === title);
-
 const normalizeSheetTitleForMatch = (value) =>
   String(value ?? '')
     .normalize('NFD')
@@ -337,32 +318,6 @@ const normalizeSheetTitleForMatch = (value) =>
     .toLowerCase()
     .replace(/\s*\|\s*/g, '|')
     .replace(/\s+/g, ' ');
-
-const HEADER_ALIASES = {
-  creative_family_id: ['creative_family_id', 'creative_family', 'family_id', 'creative_set_id', 'set_id'],
-  used_at_google: ['used_at_google', 'used_at'],
-};
-
-export const migrateRowsToHeaders = (values, targetHeaders) => {
-  if (!Array.isArray(values) || values.length <= 1) return [];
-
-  const sourceHeaders = values[0] || [];
-  const sourceIndexes = new Map();
-  sourceHeaders.forEach((header, index) => {
-    const normalized = normalizeHeader(header);
-    if (normalized && !sourceIndexes.has(normalized)) sourceIndexes.set(normalized, index);
-  });
-
-  return values.slice(1).map((row) =>
-    targetHeaders.map((header) => {
-      const aliases = HEADER_ALIASES[normalizeHeader(header)] || [header];
-      const sourceIndex = aliases
-        .map((alias) => sourceIndexes.get(normalizeHeader(alias)))
-        .find((index) => index !== undefined);
-      return sourceIndex === undefined ? '' : row?.[sourceIndex] ?? '';
-    }),
-  );
-};
 
 const findSheetByNormalizedTitle = (metadata, title) => {
   const target = normalizeSheetTitleForMatch(title);
@@ -406,64 +361,6 @@ const resolveSourceSheetName = async (sheets, spreadsheetId, sheetsUrl, provided
   });
 
   return sourceCandidate?.properties?.title || 'Sheet1';
-};
-
-const ensureSheetWithHeaders = async (sheets, spreadsheetId, sheetName, headers) => {
-  let metadata = await getSheetMetadata(sheets, spreadsheetId);
-  let sheet = getSheetByTitle(metadata, sheetName);
-
-  if (!sheet) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [
-          {
-            addSheet: {
-              properties: {
-                title: sheetName,
-                gridProperties: {
-                  rowCount: 1000,
-                  columnCount: Math.max(headers.length, 26),
-                },
-              },
-            },
-          },
-        ],
-      },
-    });
-    metadata = await getSheetMetadata(sheets, spreadsheetId);
-    sheet = getSheetByTitle(metadata, sheetName);
-  }
-
-  const existing = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: buildRange(sheetName, 'A1:ZZ1'),
-  });
-
-  const currentHeaders = existing.data.values?.[0] || [];
-  const shouldWriteHeaders =
-    currentHeaders.length < headers.length ||
-    headers.some((header, index) => currentHeaders[index] !== header);
-
-  if (shouldWriteHeaders) {
-    const dataColumnCount = Math.max(headers.length, currentHeaders.length || headers.length);
-    const existingValues = currentHeaders.length > 0
-      ? await sheets.spreadsheets.values.get({
-          spreadsheetId,
-          range: buildRange(sheetName, `A1:${columnIndexToLetter(dataColumnCount - 1)}`),
-          valueRenderOption: 'FORMULA',
-        })
-      : null;
-    const migratedRows = migrateRowsToHeaders(existingValues?.data?.values || [], headers);
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: buildRange(sheetName, `A1:${columnIndexToLetter(headers.length - 1)}${Math.max(1, migratedRows.length + 1)}`),
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [headers, ...migratedRows] },
-    });
-  }
-
-  return sheet?.properties?.sheetId;
 };
 
 const splitCategoryKeywords = (value) =>

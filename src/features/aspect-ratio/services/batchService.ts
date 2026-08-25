@@ -18,6 +18,7 @@ export interface BatchStatusSnapshot {
   totalRows: number;
   completedRows: number;
   rows: Record<number, BatchStatusRow>;
+  reviewBatchId?: string;
 }
 
 /**
@@ -144,15 +145,20 @@ export const startBatchProcessing = async (
 };
 
 /**
- * Poll batch status from the server by inspecting the sheet output links.
+ * Poll batch status from the server, which rebuilds it from the batch_variations
+ * tab. Pass the batch id when known: the tab is accumulative, so without it the
+ * server falls back to the most recent batch for that source tab.
  */
-export const fetchBatchStatus = async (sheetsUrl: string): Promise<BatchStatusSnapshot> => {
+export const fetchBatchStatus = async (
+  sheetsUrl: string,
+  reviewBatchId?: string | null
+): Promise<BatchStatusSnapshot> => {
   const response = await fetch('/api/batch-status', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sheetsUrl }),
+    body: JSON.stringify({ sheetsUrl, ...(reviewBatchId && { reviewBatchId }) }),
   });
 
   if (!response.ok) {
