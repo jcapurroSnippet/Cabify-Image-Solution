@@ -27,6 +27,7 @@ import {
   finalizeReviewBatch,
   finalizePublicReview,
   updateReviewBatchDecisions,
+  updateReviewFamilyMetadata,
   updatePublicDecisions,
 } from './services/creativeReviewApi';
 import type {
@@ -72,6 +73,8 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
 
 const LOCKED_BATCH_STATUSES: ReviewBatchStatus[] = ['publishing', 'published', 'publish_failed', 'revoked'];
 const META_REQUIRED_RATIOS = ['1:1', '9:16', '16:9'];
+// Mirrors the batch-level options in AspectRatioTab's "Batch from Sheets" form.
+const FAMILY_CATEGORY_OPTIONS = ['Generic', 'Promo', 'Alianzas'];
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Ocurrió un error inesperado.';
@@ -135,6 +138,11 @@ const getMissingMetaRatios = (familyItems: CreativeReviewItem[]) => {
   );
   if (approvedRatios.size === 0) return [];
   return META_REQUIRED_RATIOS.filter((ratio) => !approvedRatios.has(ratio));
+};
+
+const getFamilySingleValue = (familyItems: CreativeReviewItem[], pick: (item: CreativeReviewItem) => string) => {
+  const values = Array.from(new Set(familyItems.map((item) => pick(item).trim()).filter(Boolean)));
+  return values.length === 1 ? values[0] : '';
 };
 
 const getFamilyContextLabel = (familyItems: CreativeReviewItem[]) => {
@@ -297,6 +305,70 @@ function ReviewedDetails({
   return <details ref={detailsRef} className={className}>{children}</details>;
 }
 
+function FamilyMetadataEditor({
+  familyId,
+  initialCategory,
+  initialPlazas,
+  isSaving,
+  error,
+  onSave,
+}: {
+  familyId: string;
+  initialCategory: string;
+  initialPlazas: string;
+  isSaving: boolean;
+  error?: string | null;
+  onSave: (category: string, plazas: string) => void;
+}) {
+  const [category, setCategory] = useState(initialCategory);
+  const [plazas, setPlazas] = useState(initialPlazas);
+
+  useEffect(() => {
+    setCategory(initialCategory);
+    setPlazas(initialPlazas);
+  }, [familyId, initialCategory, initialPlazas]);
+
+  const isDirty = category.trim() !== initialCategory.trim() || plazas.trim() !== initialPlazas.trim();
+  const canSave = !isSaving && isDirty && category.trim() !== '' && plazas.trim() !== '';
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="relative">
+        <span className="sr-only">Categoría de la familia</span>
+        <select
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+          disabled={isSaving}
+          className="h-8 appearance-none rounded-lg border border-slate-200 bg-white pl-2.5 pr-7 text-xs font-medium text-slate-700 outline-none hover:border-violet-300 focus:border-violet-500 disabled:opacity-50"
+        >
+          <option value="">Categoría…</option>
+          {FAMILY_CATEGORY_OPTIONS.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-1.5 top-1.5 h-3.5 w-3.5 text-slate-400" />
+      </label>
+      <input
+        value={plazas}
+        onChange={(event) => setPlazas(event.target.value)}
+        disabled={isSaving}
+        placeholder="Plazas (ALL, BUE, CBA…)"
+        className="h-8 w-44 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700 outline-none hover:border-violet-300 focus:border-violet-500 disabled:opacity-50"
+      />
+      <button
+        type="button"
+        onClick={() => onSave(category.trim(), plazas.trim())}
+        disabled={!canSave}
+        className="inline-flex h-8 items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+        Guardar
+      </button>
+      {error && <span className="text-xs font-medium text-red-600">{error}</span>}
+    </div>
+  );
+}
+
 export default function CreativeReviewPortal({
   token,
   batchId,
@@ -323,6 +395,8 @@ export default function CreativeReviewPortal({
   const [reviewerEmail, setReviewerEmail] = useState('');
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [metadataSavingFamilyId, setMetadataSavingFamilyId] = useState<string | null>(null);
+  const [metadataErrors, setMetadataErrors] = useState<Map<string, string>>(new Map());
   const exchangePromiseRef = useRef<Promise<void> | null>(null);
   const sessionReadyRef = useRef(false);
   const isInternalWorkspace = Boolean(batchId && sheetsUrl);
@@ -476,6 +550,25 @@ export default function CreativeReviewPortal({
       setFailedDecisions(decisions);
     } finally {
       setSavingIds(new Set());
+    }
+  };
+
+  const saveFamilyMetadata = async (familyId: string, category: string, plazas: string) => {
+    if (!isInternalWorkspace || isLocked) return;
+    setMetadataSavingFamilyId(familyId);
+    setMetadataErrors((current) => {
+      const next = new Map(current);
+      next.delete(familyId);
+      return next;
+    });
+    try {
+      const payload = await updateReviewFamilyMetadata(batchId!, sheetsUrl!, familyId, category, plazas);
+      if (payload.batch.id) setBatch((current) => current ? { ...current, ...payload.batch } : payload.batch);
+      if (payload.items.length > 0) setItems((current) => mergeItems(current, payload.items));
+    } catch (error) {
+      setMetadataErrors((current) => new Map(current).set(familyId, getErrorMessage(error)));
+    } finally {
+      setMetadataSavingFamilyId(null);
     }
   };
 
@@ -934,6 +1027,18 @@ export default function CreativeReviewPortal({
                       formatCount(pendingCount, 'pendiente', 'pendientes'),
                     ].filter(Boolean).join(' · ')}
                   </p>
+                  {isInternalWorkspace && !isLocked && (
+                    <div className="mt-2">
+                      <FamilyMetadataEditor
+                        familyId={familyId}
+                        initialCategory={getFamilySingleValue(completeFamily, (item) => item.category)}
+                        initialPlazas={getFamilySingleValue(completeFamily, (item) => item.plaza)}
+                        isSaving={metadataSavingFamilyId === familyId}
+                        error={metadataErrors.get(familyId)}
+                        onSave={(category, plazas) => void saveFamilyMetadata(familyId, category, plazas)}
+                      />
+                    </div>
+                  )}
                 </div>
                 {!isLocked && (
                   <div className="flex shrink-0 gap-2">

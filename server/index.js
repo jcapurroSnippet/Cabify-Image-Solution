@@ -53,6 +53,7 @@ import {
   retryReviewPublication,
   revokeReviewBatch,
   saveReviewDecisions,
+  saveReviewItemMetadata,
 } from './services/creativeReviewService.js';
 import { findOrCreateDriveFolder, getShareableLink, uploadBufferToDrive } from './services/driveService.js';
 import { sanitizeFileName } from './services/creativeLibraryCore.js';
@@ -593,6 +594,7 @@ const creativeReviewWriterActions = new Map([
   ['issueReviewLink', issueReviewLink],
   ['revokeReviewBatch', revokeReviewBatch],
   ['saveReviewDecisions', saveReviewDecisions],
+  ['saveReviewItemMetadata', saveReviewItemMetadata],
   ['finalizeReviewBatch', finalizeReviewBatch],
   ['retryReviewPublication', retryReviewPublication],
   ['importLegacyReviewBatch', importLegacyReviewBatch],
@@ -675,6 +677,22 @@ app.patch('/api/creative-reviews/batches/:batchId/decisions', async (request, re
     return response.status(200).json(result);
   } catch (error) {
     return sendCreativeReviewError(response, error, 'Failed to save internal creative review decisions.');
+  }
+});
+
+app.patch('/api/creative-reviews/batches/:batchId/items/metadata', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const result = await saveReviewItemMetadata({
+      sheetsUrl: request.body?.sheetsUrl || request.query.sheetsUrl,
+      batchId: request.params.batchId,
+      familyId: request.body?.familyId,
+      category: request.body?.category,
+      plazas: request.body?.plazas,
+    });
+    return response.status(200).json(result);
+  } catch (error) {
+    return sendCreativeReviewError(response, error, 'Failed to update creative family category and plaza.');
   }
 });
 

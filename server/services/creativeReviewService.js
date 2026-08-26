@@ -1669,6 +1669,95 @@ export const saveReviewDecisions = async (input = {}) => {
   });
 };
 
+// Studio-only: reclassifies every active (non-superseded) item in a family at
+// once, since category/plazas are chosen per source row (= per family), not
+// per individual ratio/variant. Never exposed on the public client portal.
+export const saveReviewItemMetadata = async (input = {}) => {
+  const remote = await runReviewWriterMutation('saveReviewItemMetadata', input);
+  if (remote) return remote;
+  const { args, config, spreadsheetId } = resolveSpreadsheetContext(input);
+  const batchId = getBatchId(args);
+  if (!batchId) throw new CreativeReviewError('batchId is required.', 'REVIEW_BATCH_ID_REQUIRED');
+  const familyId = clean(args.familyId || args.family_id);
+  if (!familyId) throw new CreativeReviewError('familyId is required.', 'REVIEW_FAMILY_ID_REQUIRED', 400);
+
+  const allowedCategories = new Map(
+    (config.categories || []).map((value) => [clean(value).toLowerCase(), value]),
+  );
+  const canonicalCategory = allowedCategories.get(clean(args.category).toLowerCase());
+  if (!canonicalCategory) {
+    throw new CreativeReviewError(
+      `Category must be one of: ${(config.categories || []).join(', ')}.`,
+      'REVIEW_CATEGORY_INVALID',
+      400,
+      { allowedCategories: config.categories || [] },
+    );
+  }
+  const plazas = clean(Array.isArray(args.plazas) ? args.plazas.join(',') : args.plazas);
+  if (!plazas) throw new CreativeReviewError('plazas is required.', 'REVIEW_PLAZAS_REQUIRED', 400);
+
+  return withReviewLock(spreadsheetId, async () => {
+    const sheets = await getReviewSheetsClient();
+    const { batches, items } = await readReviewRows(sheets, spreadsheetId);
+    let batch = assertBatch(findBatch(batches, batchId), batchId);
+    const batchStatus = clean(batch.status).toLowerCase();
+    if (!['draft', 'in_review'].includes(batchStatus)) {
+      throw new CreativeReviewError('This review is locked and no longer accepts edits.', 'REVIEW_BATCH_LOCKED', 409);
+    }
+
+    const batchItems = getBatchItems(items, batchId).map(hydrateItem);
+    const familyItems = batchItems.filter((item) =>
+      item.creative_family_id === familyId && item.decision !== 'superseded');
+    if (!familyItems.length) {
+      throw new CreativeReviewError(`Family ${familyId} was not found in this batch.`, 'REVIEW_FAMILY_NOT_FOUND', 404);
+    }
+
+    const timestamp = nowIso();
+    const updated = familyItems.map((item) => ({
+      ...item,
+      category: canonicalCategory,
+      plazas,
+      version: Math.max(1, cleanInteger(item.version, 1)) + 1,
+      updated_at: timestamp,
+    }));
+    await updateRowPatches(
+      sheets,
+      spreadsheetId,
+      CREATIVE_REVIEW_ITEMS_SHEET,
+      CREATIVE_REVIEW_ITEM_HEADERS,
+      updated.map((item) => ({
+        rowNumber: item.__rowNumber,
+        patch: {
+          category: item.category,
+          plazas: item.plazas,
+          version: item.version,
+          updated_at: item.updated_at,
+        },
+      })),
+    );
+
+    const updatedById = new Map(updated.map((item) => [item.review_item_id, item]));
+    const allBatchItems = batchItems.map((item) => updatedById.get(item.review_item_id) || item);
+    batch = updateBatchSummary(batch, allBatchItems, timestamp);
+    batch.version = Math.max(1, cleanInteger(batch.version, 1)) + 1;
+    await updateRowPatches(
+      sheets,
+      spreadsheetId,
+      CREATIVE_REVIEW_BATCHES_SHEET,
+      CREATIVE_REVIEW_BATCH_HEADERS,
+      [{
+        rowNumber: batch.__rowNumber,
+        patch: { updated_at: batch.updated_at, version: batch.version },
+      }],
+    );
+
+    return {
+      batch: hydrateBatch(batch, spreadsheetId),
+      items: updated.map(hydrateItem),
+    };
+  });
+};
+
 const publishApprovedItems = async ({ sheets, spreadsheetId, batch, items }) => {
   const results = [];
   const nextItems = [...items];

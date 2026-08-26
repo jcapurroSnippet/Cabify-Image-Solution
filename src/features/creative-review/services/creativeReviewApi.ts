@@ -279,6 +279,19 @@ export const updateReviewBatchDecisions = async (
   }),
 );
 
+export const updateReviewFamilyMetadata = async (
+  batchId: string,
+  sheetsUrl: string,
+  familyId: string,
+  category: string,
+  plazas: string,
+): Promise<CreativeReviewPayload> => normalizeReviewPayload(
+  await requestJson(`/api/creative-reviews/batches/${encodeURIComponent(batchId)}/items/metadata`, {
+    method: 'PATCH',
+    ...jsonBody({ sheetsUrl, familyId, category, plazas }),
+  }),
+);
+
 export const finalizeReviewBatch = async (
   batchId: string,
   sheetsUrl: string,
