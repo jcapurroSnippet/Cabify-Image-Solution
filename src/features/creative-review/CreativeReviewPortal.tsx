@@ -339,6 +339,7 @@ function FamilyMetadataEditor({
           value={category}
           onChange={(event) => setCategory(event.target.value)}
           disabled={isSaving}
+          style={{ colorScheme: 'light' }}
           className="mt-1 block h-9 w-36 rounded-lg border border-slate-300 bg-white px-2.5 text-sm font-medium text-slate-900 outline-none hover:border-violet-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
         >
           <option value="">Sin definir</option>
