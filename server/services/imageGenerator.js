@@ -77,14 +77,18 @@ const CARD_REFERENCE_FOLDERS = {
 };
 
 /**
- * Ratios whose own reference folder may be absent. Landscape has no shipped
- * references yet, so it borrows the square card styling rather than generating
- * with no style guidance at all. Drop 1200x628 PNGs into
- * assets/card-references/1-91-1/ to make it use its own.
+ * Ratios that may borrow another ratio's references when their own folder is
+ * absent. Deliberately empty: landscape used to borrow the square folder, but
+ * those references show a card spanning 93% of the canvas while the 1.91:1
+ * prompt demands a compact 48-54% card and explicitly rules out a full-width
+ * banner. Since the prompt asks the model to copy the reference's size and
+ * position, borrowing contradicted the instruction it was meant to support —
+ * and shipped ~7.7MB of inline images per call to do it.
+ *
+ * Drop real 1200x628 references into assets/card-references/1-91-1/ to give
+ * landscape its own styling; no fallback entry is needed for that to work.
  */
-const CARD_REFERENCE_FALLBACKS = {
-  '1.91:1': ['1-1'],
-};
+const CARD_REFERENCE_FALLBACKS = {};
 
 const CARD_COPY_EXTRACTION_SCHEMA = {
   type: 'object',
@@ -386,8 +390,19 @@ ${SCENE_PROHIBITIONS}
   ];
 };
 
+/**
+ * References are shipped assets that never change while the process lives, but
+ * a single batch row asks for them nine times (3 ratios x 3 variants). Reading
+ * and base64-encoding several MB per call was pure repeated work, so the
+ * encoded parts are memoized per ratio.
+ */
+const cardReferenceCache = new Map();
+
 export const loadCardReferences = (targetRatio) => {
   const ratio = String(targetRatio).trim();
+  const cached = cardReferenceCache.get(ratio);
+  if (cached) return cached;
+
   const folderName = CARD_REFERENCE_FOLDERS[ratio];
   if (!folderName) return [];
 
@@ -397,7 +412,7 @@ export const loadCardReferences = (targetRatio) => {
     .find((candidate) => existsSync(candidate));
   if (!folder) return [];
 
-  return readdirSync(folder)
+  const references = readdirSync(folder)
     .filter((fileName) => /\.(png|jpg|jpeg|webp)$/i.test(fileName))
     .sort((left, right) => left.localeCompare(right))
     .map((fileName) => {
@@ -406,6 +421,9 @@ export const loadCardReferences = (targetRatio) => {
       const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
       return { data: buffer.toString('base64'), mimeType };
     });
+
+  cardReferenceCache.set(ratio, references);
+  return references;
 };
 
 export const extractFirstImageFromResponse = (response) => {
