@@ -25,11 +25,15 @@ const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
 const EXPECTED_VARIATIONS_PER_RATIO = 3;
 
 /**
- * Every batch covers all three ratios, exactly like RUN_TARGET_RATIOS in the
- * ciclo. Output no longer depends on which columns the operator happened to
- * create in their own sheet — it goes to the batch_variations tab instead.
+ * Ratios covered by Batch from Sheets. Output no longer depends on which
+ * columns the operator happened to create in their own sheet — it goes to the
+ * batch_variations tab instead.
+ *
+ * Landscape (1.91:1) is deliberately excluded here: the batch only ships the
+ * square and vertical ratios. The ciclo keeps its own RUN_TARGET_RATIOS, which
+ * still covers landscape, so the two lists are intentionally out of sync.
  */
-const BATCH_ASPECT_RATIOS = ['1:1', '9:16', '1.91:1'];
+const BATCH_ASPECT_RATIOS = ['1:1', '9:16'];
 const EXPECTED_VARIATIONS_PER_ROW = BATCH_ASPECT_RATIOS.length * EXPECTED_VARIATIONS_PER_RATIO;
 
 const createEmptyRatioLinks = () =>

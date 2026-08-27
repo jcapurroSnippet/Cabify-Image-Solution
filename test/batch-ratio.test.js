@@ -110,10 +110,10 @@ test('falls back to source row category and plaza for legacy batch calls', () =>
   assert.deepEqual(item.plazas, ['Rosario']);
 });
 
+// The batch covers square and vertical only; landscape belongs to the ciclo.
 const fullLinks = () => ({
   '1:1': ['https://d/s1', 'https://d/s2', 'https://d/s3'],
   '9:16': ['https://d/t1', 'https://d/t2', 'https://d/t3'],
-  '1.91:1': ['https://d/l1', 'https://d/l2', 'https://d/l3'],
 });
 
 test('builds one batch_variations row per generated variation', () => {
@@ -129,24 +129,23 @@ test('builds one batch_variations row per generated variation', () => {
     driveFileIds: {
       '1:1': ['f1', 'f2', 'f3'],
       '9:16': ['f4', 'f5', 'f6'],
-      '1.91:1': ['f7', 'f8', 'f9'],
     },
-    reviewItemIds: ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9'],
+    reviewItemIds: ['i1', 'i2', 'i3', 'i4', 'i5', 'i6'],
     category: 'Promo',
     plazas: ['Buenos Aires', 'Córdoba'],
     createdAt: '2026-08-24T10:00:00.000Z',
   });
 
-  assert.equal(rows.length, 9);
+  assert.equal(rows.length, 6);
   assert.deepEqual(
     rows.map((row) => `${row.aspect_ratio}#${row.variant}`),
-    ['1:1#1', '1:1#2', '1:1#3', '9:16#1', '9:16#2', '9:16#3', '1.91:1#1', '1.91:1#2', '1.91:1#3'],
+    ['1:1#1', '1:1#2', '1:1#3', '9:16#1', '9:16#2', '9:16#3'],
   );
 
   // review_item_ids come back flat from registerReviewItems; they must line up
   // with the same ratio-major order buildBatchReviewItems emitted.
-  assert.deepEqual(rows.map((row) => row.review_item_id), ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9']);
-  assert.deepEqual(rows.map((row) => row.drive_file_id), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9']);
+  assert.deepEqual(rows.map((row) => row.review_item_id), ['i1', 'i2', 'i3', 'i4', 'i5', 'i6']);
+  assert.deepEqual(rows.map((row) => row.drive_file_id), ['f1', 'f2', 'f3', 'f4', 'f5', 'f6']);
 
   assert.equal(rows[0].variation_id, 'batch:sheet-456:RIDERS | AR:18:1:1:1');
   assert.equal(rows[0].review_batch_id, 'review-123');
@@ -186,7 +185,7 @@ const variationRowsFor = (batchId, rowNumber, createdAt) =>
     createdAt,
   });
 
-test('summarizes a source row as completed only once all nine variations exist', () => {
+test('summarizes a source row as completed only once all six variations exist', () => {
   const complete = variationRowsFor('review-1', 5, '2026-08-24T10:00:00.000Z');
   const partial = variationRowsFor('review-1', 6, '2026-08-24T10:00:00.000Z').slice(0, 4);
 

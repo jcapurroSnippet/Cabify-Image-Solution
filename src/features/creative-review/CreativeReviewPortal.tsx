@@ -130,6 +130,13 @@ const normalizeRatio = (value: string) => {
   return normalized;
 };
 
+/**
+ * Flags a family that is only partially approved for Meta. A required ratio is
+ * reported only when the family actually contains it: Batch from Sheets ships
+ * square and vertical alone, so demanding a landscape piece it never generated
+ * would mark every one of its families incomplete forever. Families that do
+ * carry landscape (the ciclo still produces it) are checked in full.
+ */
 const getMissingMetaRatios = (familyItems: CreativeReviewItem[]) => {
   const approvedRatios = new Set(
     familyItems
@@ -137,7 +144,9 @@ const getMissingMetaRatios = (familyItems: CreativeReviewItem[]) => {
       .map((item) => normalizeRatio(item.ratio)),
   );
   if (approvedRatios.size === 0) return [];
-  return META_REQUIRED_RATIOS.filter((ratio) => !approvedRatios.has(ratio));
+  const availableRatios = new Set(familyItems.map((item) => normalizeRatio(item.ratio)));
+  return META_REQUIRED_RATIOS.filter((ratio) =>
+    availableRatios.has(ratio) && !approvedRatios.has(ratio));
 };
 
 const getFamilySingleValue = (familyItems: CreativeReviewItem[], pick: (item: CreativeReviewItem) => string) => {

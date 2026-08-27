@@ -517,8 +517,9 @@ export const buildPartialFamilyWarnings = (
 ) => {
   const required = [...new Set(requiredRatios.map(normalizeRatio).filter(Boolean))];
   const families = new Map();
+  // Superseded versions stay in the grouping so a ratio the family once
+  // produced still counts as expected; they are excluded from approval below.
   for (const item of items || []) {
-    if (cleanLower(item.decision) === 'superseded') continue;
     const familyId = clean(item.creative_family_id || item.familyId || item.family_id);
     if (!familyId) continue;
     if (!families.has(familyId)) families.set(familyId, []);
@@ -534,7 +535,15 @@ export const buildPartialFamilyWarnings = (
         .filter(Boolean),
     );
     if (approved.size === 0) continue;
-    const missingRatios = required.filter((ratio) => !approved.has(ratio));
+    // Only a ratio the family actually produced can be missing. Generation
+    // covers square and vertical alone, so demanding a landscape piece that
+    // was never generated would mark every family incomplete forever.
+    const produced = new Set(
+      familyItems
+        .map((item) => normalizeRatio(item.aspect_ratio || item.ratio))
+        .filter(Boolean),
+    );
+    const missingRatios = required.filter((ratio) => produced.has(ratio) && !approved.has(ratio));
     if (missingRatios.length > 0) {
       warnings.push({
         code: 'INCOMPLETE_META_FAMILY',

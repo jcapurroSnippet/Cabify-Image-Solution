@@ -38,8 +38,11 @@ import {
   transitionRun,
 } from './runOrchestratorCore.js';
 
-/** The three ratios every generated family must cover. */
-export const RUN_TARGET_RATIOS = Object.freeze(['1:1', '9:16', '1.91:1']);
+/**
+ * The ratios every generated family must cover. Landscape (1.91:1) is
+ * deliberately excluded: neither the ciclo nor Batch from Sheets ships it.
+ */
+export const RUN_TARGET_RATIOS = Object.freeze(['1:1', '9:16']);
 
 let runDependencyOverrides = {};
 
