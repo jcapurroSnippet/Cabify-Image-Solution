@@ -125,6 +125,13 @@ $deployArgs = @(
 # moves to a store with distributed compare-and-set semantics.
 $deployArgs += @("--max-instances", "1", "--concurrency", "1")
 
+# Batch from Sheets holds one request open while it streams progress, and a
+# single row costs ~21 Gemini image calls (3 ratios x [1 copy extraction +
+# 3 variants x 2 passes]). The 300s default cuts the connection mid-row, which
+# the UI shows as a batch stuck on its first image. 3600s is the Cloud Run
+# ceiling; past roughly six rows the batch needs to move off the request path.
+$deployArgs += @("--timeout", "3600")
+
 if ($setSecretPairs.Count -gt 0) {
   $deployArgs += "--set-secrets"
   $deployArgs += ("^~^" + ($setSecretPairs -join "~"))
