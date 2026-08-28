@@ -214,8 +214,13 @@ const buildSceneGuards = (profile) => (usesAspectRatioProfile(profile)
  * lockup is what has to survive. The reframe wording keeps a size anchor but
  * defers the treatment to whatever the source already does.
  */
-const buildLogoLayoutLine = (profile, legacyLine, widthRange) => (usesAspectRatioProfile(profile)
-  ? `- Logo: keep the source's logo exactly as it is styled - same colour, same container, same proportions. Keep it in the upper area of the canvas at a comparable relative size (about ${widthRange} of canvas width). Move it only as much as the new ratio demands.`
+/**
+ * Styling comes from the source; placement does not always. A ratio can carry a
+ * hard placement rule of its own (9:16 must clear the Stories profile overlay),
+ * so it is passed separately instead of being folded into "keep it as it is".
+ */
+const buildLogoLayoutLine = (profile, legacyLine, widthRange, placement = '') => (usesAspectRatioProfile(profile)
+  ? `- Logo: keep the source's logo exactly as it is STYLED - same colour, same container, same proportions - at a comparable relative size (about ${widthRange} of canvas width). ${placement || 'Keep it in the upper area of the canvas, moving it only as much as the new ratio demands.'}`
   : legacyLine);
 
 const parseJsonResponseText = (text) => {
@@ -643,7 +648,12 @@ ${guards}
 ${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
 ## LAYOUT
 - Canvas: 9:16 vertical.
-${buildLogoLayoutLine(profile, '- Logo: top-center. Width about 12-14% of canvas width. Top margin about 5-7%.', '12-14%')}
+${buildLogoLayoutLine(
+    profile,
+    '- Logo: top-center. Width about 12-14% of canvas width. Top margin about 5-7%.',
+    '12-14%',
+    'Place it HORIZONTALLY CENTRED at the top of the canvas, together with its container. Instagram Stories overlays the account profile across the top-left corner, so a left-aligned logo would be covered. Centre it even when the source places it elsewhere.',
+  )}
 - Subject: large and prominent, fills most of the canvas height.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
