@@ -117,8 +117,15 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       type: 'string',
       description: 'Hex colour of the card copy, e.g. "#FFFFFF". Empty string if unreadable.',
     },
+    // A partner mark usually sits inside the card, which step 1 strips out. If
+    // it is not recorded here it is lost for good, so the output silently drops
+    // a co-branding the source was built around.
+    cardBrandMarks: {
+      type: 'string',
+      description: 'Partner, product or sub-brand logos shown INSIDE the card, named and briefly described, comma-separated (e.g. "Mercado Pago logo in a white rounded container"). Exclude the main Cabify wordmark. Empty string if there are none.',
+    },
   },
-  required: ['cardText', 'buttonPresent', 'buttonLabel', 'cardBackgroundColor', 'cardTextColor'],
+  required: ['cardText', 'buttonPresent', 'buttonLabel', 'cardBackgroundColor', 'cardTextColor', 'cardBrandMarks'],
 };
 
 const CARD_COPY_EXTRACTION_PROMPT = `
@@ -130,6 +137,7 @@ Return JSON with exactly these fields:
 - "buttonLabel": the CTA/button text exactly as shown. Return an empty string if there is no button.
 - "cardBackgroundColor": the hex colour of the card/panel the copy sits on, sampled from a flat area away from any shadow or gradient.
 - "cardTextColor": the hex colour of that copy.
+- "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
 
 Rules:
 - Extract text only from the card. Ignore the rest of the scene, logo, people, cars, and background.
@@ -158,9 +166,9 @@ const SCENE_PROHIBITIONS = `
 const SCENE_PROHIBITIONS_REFRAME = `
 ## SCENE-ONLY GENERATION - CRITICAL
 - Remove ONLY the promotional copy card from the source: the panel carrying the headline and its CTA. Replace it with a natural continuation of the scene behind it.
-- Removing that card does NOT mean removing the brand layer. The logo, its container, the background colour, the margin and any frame around the photograph all STAY.
+- Removing that card does NOT mean removing the brand layer. EVERY logo in the source - the Cabify wordmark and any partner, product or sub-brand mark - together with its container, the background colour, the margin and any frame around the photograph, all STAY.
 - Do NOT add a new UI card, text overlay, CTA button, promo code or badge. Step 2 rebuilds the copy card later.
-- Keep: the subject, the scene background, the logo exactly as the source styles it, and the source's ground, margins and frames.
+- Keep: the subject, the scene background, every logo exactly as the source styles it, and the source's ground, margins and frames.
 - ${BRAND_LOCK}
 - Do NOT modify the main subject. Do NOT add filters, blur, gradients, or color shifts.
 `.trim();
@@ -198,7 +206,7 @@ const CONTENT_LOCK = `
 const DESIGN_SYSTEM_LOCK = `
 ## SOURCE DESIGN SYSTEM - PRESERVE IT EXACTLY
 - This is a REFRAME of an already-approved creative, NOT a redesign. Every brand element the source uses must survive in the output, styled exactly as the source styles it.
-- Logo: keep the source's wordmark as it appears - same colour, same container (tab, panel, badge or none at all), same proportions. Do NOT recolour it, do NOT remove its container, do NOT add a container it does not have.
+- Logos: keep EVERY logo the source shows - the Cabify wordmark and any partner, product or sub-brand mark - as it appears: same colour, same container (tab, panel, badge or none at all), same proportions. Do NOT recolour one, do NOT remove its container, do NOT add a container it does not have, and do NOT drop a mark because it is small or secondary.
 - Ground and margins: if the source sits on a coloured or pastel background, or shows a visible margin, border or rounded frame around the photograph, KEEP that ground and that margin, in the same colour.
 - That margin keeps its original THICKNESS. When the canvas grows, the PHOTOGRAPH grows to fill it; the margin does not widen into an empty band. A large area of bare ground above or below the photo is a failure.
 - Panels and cards: keep the source's panel shapes, fills, corner radius and colour treatment.
@@ -265,6 +273,7 @@ const normalizeExtractedCardCopy = (payload) => {
     buttonLabel,
     cardBackgroundColor: normalizeHexColour(payload.cardBackgroundColor),
     cardTextColor: normalizeHexColour(payload.cardTextColor),
+    cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
   };
 };
 
@@ -275,7 +284,7 @@ const hasReliableCardCopy = (cardCopy) =>
       (!cardCopy.buttonPresent || (cardCopy.buttonPresent && cardCopy.buttonLabel)),
   );
 
-const buildCardCopyLockBlock = (cardCopy) => {
+const buildCardCopyLockBlock = (cardCopy, marksFromSourceImage = false) => {
   const copyJson = JSON.stringify(
     {
       cardText: cardCopy.cardText,
@@ -286,6 +295,16 @@ const buildCardCopyLockBlock = (cardCopy) => {
     2,
   );
 
+  const brandMarks = typeof cardCopy.cardBrandMarks === 'string' ? cardCopy.cardBrandMarks.trim() : '';
+  const brandMarkRules = brandMarks
+    ? `
+**BRAND MARKS FROM THE SOURCE (must be reproduced):**
+- The source card carries: ${brandMarks}
+- Reproduce ${marksFromSourceImage ? 'them exactly as they are drawn in Image 2' : 'them faithfully'}, in their own container, keeping their own colours and proportions. They are part of the creative, not decoration.
+- Place them inside the card, below the copy, without overlapping the text.
+- Do NOT redraw, restyle, recolour, translate or reinterpret a partner mark. Do NOT add any mark that is not listed here.`
+    : '';
+
   return `**CARD COPY LOCK (authoritative):**
 \`\`\`json
 ${copyJson}
@@ -295,7 +314,7 @@ ${copyJson}
 - You may reflow line breaks only if needed to fit the reference layout.
 - If "buttonPresent" is false, do not render a button.
 - If "buttonPresent" is true, render the button and copy "buttonLabel" exactly.
-- The reference images may influence size, font sizing, color treatment, spacing, and position only. They must NEVER change the copy.`;
+- The reference images may influence size, font sizing, color treatment, spacing, and position only. They must NEVER change the copy.${brandMarkRules}`;
 };
 
 const buildReferenceInputList = (startIndex, count) =>
@@ -332,9 +351,20 @@ const buildReferenceStyleSection = (label, hasRefs, profile) => {
 - The reference images are visual guides only. They are never content sources.`;
 };
 
-const getCardPlacementPrompt = (targetRatio, refCount, cardCopy, useSourceImageForCopy = false, profile = '') => {
+const getCardPlacementPrompt = (
+  targetRatio,
+  refCount,
+  cardCopy,
+  useSourceImageForCopy = false,
+  profile = '',
+  useSourceImageForMarks = false,
+) => {
   const ratio = String(targetRatio).trim();
   const isAspectRatioTool = usesAspectRatioProfile(profile);
+  // The source creative rides along for either reason: to read copy that could
+  // not be extracted, or to copy a partner mark that cannot be drawn from a
+  // written description.
+  const sourceAttached = useSourceImageForCopy || useSourceImageForMarks;
   // Every approved creative uses a purple pill, never a yellow one; the colour
   // is inherited from the references instead of being asserted here.
   // A single fixed size cannot serve both a two-line headline and a four-line
@@ -366,15 +396,19 @@ const getCardPlacementPrompt = (targetRatio, refCount, cardCopy, useSourceImageF
     ? `- Button/pill (only when the source card has one): ${alignment}, below the text. Reproduce the shape, colours and typography the SOURCE card gives it. Do NOT invent a colour.`
     : `- Button: yellow pill, ${alignment}, below text. Match the reference style only.`);
   const hasRefs = refCount > 0;
-  const referenceStartIndex = useSourceImageForCopy ? 3 : 2;
-  const referenceLabel = useSourceImageForCopy ? 'Images 3+' : 'Images 2+';
+  const referenceStartIndex = sourceAttached ? 3 : 2;
+  const referenceLabel = sourceAttached ? 'Images 3+' : 'Images 2+';
   const referenceInputs = hasRefs ? buildReferenceInputList(referenceStartIndex, refCount) : '';
+
+  const sourceInputLine = useSourceImageForCopy
+    ? '2. Image 2 - the source creative. Read ONLY the original card copy from this image. Ignore its scene, subject, background, and layout.'
+    : (useSourceImageForMarks
+      ? '2. Image 2 - the source creative. Use it ONLY to copy the brand marks listed below, exactly as they are drawn there. Ignore its scene, subject, background, and layout.'
+      : null);
 
   const inputs = [
     '1. Image 1 - the clean scene (target aspect ratio, no card). Use this as the immutable base.',
-    useSourceImageForCopy
-      ? '2. Image 2 - the source creative. Read ONLY the original card copy from this image. Ignore its scene, subject, background, and layout.'
-      : null,
+    sourceInputLine,
     referenceInputs || null,
   ]
     .filter(Boolean)
@@ -386,7 +420,7 @@ const getCardPlacementPrompt = (targetRatio, refCount, cardCopy, useSourceImageF
 - Preserve the original card content exactly - do NOT paraphrase, shorten, extend, translate, or correct it.
 - The reference images may influence size, font sizing, color treatment, spacing, and position only.
 - The reference images must NEVER change, replace, or inspire the card copy.`
-    : buildCardCopyLockBlock(cardCopy);
+    : buildCardCopyLockBlock(cardCopy, useSourceImageForMarks);
 
   // The landscape marketing template does not overlay a card on a full-bleed
   // photo: it rebuilds the canvas as two panels on a pastel ground, with the
@@ -795,11 +829,25 @@ export const placeCardOnScene = async (
   // measurements below already took precedence over them anyway.
   const refs = usesAspectRatioProfile(profile) ? [] : await loadCardReferences(targetRatio, profile);
   const canLockCopy = hasReliableCardCopy(cardCopy);
+  // A partner mark cannot be drawn from its name alone, so when the source card
+  // carries one the source image rides along for the model to copy it from.
+  const needsSourceForMarks = canLockCopy && Boolean(cardCopy?.cardBrandMarks);
   const parts = [
     { inlineData: { data: sceneData, mimeType: sceneMimeType } },
-    ...(canLockCopy ? [] : [{ inlineData: { data: sourceImageData, mimeType: sourceMimeType } }]),
+    ...(canLockCopy && !needsSourceForMarks
+      ? []
+      : [{ inlineData: { data: sourceImageData, mimeType: sourceMimeType } }]),
     ...refs.map((ref) => ({ inlineData: { data: ref.data, mimeType: ref.mimeType } })),
-    { text: getCardPlacementPrompt(targetRatio, refs.length, cardCopy, !canLockCopy, profile) },
+    {
+      text: getCardPlacementPrompt(
+        targetRatio,
+        refs.length,
+        cardCopy,
+        !canLockCopy,
+        profile,
+        needsSourceForMarks,
+      ),
+    },
   ];
 
   const response = await ai.models.generateContent({
