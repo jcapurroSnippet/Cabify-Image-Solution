@@ -61,10 +61,11 @@ const INITIAL_BATCH_STATE: BatchState = {
   error: null,
 };
 
+// Landscape is not generated: the square and vertical ratios are the whole
+// output of this tool, in Single Image and in Batch from Sheets alike.
 const SUPPORTED_RATIOS: AspectRatio[] = [
   AspectRatio.RATIO_1_1,
   AspectRatio.RATIO_9_16,
-  AspectRatio.RATIO_1_91_1,
 ];
 const BATCH_STATUS_POLL_MS = 15000;
 const countCompletedRows = (results: BatchState['results']): number =>
@@ -770,14 +771,16 @@ export default function AspectRatioTab() {
               <Ratio className="h-5 w-5 text-slate-400" />
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            {/* Centred rather than a fixed column count: the ratio list is
+                trimmed over time and a grid leaves an empty column behind. */}
+            <div className="flex flex-wrap justify-center gap-2">
               {SUPPORTED_RATIOS.map((ratio) => (
                 <button
                   key={ratio}
                   type="button"
                   onClick={() => generateCustomRatio(ratio)}
                   disabled={state.isProcessing || !state.originalImage}
-                  className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition-all ${
+                  className={`inline-flex min-w-28 items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition-all ${
                     activeRatio === ratio
                       ? 'border-cyan-300/90 bg-cyan-300 text-slate-900'
                       : 'border-slate-700/80 bg-slate-900/60 text-slate-200 hover:border-slate-500'

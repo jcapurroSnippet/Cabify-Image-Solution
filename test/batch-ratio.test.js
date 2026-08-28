@@ -6,7 +6,7 @@ import {
   buildBatchVariationSourceOutput,
   summarizeBatchVariations,
 } from '../server/services/batchProcessor.js';
-import { getVariationPrompts } from '../server/services/imageGenerator.js';
+import { ASPECT_RATIO_PROMPT_PROFILE, getVariationPrompts } from '../server/services/imageGenerator.js';
 
 test('adds dedicated prompts for 1.91:1 image generation', () => {
   const prompts = getVariationPrompts('1.91:1');
@@ -14,6 +14,24 @@ test('adds dedicated prompts for 1.91:1 image generation', () => {
   assert.equal(prompts.length, 3);
   assert.match(prompts[0], /1\.91:1 landscape canvas/);
   assert.match(prompts[0], /1200x628 Google marketing image/);
+});
+
+test('the Aspect Ratio prompt profile is scoped to that tool alone', () => {
+  for (const ratio of ['1:1', '9:16', '1.91:1']) {
+    const ciclo = getVariationPrompts(ratio).join('\n');
+    const aspectRatio = getVariationPrompts(ratio, ASPECT_RATIO_PROMPT_PROFILE).join('\n');
+
+    // Only the Aspect Ratio tool forbids inventing content that is absent from
+    // the source; the ciclo keeps the wording it shipped with.
+    assert.match(aspectRatio, /CONTENT LOCK/);
+    assert.doesNotMatch(ciclo, /CONTENT LOCK/);
+  }
+
+  // Half the approved creatives have no vehicle at all, so demanding a visible
+  // car invites the model to invent one. The ciclo still asserts it.
+  const carDemand = /the car must remain clearly visible/;
+  assert.match(getVariationPrompts('9:16').join('\n'), carDemand);
+  assert.doesNotMatch(getVariationPrompts('9:16', ASPECT_RATIO_PROMPT_PROFILE).join('\n'), carDemand);
 });
 
 test('maps uploaded batch variants to review items keyed on the source row', () => {

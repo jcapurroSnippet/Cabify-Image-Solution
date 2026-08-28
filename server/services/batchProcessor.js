@@ -11,7 +11,7 @@ import {
 import { uploadImageToDrive, makeFilePublic, getShareableLink, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
-import { generateAspectRatioImages } from './imageGenerator.js';
+import { ASPECT_RATIO_PROMPT_PROFILE, generateAspectRatioImages } from './imageGenerator.js';
 import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
 import {
   BATCH_VARIATIONS_SHEET,
@@ -1314,7 +1314,9 @@ export const processBatch = async (options) => {
             rowData: row,
           });
 
-          const { images, errors: generationErrors } = await generateAspectRatioImages(imageDataUrl, ratio);
+          const { images, errors: generationErrors } = await generateAspectRatioImages(imageDataUrl, ratio, {
+            profile: ASPECT_RATIO_PROMPT_PROFILE,
+          });
           if (!Array.isArray(images) || images.length === 0) {
             const detail = generationErrors?.length
               ? ` Underlying errors: ${generationErrors.join(' | ')}`
