@@ -70,6 +70,9 @@ const cropDataUrlToAspectRatio = async (dataUrl, targetRatio) => {
 const BRAND_LOCK =
   'BRAND LOCK - do NOT modify, replace, recolor, restyle, resize, or reinterpret typography or brand colors under any circumstance. Keep exact original font, weight, proportions, letter-spacing, and all colors unchanged.';
 
+const ASPECT_RATIO_BRAND_LOCK =
+  'BRAND LOCK - preserve the CURRENT source identity exactly: typography, logos, colours, card surface and CTA artwork. The target-ratio geometry may change only an element\'s size and position; never redraw, substitute, recolour, stretch, condense, skew, rotate or otherwise restyle it.';
+
 const CARD_REFERENCE_FOLDERS = {
   '1:1': '1-1',
   '9:16': '9-16',
@@ -132,7 +135,7 @@ const CARD_COPY_EXTRACTION_PROMPT = `
 Read the promotional card in this source creative and extract its literal copy.
 
 Return JSON with exactly these fields:
-- "cardText": every non-button word that appears inside the promotional card, in reading order. Preserve punctuation, accents, capitalization, and separators exactly. Use "\\n" only when the source card clearly separates text into multiple visible lines or blocks.
+- "cardText": every non-button word that appears inside the promotional card, in reading order. Preserve punctuation, accents, capitalization, and separators exactly. Join visual line wrapping with a single space: line breaks caused by the source card's narrow width are NOT content. Use "\\n" only for genuinely separate paragraphs or text blocks.
 - "buttonPresent": true if the card includes a CTA/button, otherwise false.
 - "buttonLabel": the CTA/button text exactly as shown. Return an empty string if there is no button.
 - "cardBackgroundColor": the hex colour of the card/panel the copy sits on, sampled from a flat area away from any shadow or gradient.
@@ -165,11 +168,12 @@ const SCENE_PROHIBITIONS = `
  */
 const SCENE_PROHIBITIONS_REFRAME = `
 ## SCENE-ONLY GENERATION - CRITICAL
-- Remove ONLY the promotional copy card from the source: the panel carrying the headline and its CTA. Replace it with a natural continuation of the scene behind it.
-- Removing that card does NOT mean removing the brand layer. EVERY logo in the source - the Cabify wordmark and any partner, product or sub-brand mark - together with its container, the background colour, the margin and any frame around the photograph, all STAY.
+- Remove the COMPLETE promotional copy card/panel from the source: its headline, CTA, partner mark, coloured panel and every reserved area belonging to it. Reclaim its footprint with a natural continuation of the source photograph/background. Do NOT leave an empty copy-panel placeholder, a solid-colour band or a split-screen layout behind.
+- Removing that card does NOT mean removing the main brand logo. Keep the Cabify wordmark/lockup exactly as the CURRENT source styles it: same artwork, colour, container (if any), proportions and orientation. Its target size and position are defined by the numeric target-ratio rules below, not by the source layout.
 - Do NOT add a new UI card, text overlay, CTA button, promo code or badge. Step 2 rebuilds the copy card later.
-- Keep: the subject, the scene background, every logo exactly as the source styles it, and the source's ground, margins and frames.
-- ${BRAND_LOCK}
+- Keep the subject and scene background. Rebuild the thin target FRAME specified below: a current-brand outer ground surrounding one rounded photo panel. The frame geometry comes only from the supplied target-frame measurements; its colour/finish comes only from the current source. Never copy the source frame's size or split layout.
+- The photograph/background fills the rounded photo panel and continues behind the future card area. The logo uses only a LOCAL notch in the frame; never reserve a full-width header, footer or safe-area band. A logo container may exist only tightly around the source logo itself.
+- ${ASPECT_RATIO_BRAND_LOCK}
 - Do NOT modify the main subject. Do NOT add filters, blur, gradients, or color shifts.
 `.trim();
 
@@ -198,19 +202,35 @@ const CONTENT_LOCK = `
 `.trim();
 
 /**
- * This tool REFRAMES an approved creative; it does not redesign it. The source
- * already carries the brand's visual system - its logo treatment, its pastel
- * ground and margin, its panel shapes - and all of it has to survive the change
- * of canvas. Only the framing may change.
+ * The older target examples establish geometry only. The incoming source owns
+ * the current visual identity. Keeping those authorities separate prevents a
+ * narrow or split source card from being copied into a wide target-ratio box.
  */
 const DESIGN_SYSTEM_LOCK = `
-## SOURCE DESIGN SYSTEM - PRESERVE IT EXACTLY
-- This is a REFRAME of an already-approved creative, NOT a redesign. Every brand element the source uses must survive in the output, styled exactly as the source styles it.
-- Logos: keep EVERY logo the source shows - the Cabify wordmark and any partner, product or sub-brand mark - as it appears: same colour, same container (tab, panel, badge or none at all), same proportions. Do NOT recolour one, do NOT remove its container, do NOT add a container it does not have, and do NOT drop a mark because it is small or secondary.
-- Ground and margins: if the source sits on a coloured or pastel background, or shows a visible margin, border or rounded frame around the photograph, KEEP that ground and that margin, in the same colour.
-- That margin keeps its original THICKNESS. When the canvas grows, the PHOTOGRAPH grows to fill it; the margin does not widen into an empty band. A large area of bare ground above or below the photo is a failure.
-- Panels and cards: keep the source's panel shapes, fills, corner radius and colour treatment.
-- Only the FRAMING changes: the canvas ratio, and how much of the scene is visible. The design system does not change.
+## CURRENT IDENTITY / TARGET GEOMETRY - AUTHORITY ORDER
+- The stored target examples belong to a PREVIOUS visual identity. Their pixels are NOT a style reference. Only their numeric geometry, already written below, is valid: element size, target position, margins and typography scale.
+- The SOURCE creative is the ONLY current-identity reference. Preserve its colours, typeface, glyph shapes, weight, logo artwork/container, card fill/shape/radius/shadow, illustrations and CTA styling exactly.
+- The SOURCE layout is NOT authoritative. Never copy its card/panel width, height, aspect ratio, X/Y position, split-screen proportion, margin, padding, typography scale, line breaks, logo scale or logo position.
+- The written target-ratio geometry below is absolute. It rebuilds the source identity responsively inside its target bounding boxes. A narrow, tall or side-panel source card MUST become the specified wide target card while retaining its current colours, type and surface treatment.
+- The target frame is geometry, not a visual reference: preserve/rebuild only its thin margins, rounded photo-panel silhouette and local logo notch using the numeric rules below. Its ground colour, finish and logo/container styling come from the CURRENT source, never from an older reference. Never use the source's frame size, never expand the local logo notch into a strip or band, and never reserve an empty header.
+- The three variants may change photographic framing only. Card and logo target geometry must remain identical across all variants.
+`.trim();
+
+/**
+ * Pass 2 receives the original creative as a visual authority. The structured
+ * extraction remains authoritative for literal copy, while the source pixels
+ * carry the details that cannot be represented faithfully in JSON: glyph
+ * shapes, spacing, CTA artwork and other small brand treatments.
+ */
+const SOURCE_CARD_APPEARANCE_LOCK = `
+## CURRENT SOURCE IDENTITY LOCK - IMAGE 2 DEFINES STYLE, NEVER LAYOUT
+- The CARD COPY LOCK is authoritative for literal words and "buttonPresent". If extraction fell back to Image 2, inspect it only for literal copy and CTA presence. Image 2 is authoritative for CURRENT identity: colours, card surface, typography, logo artwork/container and CTA artwork. The written target-ratio measurements are authoritative for ALL geometry.
+- Image 2 is the SOURCE creative. Use it only as a pixel-level identity reference. Image 1 remains the immutable source for the photograph, subject, background and target-ratio framing, including the final-ratio logo.
+- NEVER take from Image 2: card width, card height, card aspect ratio, card X/Y position, card margins, padding, text alignment, typography scale, line breaks, logo scale, logo position or logo rotation. Never scale Image 2's complete card as one rigid object.
+- TYPOGRAPHY: reproduce Image 2's typeface and glyph shapes, weight, width, capitalization, letter-spacing, line-height and hierarchy so the result is visually indistinguishable from the source. Do NOT substitute a generic sans-serif, synthesize a different bold weight, condense or stretch the letters, or change the typographic hierarchy.
+- Source line wrapping is incidental and must NOT be copied. Reflow the exact words naturally for the target box at the locked target type scale, using the fewest natural lines that fit. For example, do not preserve one-word-per-line wrapping from a narrow source card.
+- CTA: if the structured CARD COPY LOCK says a button exists, or the extraction fallback reveals a CTA in Image 2, reproduce Image 2's complete CTA as one locked visual component: same proportions, internal padding and spacing, fill or gradient, colour values, border, corner radius, shadow, opacity, typography, label, icons, logos, illustrations, photographs and image crop. Only uniform scaling and repositioning of the complete CTA are allowed to follow the target-ratio layout. Do not simplify an illustrated CTA into a generic button and do not replace its imagery.
+- If Image 2 has no CTA, do not create one. Never borrow a CTA, icon, image, colour or word from another creative.
 `.trim();
 
 const buildSceneGuards = (profile) => (usesAspectRatioProfile(profile)
@@ -228,8 +248,35 @@ const buildSceneGuards = (profile) => (usesAspectRatioProfile(profile)
  * so it is passed separately instead of being folded into "keep it as it is".
  */
 const buildLogoLayoutLine = (profile, legacyLine, widthRange, placement = '') => (usesAspectRatioProfile(profile)
-  ? `- Logo: keep the source's logo exactly as it is STYLED - same colour, same container, same proportions - at a comparable relative size (about ${widthRange} of canvas width). ${placement || 'Keep it in the upper area of the canvas, moving it only as much as the new ratio demands.'}`
+  ? `- Logo: use the source's CURRENT logo lockup exactly as it is styled - same artwork, colour, container (if any), proportions and orientation. The target dimensions below control the complete visible lockup, including any source container: width about ${widthRange} of canvas width. ${placement || 'Use the exact target position below; do not reuse the source position.'}`
   : legacyLine);
+
+/**
+ * These measurements are taken from the user-supplied example frames. They
+ * intentionally describe geometry only; no old-identity pixels are sent to
+ * the image model.
+ */
+const getTargetFrameGeometry = (targetRatio, profile) => {
+  if (!usesAspectRatioProfile(profile)) return '';
+
+  if (String(targetRatio).trim() === '1:1') {
+    return `## TARGET FRAME GEOMETRY - 1:1 (frame only)
+- Build ONE rounded photograph panel at approximately x=5%, y=5%, width=90%, height=90% of the canvas. The current-brand outer ground is therefore a thin, even frame of about 5% on every edge; it must never exceed 6.5%.
+- The photo panel corner radius is approximately 5% of canvas width. The photograph fills this panel completely edge to edge.
+- The logo may occupy a LOCAL notch that touches the top/left portion of the panel. That notch is no wider than 32% and no taller than 14% of the canvas. It is not a full-width header.
+- These are FRAME measurements only. Never copy any reference photo, copy card, CTA, colour, type or logo artwork.`;
+  }
+
+  if (String(targetRatio).trim() === '9:16') {
+    return `## TARGET FRAME GEOMETRY - 9:16 (frame only)
+- Build ONE tall rounded photograph panel with left and right frame gaps of about 4.7% of canvas width, and top/bottom frame gaps of about 2.7% of canvas height. The side gaps must never exceed 5.5%; the vertical gaps must never exceed 3.5%.
+- The photograph fills this panel completely edge to edge. The panel corner radius is approximately 4.7% of canvas width.
+- The logo tab MUST occupy a LOCAL TOP-CENTRE notch: center the notch at centerX=50%. It may interrupt the photo panel only within at most 40% of canvas width and 12% of canvas height. Elsewhere the photograph reaches the top frame gap. Never make a full-width header or an empty band above the photograph.
+- These are FRAME measurements only. Never copy any reference photo, copy card, CTA, colour, type or logo artwork.`;
+  }
+
+  return '';
+};
 
 const parseJsonResponseText = (text) => {
   if (typeof text !== 'string' || text.trim().length === 0) {
@@ -245,6 +292,11 @@ const parseJsonResponseText = (text) => {
 
 const normalizeCardCopyField = (value) =>
   typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : '';
+
+// Narrow source cards often visually wrap every word. Those wraps are layout,
+// not copy, and must not force a tall/narrow target-ratio card.
+const normalizeCardTextForResponsiveLayout = (value) =>
+  normalizeCardCopyField(value).replace(/\s+/g, ' ').trim();
 
 /** Accepts #RGB or #RRGGBB and normalises to uppercase #RRGGBB. */
 const normalizeHexColour = (value) => {
@@ -263,7 +315,7 @@ const normalizeExtractedCardCopy = (payload) => {
     return null;
   }
 
-  const cardText = normalizeCardCopyField(payload.cardText);
+  const cardText = normalizeCardTextForResponsiveLayout(payload.cardText);
   const buttonLabel = normalizeCardCopyField(payload.buttonLabel);
   const buttonPresent = payload.buttonPresent === true;
 
@@ -284,10 +336,16 @@ const hasReliableCardCopy = (cardCopy) =>
       (!cardCopy.buttonPresent || (cardCopy.buttonPresent && cardCopy.buttonLabel)),
   );
 
-const buildCardCopyLockBlock = (cardCopy, marksFromSourceImage = false) => {
+const buildCardCopyLockBlock = (
+  cardCopy,
+  marksFromSourceImage = false,
+  responsiveTargetLayout = false,
+) => {
   const copyJson = JSON.stringify(
     {
-      cardText: cardCopy.cardText,
+      cardText: responsiveTargetLayout
+        ? normalizeCardTextForResponsiveLayout(cardCopy.cardText)
+        : cardCopy.cardText,
       buttonPresent: cardCopy.buttonPresent,
       buttonLabel: cardCopy.buttonLabel,
     },
@@ -305,16 +363,22 @@ const buildCardCopyLockBlock = (cardCopy, marksFromSourceImage = false) => {
 - Do NOT redraw, restyle, recolour, translate or reinterpret a partner mark. Do NOT add any mark that is not listed here.`
     : '';
 
+  const referenceRule = responsiveTargetLayout
+    ? '- The numeric target-ratio rules provide geometry and type scale only. The current source image provides every visual-identity decision: colour, font, card surface, logo and CTA style.'
+    : '- The reference images may influence size, font sizing, color treatment, spacing, and position only. They must NEVER change the copy.';
+
   return `**CARD COPY LOCK (authoritative):**
 \`\`\`json
 ${copyJson}
 \`\`\`
 - The ONLY allowed text source is the JSON above.
 - Preserve the exact words, punctuation, accents, and capitalization from the JSON.
-- You may reflow line breaks only if needed to fit the reference layout.
+- ${responsiveTargetLayout
+    ? 'Line wrapping is target geometry, not source content. Reflow the text naturally for the target box; never preserve visual wraps from Image 2.'
+    : 'You may reflow line breaks only if needed to fit the reference layout.'}
 - If "buttonPresent" is false, do not render a button.
 - If "buttonPresent" is true, render the button and copy "buttonLabel" exactly.
-- The reference images may influence size, font sizing, color treatment, spacing, and position only. They must NEVER change the copy.${brandMarkRules}`;
+${referenceRule}${brandMarkRules}`;
 };
 
 const buildReferenceInputList = (startIndex, count) =>
@@ -323,8 +387,15 @@ const buildReferenceInputList = (startIndex, count) =>
     return `${imageNumber}. Image ${imageNumber} - layout/style reference only.`;
   }).join('\n');
 
-const buildReferenceStyleSection = (label, hasRefs, profile) => {
+const buildReferenceStyleSection = (label, hasRefs, profile, hasSourceStyleReference = false) => {
   if (!hasRefs) {
+    if (hasSourceStyleReference) {
+      return `**TARGET-SIZE GUIDE / CURRENT-IDENTITY LOCK:**
+- No old campaign reference images are attached. Their allowed geometry has already been transcribed into the numeric target-ratio rules below.
+- Image 2 supplies only the CURRENT identity: typography, colour, card treatment, logo artwork/container and CTA appearance. It never supplies layout.
+- Follow the written target-ratio geometry below for card and logo size/position; do not enlarge its specified margins.`;
+    }
+
     return `**REFERENCE STYLE LOCK:**
 - No reference images were attached, so follow the numeric geometry below exactly.`;
   }
@@ -333,12 +404,13 @@ const buildReferenceStyleSection = (label, hasRefs, profile) => {
   // a bordered tile - reads as a list of things to draw, and the model started
   // lifting whole elements: a promo code, a keyline, eventually the reference's
   // own subject. So the allowance is expressed as abstract style attributes
-  // (proportions, colours, weights) and every visible element stays banned.
+  // (proportions and positions) and every visible element stays banned.
   if (usesAspectRatioProfile(profile)) {
     return `**REFERENCE IMAGES (${label}) - LAYOUT GUIDE ONLY:**
-- Read the references as a LAYOUT DIAGRAM. They answer three questions and nothing else: WHERE each element sits on the canvas, HOW LARGE it is relative to the canvas, and WHAT COLOUR the brand surfaces are.
+- Read the references as a GEOMETRY DIAGRAM. They answer two questions and nothing else: WHERE each element sits on the canvas and HOW LARGE it is relative to the canvas.
 - They are deliberately low-resolution because they are a guide, not artwork. Do not try to recover or reproduce their detail.
 - They are NOT a content source. Nothing visible in them may appear in the output: no person, no animal, no vehicle, no object, no graphic, no text.
+- They are from a PREVIOUS identity. Never copy their colours, font family/weight, logo version/container, card fill, corner treatment, shadow, CTA style or illustration.
 - The photograph in the output comes EXCLUSIVELY from Image 1. If a reference shows a different subject, ignore it entirely. A dog, a phone or a person seen in a reference must never reach the output.
 - Never reproduce a promo code, coupon, partner mark, CTA or headline seen in a reference: those belong to other campaigns. Such an element appears only if the SOURCE card already had it.
 - Where the references and the written measurements below disagree, the WRITTEN MEASUREMENTS win.`;
@@ -361,50 +433,58 @@ const getCardPlacementPrompt = (
 ) => {
   const ratio = String(targetRatio).trim();
   const isAspectRatioTool = usesAspectRatioProfile(profile);
-  // The source creative rides along for either reason: to read copy that could
-  // not be extracted, or to copy a partner mark that cannot be drawn from a
-  // written description.
-  const sourceAttached = useSourceImageForCopy || useSourceImageForMarks;
+  // Single and Batch expose only these two ratios. Landscape has a separate
+  // two-panel template whose hard layout must not inherit this source-card lock.
+  const usesSourceCardStyleReference = isAspectRatioTool && ['1:1', '9:16'].includes(ratio);
   // Every approved creative uses a purple pill, never a yellow one; the colour
   // is inherited from the references instead of being asserted here.
-  // A single fixed size cannot serve both a two-line headline and a four-line
-  // one: it either swims or overflows. The tuned spec anchors a starting size
-  // and makes the type scale with the amount of copy.
-  const textSizeSpec = (legacy, twoLine, minimum) => (isAspectRatioTool
-    ? `- Text size: FIT THE COPY TO THE CARD instead of using one fixed size. Start around ${twoLine} of canvas height per line for a two-line headline, and step down as the copy grows, to no smaller than about ${minimum}.
-- The text block must fill the card's inner area comfortably: it must never overflow the padding, and it must never leave more than about a third of the card empty.`
-    : `- Text size: ${legacy}`);
+  // The previous-identity target examples provide numeric scale only, while
+  // Image 2 supplies the exact current typeface and its visual metrics.
+  const textSizeSpec = (referenceSize) => (usesSourceCardStyleReference
+    ? `- Text size: ${referenceSize} This target-ratio measurement controls uniform scale; do NOT shrink the type merely to create more whitespace.
+- Typeface, glyph shapes, weight, letter-spacing and line-height: copy Image 2 exactly. If the copy needs more room, first reflow it for the wide target box, then use the allowed adaptive card height. Only as a last resort may the complete typography scale down uniformly by at most 10%; never substitute, condense or stretch the font.`
+    : `- Text size: ${referenceSize}`);
   // Hardcoding #F4F4F4 / #6F49E8 contradicts the reframe rules: a source whose
   // card is a purple panel with white copy would come back inverted. The colours
   // are sampled from the source card instead.
   const sourceCardColour = normalizeHexColour(cardCopy?.cardBackgroundColor);
   const sourceTextColour = normalizeHexColour(cardCopy?.cardTextColor);
-  const cardColourSpec = isAspectRatioTool
+  const cardColourSpec = usesSourceCardStyleReference
     ? (sourceCardColour && sourceTextColour
       ? `- Card background colour: EXACTLY ${sourceCardColour}. This is the colour of the source creative's own card; do not lighten, darken or substitute it.
-- Text colour: EXACTLY ${sourceTextColour}. Text weight: 700 bold.
+- Text colour: EXACTLY ${sourceTextColour}. Copy the text weight from Image 2; do not default to 700 unless the source actually uses that weight.
 - These two colours are taken from the source creative. Never replace them with a default, and never take a colour from anywhere else.`
       : `- Card background colour and text colour: reproduce the ones the SOURCE creative uses on its own card, preserving the same contrast relationship. If the source card is a purple panel with white copy, the output is a purple panel with white copy. Never substitute a default.`)
     : `- Card background color: #F4F4F4.
 - Text color: #6F49E8. Text weight: 700 bold.`;
-  // A stroke around the copy panel is not part of the brand: the approved
-  // creatives use a flat fill, whatever colour the source gives it.
-  const cardSurfaceSpec = isAspectRatioTool
-    ? '\n- The card is a FLAT, single-colour fill with NO border, outline, stroke or keyline around it. A soft shadow is the only edge treatment allowed.'
+  // Image 2 resolves details such as a real border versus an invented keyline.
+  const cardSurfaceSpec = usesSourceCardStyleReference
+    ? '\n- Card surface treatment: copy Image 2 exactly, including its fill, gradient (if any), border or absence of border, corner treatment and shadow. Do not add a keyline that the source does not have or remove one that it does.'
     : '';
-  const buttonSpec = (alignment) => (isAspectRatioTool
-    ? `- Button/pill (only when the source card has one): ${alignment}, below the text. Reproduce the shape, colours and typography the SOURCE card gives it. Do NOT invent a colour.`
+  const buttonSpec = (alignment) => (usesSourceCardStyleReference
+    ? `- CTA/button/pill (when the structured CARD COPY LOCK says one exists, or when the extraction fallback visibly shows one in Image 2): ${alignment} in the target-ratio layout. Reproduce Image 2's component exactly: same proportions, shape, internal spacing, fill or gradient, colour values, border, radius, shadow, typography, label, icon, logo, illustration, photograph and image crop. Only uniform scaling and repositioning of the whole CTA are allowed. Do NOT invent, omit, recolour or replace any CTA element.`
     : `- Button: yellow pill, ${alignment}, below text. Match the reference style only.`);
   const hasRefs = refCount > 0;
+  // The Aspect Ratio profile always supplies the source as a visual style
+  // authority. Legacy callers retain the smaller conditional payload.
+  const sourceAttached = usesSourceCardStyleReference || useSourceImageForCopy || useSourceImageForMarks;
   const referenceStartIndex = sourceAttached ? 3 : 2;
   const referenceLabel = sourceAttached ? 'Images 3+' : 'Images 2+';
   const referenceInputs = hasRefs ? buildReferenceInputList(referenceStartIndex, refCount) : '';
 
-  const sourceInputLine = useSourceImageForCopy
-    ? '2. Image 2 - the source creative. Read ONLY the original card copy from this image. Ignore its scene, subject, background, and layout.'
+  const sourceInputLine = usesSourceCardStyleReference
+    ? '2. Image 2 - the CURRENT source creative and identity reference. Copy only its typography, colours, card surface, logo artwork/container and complete CTA exactly. Never copy its photograph, card/panel geometry, margins, split layout, source line wrapping or logo placement; target geometry comes only from the written rules.'
+    : (useSourceImageForCopy
+      ? '2. Image 2 - the source creative. Read ONLY the original card copy from this image. Ignore its scene, subject, background, and layout.'
     : (useSourceImageForMarks
       ? '2. Image 2 - the source creative. Use it ONLY to copy the brand marks listed below, exactly as they are drawn there. Ignore its scene, subject, background, and layout.'
-      : null);
+      : null));
+
+  const logoOrientationLock = usesSourceCardStyleReference && ratio === '9:16'
+    ? `**9:16 LOGO ORIENTATION LOCK:**
+- Treat the Cabify wordmark in Image 1 as one rigid horizontal asset. Keep it perfectly upright at exactly 0-degree rotation: its baseline and top and bottom edges are parallel to the horizontal canvas edges, and both ends sit at the same Y coordinate.
+- Do not tilt, skew, warp, curve, rotate, redraw or apply perspective to the wordmark. Never place it vertically or diagonally.`
+    : '';
 
   const inputs = [
     '1. Image 1 - the clean scene (target aspect ratio, no card). Use this as the immutable base.',
@@ -418,9 +498,10 @@ const getCardPlacementPrompt = (
     ? `**CARD COPY LOCK:**
 - Read the exact card text and button label from Image 2 only.
 - Preserve the original card content exactly - do NOT paraphrase, shorten, extend, translate, or correct it.
-- The reference images may influence size, font sizing, color treatment, spacing, and position only.
+- Visual line wrapping in Image 2 is layout, not content. Reflow the exact words for the target box; do not retain a narrow source card's one-word-per-line breaks.
+- The numeric target-ratio rules may affect only geometry and type scale. Current visual identity must come from Image 2.
 - The reference images must NEVER change, replace, or inspire the card copy.`
-    : buildCardCopyLockBlock(cardCopy, useSourceImageForMarks);
+    : buildCardCopyLockBlock(cardCopy, useSourceImageForMarks, usesSourceCardStyleReference);
 
   // The landscape marketing template does not overlay a card on a full-bleed
   // photo: it rebuilds the canvas as two panels on a pastel ground, with the
@@ -436,7 +517,11 @@ ${inputs}
 
 ${cardCopySection}
 
-${buildReferenceStyleSection(referenceLabel, hasRefs, profile)}
+${usesSourceCardStyleReference ? SOURCE_CARD_APPEARANCE_LOCK : ''}
+
+${logoOrientationLock}
+
+${buildReferenceStyleSection(referenceLabel, hasRefs, profile, usesSourceCardStyleReference)}
 
 **WHAT TO DO:**
 - Rebuild the canvas as the two-panel layout specified below. Image 1 supplies ONLY the photograph.
@@ -448,7 +533,7 @@ ${buildReferenceStyleSection(referenceLabel, hasRefs, profile)}
 - Do NOT alter the photograph's subject, background, lighting or colours. Only its placement and crop may change.
 - Do NOT invent or omit words in the card copy.
 - Do NOT use any word from the reference images unless that exact word is already present in the original card copy.
-- ${BRAND_LOCK}`
+- ${isAspectRatioTool ? ASPECT_RATIO_BRAND_LOCK : BRAND_LOCK}`
     : `**TASK:** Composite a Cabify UI card onto a clean scene.
 
 **INPUTS (in order):**
@@ -456,40 +541,46 @@ ${inputs}
 
 ${cardCopySection}
 
-${buildReferenceStyleSection(referenceLabel, hasRefs, profile)}
+${usesSourceCardStyleReference ? SOURCE_CARD_APPEARANCE_LOCK : ''}
+
+${logoOrientationLock}
+
+${buildReferenceStyleSection(referenceLabel, hasRefs, profile, usesSourceCardStyleReference)}
 
 **WHAT TO DO:**
 - Add exactly one foreground UI card to Image 1.
 - Keep Image 1's scene, subject, background, and logo exactly as-is.
-- Match the reference card's visual treatment only: size, position, typography scale, color, corner radius, padding, shadow, and button styling.
-- Preserve the original card content exactly. The references may restyle the card, but they must not alter its words.
+${usesSourceCardStyleReference
+    ? `- Rebuild the CURRENT source identity inside the exact target bounding box below. Image 2 supplies colours, card surface, typography, logo styling and CTA; the numeric target rules supply box/logo size, position, margins, padding and type scale.
+- Do NOT copy Image 2's card/panel aspect ratio or layout. If it is narrow, tall or lateral, rebuild it as the required wide target card.
+- Preserve the original card content exactly. The numeric target guide may reflow it but may never alter its words.`
+    : `- Match the reference card's visual treatment only: size, position, typography scale, color, corner radius, padding, shadow, and button styling.
+- Preserve the original card content exactly. The references may restyle the card, but they must not alter its words.`}
 
 **STRICT:**
 - Do NOT modify the scene, subject, background, or logo from Image 1.${isAspectRatioTool ? '\n- The photograph in the output IS Image 1. Never replace it, or any part of it, with a photograph taken from a reference image.' : ''}
 - Do NOT invent or omit words in the card copy.
 - Do NOT use any word from the reference images unless that exact word is already present in the original card copy.
-- ${BRAND_LOCK}`;
+- ${isAspectRatioTool ? ASPECT_RATIO_BRAND_LOCK : BRAND_LOCK}`;
 
   if (ratio === '1:1') {
     return `${shared}
 
 **CARD DIMENSIONS - 1:1 (non-negotiable):**
 ${isAspectRatioTool
-    ? `- Card width: about 88% of canvas width (950px at 1080 reference), leaving a gap of about 6% on each side.
-- Card height: about 38% of canvas height (410px at 1080 reference). Taller than it is in most references - the copy needs the room.
-- Card top edge: about 58% from the top of the canvas (y about 626px at 1080).
-- Bottom gap below card: about 4% of canvas height (about 43px at 1080).`
-    : `- Card width: 93% of canvas width (1003px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 41px at 1080).
-- Card height: about 32% of canvas height (343px at 1080 reference).
-- Card top edge: about 64.6% from the top of the canvas (y about 698px at 1080).
-- Bottom gap below card: about 3.6% of canvas height (about 39px at 1080). Small gap only.`}
-- Corner radius: about 3.9% of canvas width (42px at 1080).
+    ? '- TARGET BOUNDING BOX: x=3.5%, y=64.6%, width=93%, height=31.8% of canvas. Its bottom edge is fixed at y=96.4%. This is the geometry for every variation, regardless of Image 2.'
+    : '- Card width: 93% of canvas width (1003px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 41px at 1080).'}
+${isAspectRatioTool
+    ? `- Card width is ALWAYS 93%; left and right gaps are ALWAYS 3.5% each and must NEVER be larger. Never use the narrow source-card width.
+- Default card height is 31.8% (343px at 1080). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 40%; its bottom edge remains fixed at 96.4%. Never solve overflow by changing its width, side gaps or bottom gap.`
+    : `- Card height: about 32% of canvas height (343px at 1080 reference).
+- Card top edge: about 64.6% from the top of the canvas (y about 698px at 1080).`}
+- Bottom gap below card: about 3.6% of canvas height (about 39px at 1080). Small gap only.
+- ${isAspectRatioTool ? 'Card corner radius and edge treatment: copy the CURRENT source card and scale it responsively inside this box. Do not inherit corner styling from the old target examples.' : 'Corner radius: about 3.9% of canvas width (42px at 1080).' }
 ${cardColourSpec}
-- Text alignment: left-aligned. Line-height about 1.1.
+- ${isAspectRatioTool ? 'Text alignment and line-height: preserve the CURRENT source treatment; text size and the outer box geometry follow this target guide.' : 'Text alignment: left-aligned. Line-height about 1.1.'}
 ${textSizeSpec(
     'about 5.5-6% of canvas height per line (60-66px at 1080).',
-    '5%',
-    '3.4%',
   )}
 - Padding inside card: about 3.7% top/left/right, about 2.8% bottom.
 ${buttonSpec('left-aligned')}${cardSurfaceSpec}`;
@@ -554,21 +645,19 @@ ${buttonSpec('left-aligned')}`;
 
 **CARD DIMENSIONS - 9:16 (non-negotiable):**
 ${isAspectRatioTool
-    ? `- Card width: about 88% of canvas width (950px at 1080 reference), leaving a gap of about 6% on each side.
-- Card height: about 23% of canvas height (440px at 1920 reference). Still wider than it is tall, but with room for three or four lines of copy.
-- Card top edge: about 62% from the top of the canvas (y about 1190px at 1920).
-- Bottom gap below card: about 15% of canvas height (about 288px at 1920). Visible empty scene below the card.`
-    : `- Card width: 93% of canvas width (1002px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 39px at 1080).
-- Card height: about 18% of canvas height (343px at 1920 reference). Flat and wide - NOT tall or square.
-- Card top edge: about 65.5% from the top of the canvas (y about 1258px at 1920).
-- Bottom gap below card: about 16.6% of canvas height (about 319px at 1920). Visible empty scene below card.`}
-- Corner radius: about 3.9% of canvas width (42px at 1080).
+    ? '- TARGET BOUNDING BOX: x=3.5%, y=65.5%, width=93%, height=17.9% of canvas. Its bottom edge is fixed at y=83.4%. This is the geometry for every variation, regardless of Image 2.'
+    : '- Card width: 93% of canvas width (1002px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 39px at 1080).'}
+${isAspectRatioTool
+    ? `- Card width is ALWAYS 93%; left and right gaps are ALWAYS 3.5% each and must NEVER be larger. Never use the narrow source-card width.
+- Default card height is 17.9% (343px at 1920). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 28%; its bottom edge remains fixed at 83.4%. Never solve overflow by changing its width, side gaps or bottom gap.`
+    : `- Card height: about 18% of canvas height (343px at 1920 reference). Flat and wide - NOT tall or square.
+- Card top edge: about 65.5% from the top of the canvas (y about 1258px at 1920).`}
+- Bottom gap below card: about 16.6% of canvas height (about 319px at 1920). Visible empty scene below card.
+- ${isAspectRatioTool ? 'Card corner radius and edge treatment: copy the CURRENT source card and scale it responsively inside this box. Do not inherit corner styling from the old target examples.' : 'Corner radius: about 3.9% of canvas width (42px at 1080).' }
 ${cardColourSpec}
-- Text alignment: centered. Line-height about 1.1.
+- ${isAspectRatioTool ? 'Text alignment and line-height: preserve the CURRENT source treatment; text size and the outer box geometry follow this target guide.' : 'Text alignment: centered. Line-height about 1.1.'}
 ${textSizeSpec(
     'about 3.9-4.2% of canvas height per line (74-80px at 1920).',
-    '3.4%',
-    '2.3%',
   )}
 - Padding inside card: about 3.1% top, about 3.7% left/right, about 2.6% bottom.
 ${buttonSpec('centered')}${cardSurfaceSpec}`;
@@ -587,7 +676,13 @@ ${guards}
 ${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
 ## LAYOUT
 - Canvas: 1:1 square.
-${buildLogoLayoutLine(profile, '- Logo: top-left. Width about 14-16% of canvas width. Top margin about 6-8%.', '14-16%')}
+${getTargetFrameGeometry(ratio, profile)}
+${buildLogoLayoutLine(
+    profile,
+    '- Logo: top-left. Width about 14-16% of canvas width. Top margin about 6-8%.',
+    '19%',
+    'Place the visible logo lockup inside the local top-left frame notch at approximately x=8.5% and y=8% of the canvas. It must fit completely inside that local notch and never create a full-width header. This position and size are fixed across all three variations.',
+  )}
 - Subject: prominent, full face visible.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
@@ -665,9 +760,8 @@ ${layout}
   // target, instead of leaving the model to pick which half to disobey.
   const geometry = isAspectRatioTool
     ? `## GEOMETRY
-- Reach 9:16 by EXTENDING (outpainting) the PHOTOGRAPH itself above and/or below the subject - never by growing the margin or the flat ground around it.
-- If the source frames its photograph inside a panel, that panel grows with the canvas: the photograph gets TALLER and keeps filling its frame edge to edge. The frame's border thickness stays as it was in the source.
-- The photo panel fills the whole height available between the logo and the area reserved for the copy card. Bands of empty ground above or below the photo are a failure.
+- Reach 9:16 by EXTENDING (outpainting) the PHOTOGRAPH itself above and/or below the subject. Rebuild only the thin target frame described above; never grow a source margin, source flat ground or source split-panel proportion.
+- The photograph fills the target rounded panel and continues behind the future copy-card area. Do NOT reserve empty ground above the photo, below it, or between it and either overlay. The logo's local source container may sit in the frame notch, but must never create a full-width header. Bands beyond the specified thin target frame are a failure.
 - Do NOT rescale or re-shoot the subject to make it fit. The subject keeps its original scale and detail; the photograph grows around it, and the subject should still occupy roughly 45-60% of the canvas height.
 - Do NOT crop the subject's face or the logo.`
     : `## GEOMETRY
@@ -682,11 +776,12 @@ ${guards}
 ${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
 ## LAYOUT
 - Canvas: 9:16 vertical.
+${getTargetFrameGeometry(ratio, profile)}
 ${buildLogoLayoutLine(
     profile,
     '- Logo: top-center. Width about 12-14% of canvas width. Top margin about 5-7%.',
-    '12-14%',
-    'Place it HORIZONTALLY CENTRED at the top of the canvas, together with its container. Instagram Stories overlays the account profile across the top-left corner, so a left-aligned logo would be covered. Centre it even when the source places it elsewhere.',
+    '24%',
+    'Place the visible logo lockup inside the LOCAL TOP-CENTRE frame notch at centerX=50% with its top edge at y=5.5% of the canvas. It must fit completely inside the local notch and never create a full-width header. This centred tab/notch position and size are fixed across all three variations so it stays clear of the Instagram Stories profile overlay. The wordmark must be perfectly straight and horizontal: baseline parallel to the top edge, 0-degree rotation, upright, with no tilt, skew, curve or perspective distortion.',
   )}
 - Subject: large and prominent, fills most of the canvas height.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
@@ -832,11 +927,17 @@ export const placeCardOnScene = async (
   // A partner mark cannot be drawn from its name alone, so when the source card
   // carries one the source image rides along for the model to copy it from.
   const needsSourceForMarks = canLockCopy && Boolean(cardCopy?.cardBrandMarks);
+  // Exact typography and CTA artwork cannot be serialized into the copy JSON.
+  // The supported Aspect Ratio outputs therefore send the source as Image 2;
+  // the prompt limits it to card appearance so Image 1 stays scene authority.
+  const usesSourceCardStyleReference = usesAspectRatioProfile(profile) &&
+    ['1:1', '9:16'].includes(String(targetRatio).trim());
+  const includeSourceImage = usesSourceCardStyleReference || !canLockCopy || needsSourceForMarks;
   const parts = [
     { inlineData: { data: sceneData, mimeType: sceneMimeType } },
-    ...(canLockCopy && !needsSourceForMarks
-      ? []
-      : [{ inlineData: { data: sourceImageData, mimeType: sourceMimeType } }]),
+    ...(includeSourceImage
+      ? [{ inlineData: { data: sourceImageData, mimeType: sourceMimeType } }]
+      : []),
     ...refs.map((ref) => ({ inlineData: { data: ref.data, mimeType: ref.mimeType } })),
     {
       text: getCardPlacementPrompt(
