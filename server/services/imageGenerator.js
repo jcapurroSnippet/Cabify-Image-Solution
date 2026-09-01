@@ -73,6 +73,22 @@ const BRAND_LOCK =
 const ASPECT_RATIO_BRAND_LOCK =
   'BRAND LOCK - preserve the CURRENT source identity exactly: typography, logos, colours, card surface and CTA artwork. The target-ratio geometry may change only an element\'s size and position; never redraw, substitute, recolour, stretch, condense, skew, rotate or otherwise restyle it.';
 
+const INPUT_COLOUR_LOCK = `
+## INPUT COLOUR LOCK - ABSOLUTE
+- Every visible colour from the input is locked: logo/wordmark, logo tab, typography, card, CTA, border, shadow, icon, illustration, partner mark, photograph and background.
+- Reproduce each source colour exactly, including its hue, saturation, lightness, opacity, gradient and contrast relationship. Do NOT recolour, invert, brighten, darken, tint, desaturate, replace or "improve" any colour.
+- Image 1 is the colour authority for the generated scene and logo. Image 2 is the colour authority for card typography, card surface, CTA and their internal artwork. Never borrow a colour from a target-frame example or another campaign.
+`.trim();
+
+const CABIFY_TYPOGRAPHY_SYSTEM = `
+## CABIFY CIUDAD TYPOGRAPHY SYSTEM - REQUIRED
+- Promotional headlines and expressive card messages use Cabify Ciudad only (the supplied Light, Book, SemiBold, Bold, ExtraBold and Black family). Match the source's exact approved weight; do not substitute another family or synthesize bold/condensed letters.
+- CTA labels, promo codes, buttons and any UI-like component use Cabify Ciudad Text only (the supplied Light, Book, SemiBold and Bold family). Match the source's approved weight; usually use SemiBold or Bold only when the source uses that emphasis.
+- The Cabify wordmark is an artwork asset, never typeset or recreated with either family.
+- Preserve comfortable, readable tracking and line-height. Never tighten tracking or line-height merely to fit more copy. Reflow first; preserve a clear weight hierarchy between headline and CTA.
+- Cabify Ciudad Text is for UI/longer reading, never for the promotional headline. Cabify Ciudad is never used for a CTA/button label.
+`.trim();
+
 const CARD_REFERENCE_FOLDERS = {
   '1:1': '1-1',
   '9:16': '9-16',
@@ -174,6 +190,7 @@ const SCENE_PROHIBITIONS_REFRAME = `
 - Keep the subject and scene background. Rebuild the thin target FRAME specified below: a current-brand outer ground surrounding one rounded photo panel. The frame geometry comes only from the supplied target-frame measurements; its colour/finish comes only from the current source. Never copy the source frame's size or split layout.
 - The photograph/background fills the rounded photo panel and continues behind the future card area. The logo uses only a LOCAL notch in the frame; never reserve a full-width header, footer or safe-area band. A logo container may exist only tightly around the source logo itself.
 - ${ASPECT_RATIO_BRAND_LOCK}
+- ${INPUT_COLOUR_LOCK}
 - Do NOT modify the main subject. Do NOT add filters, blur, gradients, or color shifts.
 `.trim();
 
@@ -227,6 +244,8 @@ const SOURCE_CARD_APPEARANCE_LOCK = `
 - The CARD COPY LOCK is authoritative for literal words and "buttonPresent". If extraction fell back to Image 2, inspect it only for literal copy and CTA presence. Image 2 is authoritative for CURRENT identity: colours, card surface, typography, logo artwork/container and CTA artwork. The written target-ratio measurements are authoritative for ALL geometry.
 - Image 2 is the SOURCE creative. Use it only as a pixel-level identity reference. Image 1 remains the immutable source for the photograph, subject, background and target-ratio framing, including the final-ratio logo.
 - NEVER take from Image 2: card width, card height, card aspect ratio, card X/Y position, card margins, padding, text alignment, typography scale, line breaks, logo scale, logo position or logo rotation. Never scale Image 2's complete card as one rigid object.
+${INPUT_COLOUR_LOCK}
+${CABIFY_TYPOGRAPHY_SYSTEM}
 - TYPOGRAPHY: reproduce Image 2's typeface and glyph shapes, weight, width, capitalization, letter-spacing, line-height and hierarchy so the result is visually indistinguishable from the source. Do NOT substitute a generic sans-serif, synthesize a different bold weight, condense or stretch the letters, or change the typographic hierarchy.
 - Source line wrapping is incidental and must NOT be copied. Reflow the exact words naturally for the target box at the locked target type scale, using the fewest natural lines that fit. For example, do not preserve one-word-per-line wrapping from a narrow source card.
 - CTA: if the structured CARD COPY LOCK says a button exists, or the extraction fallback reveals a CTA in Image 2, reproduce Image 2's complete CTA as one locked visual component: same proportions, internal padding and spacing, fill or gradient, colour values, border, corner radius, shadow, opacity, typography, label, icons, logos, illustrations, photographs and image crop. Only uniform scaling and repositioning of the complete CTA are allowed to follow the target-ratio layout. Do not simplify an illustrated CTA into a generic button and do not replace its imagery.
@@ -271,7 +290,7 @@ const getTargetFrameGeometry = (targetRatio, profile) => {
     return `## TARGET FRAME GEOMETRY - 9:16 (frame only)
 - Build ONE tall rounded photograph panel with left and right frame gaps of about 4.7% of canvas width, and top/bottom frame gaps of about 2.7% of canvas height. The side gaps must never exceed 5.5%; the vertical gaps must never exceed 3.5%.
 - The photograph fills this panel completely edge to edge. The panel corner radius is approximately 4.7% of canvas width.
-- The logo tab MUST occupy a LOCAL TOP-CENTRE notch: center the notch at centerX=50%. It may interrupt the photo panel only within at most 40% of canvas width and 12% of canvas height. Elsewhere the photograph reaches the top frame gap. Never make a full-width header or an empty band above the photograph.
+- The logo tab MUST occupy a LOCAL TOP-LEFT notch, anchored to the left frame edge. It may interrupt the photo panel only within at most 40% of canvas width and 12% of canvas height. Elsewhere the photograph reaches the top frame gap. Never make a full-width header or an empty band above the photograph.
 - These are FRAME measurements only. Never copy any reference photo, copy card, CTA, colour, type or logo artwork.`;
   }
 
@@ -483,6 +502,7 @@ const getCardPlacementPrompt = (
   const logoOrientationLock = usesSourceCardStyleReference && ratio === '9:16'
     ? `**9:16 LOGO ORIENTATION LOCK:**
 - Treat the Cabify wordmark in Image 1 as one rigid horizontal asset. Keep it perfectly upright at exactly 0-degree rotation: its baseline and top and bottom edges are parallel to the horizontal canvas edges, and both ends sit at the same Y coordinate.
+- Keep the logo tab and its notch in the fixed LOCAL TOP-LEFT position, anchored to the left frame edge. Do not recenter or move them to the right.
 - Do not tilt, skew, warp, curve, rotate, redraw or apply perspective to the wordmark. Never place it vertically or diagonally.`
     : '';
 
@@ -568,21 +588,22 @@ ${usesSourceCardStyleReference
 
 **CARD DIMENSIONS - 1:1 (non-negotiable):**
 ${isAspectRatioTool
-    ? '- TARGET BOUNDING BOX: x=3.5%, y=64.6%, width=93%, height=31.8% of canvas. Its bottom edge is fixed at y=96.4%. This is the geometry for every variation, regardless of Image 2.'
+    ? '- TARGET BOUNDING BOX: x=7.5%, y=71%, width=85%, height=22% of canvas. Its bottom edge is fixed at y=93%. This geometry is measured from the replacement 1:1 references and applies to every variation, regardless of Image 2.'
     : '- Card width: 93% of canvas width (1003px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 41px at 1080).'}
 ${isAspectRatioTool
-    ? `- Card width is ALWAYS 93%; left and right gaps are ALWAYS 3.5% each and must NEVER be larger. Never use the narrow source-card width.
-- Default card height is 31.8% (343px at 1080). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 40%; its bottom edge remains fixed at 96.4%. Never solve overflow by changing its width, side gaps or bottom gap.`
+    ? `- Card width is ALWAYS 85%; left and right gaps are ALWAYS 7.5% each and must NEVER be larger. Never use the narrow source-card width.
+- The 1:1 card is ALWAYS HORIZONTAL / LANDSCAPE. Its width-to-height ratio must never be below 2.3:1. Never make it square, portrait, narrow, tall or vertically oriented, even when the source card is.
+- Default card height is 22% (225px at 1024). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 32%; its bottom edge remains fixed at 93%. Never solve overflow by changing its width, side gaps, bottom gap or the required landscape orientation.`
     : `- Card height: about 32% of canvas height (343px at 1080 reference).
 - Card top edge: about 64.6% from the top of the canvas (y about 698px at 1080).`}
-- Bottom gap below card: about 3.6% of canvas height (about 39px at 1080). Small gap only.
+- Bottom gap below card: about 7% of canvas height (about 72px at 1024). Small, visible gap only.
 - ${isAspectRatioTool ? 'Card corner radius and edge treatment: copy the CURRENT source card and scale it responsively inside this box. Do not inherit corner styling from the old target examples.' : 'Corner radius: about 3.9% of canvas width (42px at 1080).' }
 ${cardColourSpec}
 - ${isAspectRatioTool ? 'Text alignment and line-height: preserve the CURRENT source treatment; text size and the outer box geometry follow this target guide.' : 'Text alignment: left-aligned. Line-height about 1.1.'}
 ${textSizeSpec(
     'about 5.5-6% of canvas height per line (60-66px at 1080).',
   )}
-- Padding inside card: about 3.7% top/left/right, about 2.8% bottom.
+- Padding inside card: about 4.5% top/left/right, about 3.5% bottom.
 ${buttonSpec('left-aligned')}${cardSurfaceSpec}`;
   }
 
@@ -779,9 +800,9 @@ ${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
 ${getTargetFrameGeometry(ratio, profile)}
 ${buildLogoLayoutLine(
     profile,
-    '- Logo: top-center. Width about 12-14% of canvas width. Top margin about 5-7%.',
+    '- Logo: top-left. Width about 12-14% of canvas width. Top margin about 5-7%.',
     '24%',
-    'Place the visible logo lockup inside the LOCAL TOP-CENTRE frame notch at centerX=50% with its top edge at y=5.5% of the canvas. It must fit completely inside the local notch and never create a full-width header. This centred tab/notch position and size are fixed across all three variations so it stays clear of the Instagram Stories profile overlay. The wordmark must be perfectly straight and horizontal: baseline parallel to the top edge, 0-degree rotation, upright, with no tilt, skew, curve or perspective distortion.',
+    'Place the visible logo lockup inside the LOCAL TOP-LEFT frame notch, anchored to the left frame edge at x=4.7%, with its top edge at y=5.5% of the canvas. It must fit completely inside the local notch and never create a full-width header. This left tab/notch position and size are fixed across all three variations. The wordmark must be perfectly straight and horizontal: baseline parallel to the top edge, 0-degree rotation, upright, with no tilt, skew, curve or perspective distortion.',
   )}
 - Subject: large and prominent, fills most of the canvas height.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).

@@ -9,10 +9,83 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-Book.otf') format('opentype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-SemiBold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-Bold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-ExtraBold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudad';
+  src: url('/fonts/CabifyCiudad-Black.otf') format('opentype');
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudadText';
+  src: url('/fonts/CabifyCiudadText-Light.otf') format('opentype');
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudadText';
+  src: url('/fonts/CabifyCiudadText-Book.otf') format('opentype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudadText';
+  src: url('/fonts/CabifyCiudadText-SemiBold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CabifyCiudadText';
+  src: url('/fonts/CabifyCiudadText-Bold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 @theme {
-  --font-sans: 'CabifyCiudad', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'CabifyCiudadText', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   --font-cabify: 'CabifyCiudad', ui-sans-serif, system-ui, sans-serif;
+  --font-cabify-text: 'CabifyCiudadText', ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {

@@ -104,9 +104,9 @@ test('the Aspect Ratio reframe applies supplied frames as geometry only and keep
   assert.match(vertical, /must never create a full-width header/);
   assert.match(square, /width about 19% of canvas width/);
   assert.match(vertical, /width about 24% of canvas width/);
-  assert.match(vertical, /LOCAL TOP-CENTRE notch/);
-  assert.match(vertical, /centerX=50% with its top edge at y=5\.5%/);
-  assert.match(vertical, /stays clear of the Instagram Stories profile overlay/);
+  assert.match(vertical, /LOCAL TOP-LEFT notch/);
+  assert.match(vertical, /anchored to the left frame edge at x=4\.7%/);
+  assert.match(vertical, /left tab\/notch position and size are fixed/);
   assert.match(vertical, /perfectly straight and horizontal/);
   assert.match(vertical, /0-degree rotation/);
   assert.match(vertical, /no tilt, skew, curve or perspective distortion/);
@@ -129,11 +129,20 @@ test('the Aspect Ratio card prompt locks target geometry while preserving curren
   for (const ratio of ['1:1', '9:16']) {
     const { prompt } = await captureAspectRatioCardPrompt(ratio);
 
-    assert.match(prompt, /width=93%/);
-    assert.match(prompt, /left and right gaps are ALWAYS 3\.5% each/);
+    assert.match(prompt, ratio === '1:1' ? /width=85%/ : /width=93%/);
+    assert.match(prompt, ratio === '1:1'
+      ? /left and right gaps are ALWAYS 7\.5% each/
+      : /left and right gaps are ALWAYS 3\.5% each/);
     assert.match(prompt, /Never use the narrow source-card width/);
+    assert.match(prompt, /INPUT COLOUR LOCK - ABSOLUTE/);
+    assert.match(prompt, /Every visible colour from the input is locked/);
+    assert.match(prompt, /Never borrow a colour from a target-frame example or another campaign/);
     assert.match(prompt, /typeface and glyph shapes, weight, width, capitalization/);
     assert.match(prompt, /Do NOT substitute a generic sans-serif/);
+    assert.match(prompt, /CABIFY CIUDAD TYPOGRAPHY SYSTEM - REQUIRED/);
+    assert.match(prompt, /Promotional headlines and expressive card messages use Cabify Ciudad only/);
+    assert.match(prompt, /CTA labels, promo codes, buttons and any UI-like component use Cabify Ciudad Text only/);
+    assert.match(prompt, /Never tighten tracking or line-height merely to fit more copy/);
     assert.match(prompt, /Source line wrapping is incidental and must NOT be copied/);
     assert.match(prompt, /same proportions, shape, internal spacing, fill or gradient, colour values/);
     assert.match(prompt, /icon, logo, illustration, photograph and image crop/);
@@ -141,7 +150,15 @@ test('the Aspect Ratio card prompt locks target geometry while preserving curren
     assert.match(prompt, /Text colour: EXACTLY #6F49E8/);
     assert.match(prompt, /grow the card UPWARD only to a maximum/);
     assert.match(prompt, /scale down uniformly by at most 10%/);
-    assert.match(prompt, ratio === '1:1' ? /maximum of 40%/ : /maximum of 28%/);
+    assert.match(prompt, ratio === '1:1' ? /maximum of 32%/ : /maximum of 28%/);
+
+    if (ratio === '1:1') {
+      assert.match(prompt, /1:1 card is ALWAYS HORIZONTAL \/ LANDSCAPE/);
+      assert.match(prompt, /width-to-height ratio must never be below 2\.3:1/);
+      assert.match(prompt, /Never make it square, portrait, narrow, tall or vertically oriented/);
+      assert.match(prompt, /x=7\.5%, y=71%, width=85%, height=22%/);
+      assert.match(prompt, /bottom edge is fixed at y=93%/);
+    }
   }
 });
 
@@ -168,6 +185,7 @@ test('the Aspect Ratio card prompt forbids inventing a CTA and re-locks the 9:16
   assert.match(prompt, /If Image 2 has no CTA, do not create one/);
   assert.match(prompt, /9:16 LOGO ORIENTATION LOCK/);
   assert.match(prompt, /exactly 0-degree rotation/);
+  assert.match(prompt, /fixed LOCAL TOP-LEFT position/);
   assert.match(prompt, /Do not tilt, skew, warp, curve, rotate, redraw or apply perspective/);
 });
 
