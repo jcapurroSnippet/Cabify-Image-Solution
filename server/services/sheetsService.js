@@ -338,5 +338,10 @@ export const readRowsIfPresent = async (sheets, spreadsheetId, sheetName, header
     valueRenderOption: 'FORMULA',
   });
   const values = response.data.values || [];
-  return values.slice(1).map((row, index) => rowToObject(headers, row, index + 2));
+  // Status reads must tolerate a tab that still has the previous schema. Use
+  // the headers physically present in row 1; ensureSheetWithHeaders performs
+  // the canonical migration when the next write begins.
+  const storedHeaders = (values[0] || []).map((header) => String(header || '').trim());
+  const rowHeaders = storedHeaders.some(Boolean) ? storedHeaders : headers;
+  return values.slice(1).map((row, index) => rowToObject(rowHeaders, row, index + 2));
 };

@@ -1,4 +1,5 @@
 import {
+  BatchAspectRatio,
   BatchProgressEvent,
   BatchResult,
   BatchProgressStatus,
@@ -7,16 +8,14 @@ import {
 
 export interface BatchStatusRow {
   status: BatchProgressStatus;
-  links?: {
-    '1:1': string[];
-    '9:16': string[];
-    '1.91:1': string[];
-  };
+  links?: Record<BatchAspectRatio, string[]>;
 }
 
 export interface BatchStatusSnapshot {
   totalRows: number;
   completedRows: number;
+  remainingRows: number;
+  batchComplete: boolean;
   rows: Record<number, BatchStatusRow>;
   reviewBatchId?: string;
 }
@@ -31,112 +30,106 @@ export const startBatchProcessing = async (
   onProgress: (event: BatchProgressEvent) => void,
   onComplete: (result: BatchResult) => void,
   onError: (error: string) => void,
-  reviewMetadata?: BatchReviewMetadata
+  reviewMetadata?: BatchReviewMetadata,
+  initialReviewBatchId?: string | null,
 ): Promise<void> => {
   try {
-    let sawCompleted = false;
-    let sawError = false;
-    let lastTotalRows = 0;
-    let lastProcessedRows = 0;
+    let reviewBatchId = initialReviewBatchId?.trim() || undefined;
+    let previousProcessedRows = -1;
 
-    const response = await fetch('/api/batch-aspect-ratio', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        sheetsUrl,
-        ...(reviewMetadata || {}),
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    // Read the response as a stream of NDJSON
-    const handleEvent = (event: BatchProgressEvent) => {
-      if (event.totalRows !== undefined) {
-        lastTotalRows = event.totalRows;
-      }
-      if (event.currentRow !== undefined) {
-        lastProcessedRows = event.currentRow;
-      }
-
-      if (event.state === 'completed') {
-        if (sawCompleted) return;
-        sawCompleted = true;
-        onComplete(event as unknown as BatchResult);
-        return;
-      }
-      if (event.state === 'error') {
-        if (sawError) return;
-        sawError = true;
-        onError(event.error || 'Unknown batch processing error');
-        return;
-      }
-
-      onProgress(event);
-    };
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      const text = await response.text();
-      text
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .forEach((line) => {
-          try {
-            handleEvent(JSON.parse(line));
-          } catch (e) {
-            console.error('Failed to parse batch progress event:', e, line);
-          }
-        });
-    } else {
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          if (buffer.trim()) {
-            try {
-              handleEvent(JSON.parse(buffer));
-            } catch (e) {
-              console.error('Failed to parse final batch event:', e);
-            }
-          }
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          try {
-            handleEvent(JSON.parse(line));
-          } catch (e) {
-            console.error('Failed to parse batch progress event:', e, line);
-          }
-        }
-      }
-    }
-
-    if (!sawCompleted && !sawError) {
-      onComplete({
-        success: true,
-        totalRows: lastTotalRows,
-        processedRows: lastProcessedRows,
+    // Each request handles a bounded number of source rows. This keeps a
+    // 12-image Sheet well below Cloud Run's one-hour request ceiling while all
+    // chunks continue to write into the same review batch.
+    for (let chunk = 0; chunk < 1000; chunk += 1) {
+      const response = await fetch('/api/batch-aspect-ratio', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sheetsUrl,
+          ...(reviewMetadata || {}),
+          ...(reviewBatchId && { reviewBatchId }),
+          rowsPerRequest: 3,
+        }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      let chunkResult: BatchResult | null = null;
+      let streamError = '';
+      const handleEvent = (event: BatchProgressEvent) => {
+        if (event.reviewBatchId) reviewBatchId = event.reviewBatchId;
+        if (event.state === 'completed') {
+          chunkResult = event as unknown as BatchResult;
+          return;
+        }
+        if (event.state === 'error') {
+          streamError = event.error || 'Unknown batch processing error';
+          return;
+        }
+        if (event.state !== 'keepalive' && event.state !== 'started') onProgress(event);
+      };
+
+      const parseLine = (line: string) => {
+        if (!line.trim()) return;
+        try {
+          handleEvent(JSON.parse(line) as BatchProgressEvent);
+        } catch (error) {
+          throw new Error(`Invalid batch progress response: ${(error as Error).message}`);
+        }
+      };
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        const text = await response.text();
+        text.split('\n').forEach(parseLine);
+      } else {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) parseLine(buffer);
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          lines.forEach(parseLine);
+        }
+      }
+
+      if (streamError) throw new Error(streamError);
+      if (!chunkResult) {
+        throw new Error('The batch connection ended before the current chunk was persisted.');
+      }
+      if (typeof chunkResult.batchComplete !== 'boolean') {
+        throw new Error('The server returned an invalid batch completion state.');
+      }
+      if (!Number.isFinite(chunkResult.processedRows)) {
+        throw new Error('The server returned an invalid processed-row count.');
+      }
+
+      reviewBatchId = chunkResult.reviewBatchId || reviewBatchId;
+      if (chunkResult.batchComplete) {
+        onComplete({ ...chunkResult, reviewBatchId });
+        return;
+      }
+      if (!reviewBatchId) {
+        throw new Error('The server did not return the review batch ID required to continue.');
+      }
+      if (chunkResult.processedRows <= previousProcessedRows) {
+        throw new Error('Batch processing made no progress; refusing to repeat the same chunk.');
+      }
+      previousProcessedRows = chunkResult.processedRows;
     }
+
+    throw new Error('Batch processing exceeded the maximum number of chunks.');
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Batch processing error:', error);

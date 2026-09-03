@@ -45,8 +45,9 @@ export const BATCH_VARIATIONS_SHEET = 'batch_variations';
  * writes its output: the source tab is read-only, so no operator has to
  * pre-build ratio columns and nothing in their sheet gets overwritten.
  *
- * `review_item_id` is the link into `creative_review_items`, which is how a row
- * here is traced through the rest of the ciclo (review, approval, publication).
+ * `review_item_id` is the link into `creative_review_items`, and
+ * `creative_review_url` gives operators a direct way back into the review UI.
+ * Together they trace a row through review, approval and publication.
  * Append-only, like the review tabs — a re-run adds a batch, it never rewrites
  * history.
  */
@@ -54,6 +55,7 @@ export const BATCH_VARIATION_HEADERS = [
   'variation_id',
   'review_batch_id',
   'review_item_id',
+  'creative_review_url',
   'creative_family_id',
   'batch_title',
   'source_sheet_id',

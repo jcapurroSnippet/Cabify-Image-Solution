@@ -55,10 +55,15 @@ export const uploadBufferToDrive = async (buffer, fileName, mimeType = 'image/pn
  */
 export const uploadImageToDrive = async (imageBase64, fileName, folderId) => {
   try {
-    // Remove data URL prefix if present
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    const match = String(imageBase64 || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    const mimeType = match?.[1] || 'image/png';
+    const base64Data = match?.[2] || String(imageBase64 || '');
     const buffer = Buffer.from(base64Data, 'base64');
-    return await uploadBufferToDrive(buffer, fileName, 'image/png', folderId);
+    const extension = /jpe?g/i.test(mimeType) ? 'jpg' : /webp/i.test(mimeType) ? 'webp' : 'png';
+    const normalizedFileName = /\.[a-z0-9]+$/i.test(fileName)
+      ? fileName.replace(/\.[a-z0-9]+$/i, `.${extension}`)
+      : `${fileName}.${extension}`;
+    return await uploadBufferToDrive(buffer, normalizedFileName, mimeType, folderId);
   } catch (error) {
     throw new Error(`Failed to upload image to Drive: ${getApiErrorDetails(error)}`);
   }

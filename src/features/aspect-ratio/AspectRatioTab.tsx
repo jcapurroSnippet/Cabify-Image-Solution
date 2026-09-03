@@ -67,7 +67,6 @@ const SUPPORTED_RATIOS: AspectRatio[] = [
   AspectRatio.RATIO_1_1,
   AspectRatio.RATIO_9_16,
 ];
-const BATCH_STATUS_POLL_MS = 15000;
 const countCompletedRows = (results: BatchState['results']): number =>
   Object.values(results).filter((row) => row.status === 'completed' || row.status === 'skipped')
     .length;
@@ -100,12 +99,16 @@ export default function AspectRatioTab() {
 
   useEffect(() => {
     const hasSheetsUrl = !!batchState.sheetsUrl.trim();
-    const hasPending =
-      batchState.progress.totalRows > 0 &&
-      batchState.progress.processedRows < batchState.progress.totalRows;
-    const shouldPoll = hasSheetsUrl && (batchState.isProcessing || hasPending);
+    // Reconcile once after a failed stream. There is no background worker to
+    // poll while idle: the browser itself resumes the next bounded chunk.
+    const shouldReconcile = Boolean(
+      hasSheetsUrl
+      && batchState.error
+      && batchState.reviewBatchId
+      && !batchState.isProcessing,
+    );
 
-    if (!shouldPoll) {
+    if (!shouldReconcile) {
       return;
     }
 
@@ -128,15 +131,18 @@ export default function AspectRatioTab() {
               ...results[numericRow],
               status: rowStatus.status,
               ...(rowStatus.links && { links: rowStatus.links }),
+              ...(rowStatus.status !== 'error' && { error: undefined }),
             };
           });
 
           const totalRows = snapshot.totalRows || previous.progress.totalRows;
-          const processedRows = countCompletedRows(results);
+          const processedRows = Math.max(snapshot.completedRows || 0, countCompletedRows(results));
           const isDone = totalRows > 0 && processedRows >= totalRows;
 
           return {
             ...previous,
+            error: isDone ? null : previous.error,
+            reviewBatchId: snapshot.reviewBatchId || previous.reviewBatchId,
             isProcessing: isDone ? false : previous.isProcessing,
             progress: {
               ...previous.progress,
@@ -153,19 +159,16 @@ export default function AspectRatioTab() {
       }
     };
 
-    pollStatus();
-    const intervalId = setInterval(pollStatus, BATCH_STATUS_POLL_MS);
+    void pollStatus();
 
     return () => {
       isActive = false;
-      clearInterval(intervalId);
     };
   }, [
+    batchState.error,
     batchState.isProcessing,
     batchState.sheetsUrl,
     batchState.reviewBatchId,
-    batchState.progress.totalRows,
-    batchState.progress.processedRows,
   ]);
 
   // ==================== Single Mode Handlers ====================
@@ -241,27 +244,67 @@ export default function AspectRatioTab() {
 
   // ==================== Batch Mode Handlers ====================
   const handleBatchInputChange = (field: 'sheetsUrl' | 'driveFolderUrl', value: string) => {
-    setBatchState((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
+    setBatchState((previous) => {
+      const startsNewRun = field === 'sheetsUrl'
+        && value !== previous.sheetsUrl
+        && Boolean(previous.reviewBatchId);
+      return {
+        ...previous,
+        [field]: value,
+        error: null,
+        ...(startsNewRun && {
+          reviewBatchId: null,
+          variationsSheetUrl: null,
+          results: {},
+          progress: {
+            totalRows: 0,
+            processedRows: 0,
+            currentRowNumber: 0,
+            currentStatus: 'reading-sheet' as const,
+          },
+        }),
+      };
+    });
   };
 
   const handleBatchReviewChange = (
     field: keyof BatchState['review'],
     value: string,
   ) => {
-    setBatchState((previous) => ({
-      ...previous,
-      review: {
-        ...previous.review,
-        [field]: value,
-      },
-    }));
+    setBatchState((previous) => {
+      const startsNewRun = value !== previous.review[field] && Boolean(previous.reviewBatchId);
+      return {
+        ...previous,
+        review: {
+          ...previous.review,
+          [field]: value,
+        },
+        error: null,
+        ...(startsNewRun && {
+          reviewBatchId: null,
+          variationsSheetUrl: null,
+          results: {},
+          progress: {
+            totalRows: 0,
+            processedRows: 0,
+            currentRowNumber: 0,
+            currentStatus: 'reading-sheet' as const,
+          },
+        }),
+      };
+    });
   };
 
   const isBatchReviewFormComplete = Object.values(batchState.review).every(
     (value) => value.trim().length > 0,
+  );
+  const isBatchComplete = Boolean(
+    !batchState.isProcessing
+    && batchState.progress.totalRows > 0
+    && batchState.progress.processedRows >= batchState.progress.totalRows,
+  );
+  const isResumableBatch = Boolean(
+    batchState.error && batchState.reviewBatchId && !isBatchComplete,
   );
 
   const validateBatchInputs = (): boolean => {
@@ -291,19 +334,22 @@ export default function AspectRatioTab() {
       return;
     }
 
+    const resumeReviewBatchId = isResumableBatch ? batchState.reviewBatchId : null;
     setBatchState((previous) => ({
       ...previous,
       isProcessing: true,
       error: null,
-      results: {},
-      reviewBatchId: null,
-      variationsSheetUrl: null,
-      progress: {
-        totalRows: 0,
-        processedRows: 0,
-        currentRowNumber: 0,
-        currentStatus: 'reading-sheet',
-      },
+      results: resumeReviewBatchId ? previous.results : {},
+      reviewBatchId: resumeReviewBatchId,
+      variationsSheetUrl: resumeReviewBatchId ? previous.variationsSheetUrl : null,
+      progress: resumeReviewBatchId
+        ? { ...previous.progress, currentStatus: 'reading-sheet' }
+        : {
+          totalRows: 0,
+          processedRows: 0,
+          currentRowNumber: 0,
+          currentStatus: 'reading-sheet',
+        },
     }));
 
     await startBatchProcessing(
@@ -336,15 +382,16 @@ export default function AspectRatioTab() {
             const nextStatus = event.status || 'downloading';
             const isTerminal = previousRow?.status === 'completed' || previousRow?.status === 'skipped';
 
+            const resolvedStatus = isTerminal && previousRow ? previousRow.status : nextStatus;
             results[event.rowNumber] = {
               ...(previousRow || {}),
-              status: isTerminal ? previousRow.status : nextStatus,
+              status: resolvedStatus,
               ...(event.links && { links: event.links }),
-              ...(event.error && { error: event.error }),
+              error: resolvedStatus === 'error' ? event.error || previousRow?.error : undefined,
             };
           }
 
-          const processedRows = countCompletedRows(results);
+          const processedRows = Math.max(event.completedRows || 0, countCompletedRows(results));
 
           return {
             ...previous,
@@ -361,7 +408,10 @@ export default function AspectRatioTab() {
       (result: BatchResult) => {
         setBatchState((previous) => {
           const totalRows = result.totalRows ?? previous.progress.totalRows;
-          const processedRows = countCompletedRows(previous.results);
+          const processedRows = Math.max(
+            countCompletedRows(previous.results),
+            result.processedRows || 0,
+          );
 
           return {
             ...previous,
@@ -394,6 +444,7 @@ export default function AspectRatioTab() {
           .filter(Boolean),
         createdBy: batchState.review.createdBy.trim(),
       },
+      resumeReviewBatchId,
     );
   };
 
@@ -448,6 +499,14 @@ export default function AspectRatioTab() {
         {/* Batch Input Section */}
         <div className="panel-surface space-y-4">
           <h3 className="text-lg font-semibold text-white">Batch Processing</h3>
+          <p className="text-sm leading-6 text-slate-400">
+            Usa la columna de imagen <span className="font-medium text-slate-200">16:9</span> de
+            la pestaña indicada por el <span className="font-mono text-slate-300">gid</span> del
+            enlace. Por cada imagen genera exactamente{' '}
+            <span className="font-medium text-slate-200">3 variantes 1:1</span> y{' '}
+            <span className="font-medium text-slate-200">3 variantes 9:16</span>. Las 6 salidas se
+            guardan en una pestaña de esta misma spreadsheet y quedan listas para Creative Review.
+          </p>
 
           <div className="space-y-3">
             <div>
@@ -550,7 +609,7 @@ export default function AspectRatioTab() {
                   Processing...
                 </>
               ) : (
-                'Start Batch Processing'
+                isResumableBatch ? 'Resume Batch Processing' : 'Start Batch Processing'
               )}
             </button>
 
@@ -574,13 +633,21 @@ export default function AspectRatioTab() {
                       <Copy className="h-3.5 w-3.5" />
                       Copiar ID
                     </button>
-                    <a
-                      href={`/?tab=review&sheetsUrl=${encodeURIComponent(batchState.sheetsUrl)}&batchId=${encodeURIComponent(batchState.reviewBatchId)}`}
-                      className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-cyan-200"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Abrir tanda
-                    </a>
+                    {isBatchComplete ? (
+                      <a
+                        href={`/?tab=review&sheetsUrl=${encodeURIComponent(batchState.sheetsUrl)}&batchId=${encodeURIComponent(batchState.reviewBatchId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-cyan-200"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Abrir tanda
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center rounded-lg border border-cyan-300/20 px-3 py-2 text-xs text-cyan-100/70">
+                        Disponible al completar
+                      </span>
+                    )}
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
@@ -597,7 +664,7 @@ export default function AspectRatioTab() {
                       Variaciones generadas
                     </p>
                     <p className="mt-1 text-sm text-slate-200">
-                      Pestaña <span className="font-mono">batch_variations</span>
+                      <span className="font-mono">batch_variations</span> — salida para Creative Review
                     </p>
                   </div>
                   <a
@@ -611,7 +678,8 @@ export default function AspectRatioTab() {
                   </a>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
-                  Una fila por variación. Tu pestaña de origen no se modifica.
+                  Una fila por variación. Tu pestaña de origen no se modifica; la salida queda lista
+                  para Creative Review.
                 </p>
               </div>
             )}

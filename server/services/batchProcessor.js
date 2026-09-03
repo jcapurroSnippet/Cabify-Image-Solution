@@ -1,4 +1,5 @@
 import axios from 'axios';
+import crypto from 'node:crypto';
 import {
   appendRows,
   ensureSheetWithHeaders,
@@ -7,22 +8,32 @@ import {
   readRowsIfPresent,
   columnIndexToLetter,
   getFirstSheetName,
+  getSheetMetadata,
+  getSheetByTitle,
+  buildRange,
 } from './sheetsService.js';
 import { uploadImageToDrive, makeFilePublic, getShareableLink, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
 import { ASPECT_RATIO_PROMPT_PROFILE, generateAspectRatioImages } from './imageGenerator.js';
-import { optimizeImageBuffer, bufferToDataUrl } from './imageOptimizer.js';
+import { optimizeImageBuffer, bufferToDataUrl, detectImageMimeType } from './imageOptimizer.js';
 import {
   BATCH_VARIATIONS_SHEET,
   BATCH_VARIATION_HEADERS,
   getCreativeLibraryConfig,
 } from './creativeLibraryConfig.js';
-import { createReviewBatch, registerReviewItems } from './creativeReviewService.js';
+import { createReviewBatch, getReviewBatch, registerReviewItems } from './creativeReviewService.js';
 
-const DEFAULT_MAX_SCAN_ROWS = Number(process.env.SHEET_MAX_SCAN_ROWS || 200);
-const DEFAULT_URL_SCAN_ROWS = Number(process.env.SHEET_URL_SCAN_ROWS || 200);
+// A zero default means "read the populated grid". Operators may set an
+// explicit limit, but the application no longer truncates wide Sheets merely
+// to stay under an arbitrary cell count.
+const DEFAULT_MAX_SCAN_ROWS = Math.max(0, Number(process.env.SHEET_MAX_SCAN_ROWS || 0));
+const DEFAULT_URL_SCAN_ROWS = Math.max(0, Number(process.env.SHEET_URL_SCAN_ROWS || 0));
 const EXPECTED_VARIATIONS_PER_RATIO = 3;
+const DEFAULT_BATCH_ROWS_PER_REQUEST = Math.max(
+  1,
+  Number.parseInt(process.env.BATCH_ROWS_PER_REQUEST || '3', 10) || 3,
+);
 
 /**
  * Ratios covered by Batch from Sheets. Output no longer depends on which
@@ -39,6 +50,92 @@ const EXPECTED_VARIATIONS_PER_ROW = BATCH_ASPECT_RATIOS.length * EXPECTED_VARIAT
 const createEmptyRatioLinks = () =>
   Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => [ratio, []]));
 
+const normalizeHeaderText = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const isVideoHeader = (header) => /(^|\W)(video|vid)(\W|$)/.test(header);
+
+const isImageHeader = (header) =>
+  /(^|\W)(img|image|imagen|foto|creative|creatividad|pieza)(\W|$)/.test(header);
+
+const hasSixteenNineMarker = (header) =>
+  /(^|\D)16\s*[.:/x-]\s*9(\D|$)/.test(header)
+  || /(^|\D)1\s*[.,]\s*91\s*(?::\s*1)?(\D|$)/.test(header)
+  || /(^|\D)(1200\s*x\s*628|1920\s*x\s*1080)(\D|$)/.test(header);
+
+/**
+ * Locate the explicit landscape-image input column used by Batch from Sheets.
+ * Video columns are intentionally rejected even when they carry the same ratio.
+ * The semantic header wins; URL counts are only used to break ties between
+ * equally valid 16:9 image columns.
+ */
+export const findSixteenNineImageColumn = (headers = [], urlCounts = {}) => {
+  const candidates = headers
+    .map((value, index) => {
+      const header = normalizeHeaderText(value);
+      if (!header || isVideoHeader(header) || !hasSixteenNineMarker(header)) return null;
+
+      const exact = /^(16\s*[.:/x-]\s*9|1\s*[.,]\s*91(?::\s*1)?)\s+(img|image|imagen)$/.test(header);
+      const score = (exact ? 200 : 100) + (isImageHeader(header) ? 50 : 0);
+      return { index, score, urlCount: Number(urlCounts[index] || 0) };
+    })
+    .filter(Boolean)
+    .sort((left, right) =>
+      right.score - left.score || right.urlCount - left.urlCount || left.index - right.index,
+    );
+
+  return candidates[0]?.index ?? -1;
+};
+
+export const assertCompleteRatioVariations = ({ images, ratio, rowNumber, errors = [] }) => {
+  const count = Array.isArray(images) ? images.length : 0;
+  if (count !== EXPECTED_VARIATIONS_PER_RATIO) {
+    const detail = errors.length ? ` Underlying errors: ${errors.join(' | ')}` : '';
+    throw new Error(
+      `Expected exactly ${EXPECTED_VARIATIONS_PER_RATIO} ${ratio} variants for row ${rowNumber}, but generated ${count}.${detail}`,
+    );
+  }
+  return images;
+};
+
+export const orderRegisteredReviewItemIds = (expectedItems = [], registeredItems = []) => {
+  const byGenerationId = new Map(
+    registeredItems
+      .map((item) => [
+        String(item?.generation_id || item?.generationId || '').trim(),
+        String(item?.review_item_id || item?.reviewItemId || '').trim(),
+      ])
+      .filter(([generationId, itemId]) => generationId && itemId),
+  );
+
+  const hasGenerationIds = byGenerationId.size > 0;
+  const ordered = expectedItems.map((expected, index) => {
+    const generationId = String(expected?.generationId || expected?.generation_id || '').trim();
+    if (generationId && byGenerationId.has(generationId)) return byGenerationId.get(generationId);
+    if (hasGenerationIds) return '';
+    const positional = registeredItems[index];
+    return String(positional?.review_item_id || positional?.reviewItemId || '').trim();
+  });
+
+  if (
+    expectedItems.length !== EXPECTED_VARIATIONS_PER_ROW
+    || registeredItems.length !== EXPECTED_VARIATIONS_PER_ROW
+    || ordered.length !== EXPECTED_VARIATIONS_PER_ROW
+    || ordered.some((itemId) => !itemId)
+    || new Set(ordered).size !== EXPECTED_VARIATIONS_PER_ROW
+  ) {
+    throw new Error(
+      `Creative Review registration must return ${EXPECTED_VARIATIONS_PER_ROW} item IDs before the row is published to the output sheet.`,
+    );
+  }
+
+  return ordered;
+};
+
 const getRatioFileSlug = (ratio) => ratio.replace(/\./g, '-').replace(/:/g, '-');
 
 const nowIso = () => new Date().toISOString();
@@ -47,6 +144,114 @@ const canonicalSheetsUrl = (spreadsheetId, sheetId) =>
   `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit${
     Number.isInteger(sheetId) ? `#gid=${sheetId}` : ''
   }`;
+
+const buildCreativeReviewUrl = (baseUrl, sheetsUrl, reviewBatchId) => {
+  if (!reviewBatchId) return '';
+  try {
+    const url = new URL('/', baseUrl);
+    url.searchParams.set('tab', 'review');
+    url.searchParams.set('sheetsUrl', sheetsUrl);
+    url.searchParams.set('batchId', reviewBatchId);
+    return url.toString();
+  } catch {
+    return '';
+  }
+};
+
+export const buildBatchVariationSheetFormatRequests = (sheetId, rowCount = 1000) => {
+  const lastColumnIndex = BATCH_VARIATION_HEADERS.length;
+  const gridRowCount = Math.max(2, Number(rowCount) || 1000);
+  const columnWidth = (startIndex, endIndex, pixelSize) => ({
+    updateDimensionProperties: {
+      range: { sheetId, dimension: 'COLUMNS', startIndex, endIndex },
+      properties: { pixelSize },
+      fields: 'pixelSize',
+    },
+  });
+
+  return [
+    {
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: 1 },
+          tabColorStyle: { rgbColor: { red: 0.435, green: 0.286, blue: 0.91 } },
+        },
+        fields: 'gridProperties.frozenRowCount,tabColorStyle',
+      },
+    },
+    {
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: lastColumnIndex,
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColorStyle: { rgbColor: { red: 0.435, green: 0.286, blue: 0.91 } },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'WRAP',
+            textFormat: {
+              bold: true,
+              foregroundColorStyle: { rgbColor: { red: 1, green: 1, blue: 1 } },
+            },
+          },
+        },
+        fields: [
+          'userEnteredFormat.backgroundColorStyle',
+          'userEnteredFormat.horizontalAlignment',
+          'userEnteredFormat.verticalAlignment',
+          'userEnteredFormat.wrapStrategy',
+          'userEnteredFormat.textFormat',
+        ].join(','),
+      },
+    },
+    {
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
+        properties: { pixelSize: 34 },
+        fields: 'pixelSize',
+      },
+    },
+    {
+      setBasicFilter: {
+        filter: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: gridRowCount,
+            startColumnIndex: 0,
+            endColumnIndex: lastColumnIndex,
+          },
+        },
+      },
+    },
+    columnWidth(0, 3, 190),
+    columnWidth(3, 4, 300),
+    columnWidth(4, 6, 190),
+    columnWidth(6, 9, 130),
+    columnWidth(9, 10, 280),
+    columnWidth(10, 12, 90),
+    columnWidth(12, 13, 280),
+    columnWidth(13, 19, 150),
+  ];
+};
+
+const formatBatchVariationsSheet = async (sheets, spreadsheetId, sheetId) => {
+  const metadata = await getSheetMetadata(sheets, spreadsheetId);
+  const sheet = getSheetByTitle(metadata, BATCH_VARIATIONS_SHEET);
+  const rowCount = sheet?.properties?.gridProperties?.rowCount || 1000;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: buildBatchVariationSheetFormatRequests(sheetId, rowCount),
+    },
+  });
+};
 
 const normalizePlazas = (value) => {
   const candidates = Array.isArray(value) ? value : String(value || '').split(',');
@@ -154,7 +359,15 @@ export const buildBatchReviewItems = ({
       return {
         familyId,
         version: 1,
-        generationId: `${batchId}:${rowNumber}:${ratio}:${variant}`,
+        // The source slot is stable, while this artifact suffix changes when a
+        // retry genuinely produced new bytes and therefore a new Drive file.
+        // That lets Creative Review supersede a partially registered attempt
+        // instead of rejecting it as the same generation with different bytes.
+        generationId: `${batchId}:${rowNumber}:${ratio}:${variant}:${crypto
+          .createHash('sha256')
+          .update(String(imageUrl || ''))
+          .digest('hex')
+          .slice(0, 16)}`,
         ratio,
         variantIndex: variant,
         sourceTab: sheetName,
@@ -180,6 +393,7 @@ export const buildBatchReviewItems = ({
 export const buildBatchVariationRows = ({
   batchId,
   batchTitle,
+  creativeReviewUrl,
   spreadsheetId,
   sourceTab,
   rowNumber,
@@ -214,6 +428,7 @@ export const buildBatchVariationRows = ({
         }),
         review_batch_id: batchId || '',
         review_item_id: reviewItemId,
+        creative_review_url: creativeReviewUrl || '',
         creative_family_id: familyId || '',
         batch_title: batchTitle || '',
         source_sheet_id: spreadsheetId || '',
@@ -244,7 +459,7 @@ export const buildBatchVariationRows = ({
  */
 export const summarizeBatchVariations = (
   variationRows,
-  { spreadsheetId, sourceTab, reviewBatchId } = {},
+  { spreadsheetId, sourceTab, reviewBatchId, sourceImageUrlsByRow = {} } = {},
 ) => {
   const scoped = (variationRows || []).filter((row) =>
     String(row?.source_sheet_id || '').trim() === String(spreadsheetId || '').trim()
@@ -253,7 +468,8 @@ export const summarizeBatchVariations = (
   );
 
   let targetBatchId = String(reviewBatchId || '').trim();
-  if (!targetBatchId) {
+  let hasTargetBatch = Boolean(targetBatchId);
+  if (!hasTargetBatch) {
     // Latest wins. created_at is ISO, so lexical order is chronological.
     let latestCreatedAt = '';
     for (const row of scoped) {
@@ -261,16 +477,20 @@ export const summarizeBatchVariations = (
       if (createdAt >= latestCreatedAt) {
         latestCreatedAt = createdAt;
         targetBatchId = String(row.review_batch_id || '').trim();
+        hasTargetBatch = true;
       }
     }
   }
 
   const rows = {};
   for (const row of scoped) {
-    if (targetBatchId && String(row.review_batch_id || '').trim() !== targetBatchId) continue;
+    if (hasTargetBatch && String(row.review_batch_id || '').trim() !== targetBatchId) continue;
 
     const rowNumber = Number(row.source_row);
     if (!Number.isFinite(rowNumber)) continue;
+    const expectedSourceUrl = normalizeUrl(sourceImageUrlsByRow[rowNumber]);
+    const persistedSourceUrl = normalizeUrl(row.source_image_url);
+    if (expectedSourceUrl && expectedSourceUrl !== persistedSourceUrl) continue;
 
     const ratio = String(row.aspect_ratio || '').trim();
     if (!BATCH_ASPECT_RATIOS.includes(ratio)) continue;
@@ -279,14 +499,18 @@ export const summarizeBatchVariations = (
       rows[rowNumber] = { status: 'generating', links: createEmptyRatioLinks() };
     }
     const variant = Number(row.variant) || rows[rowNumber].links[ratio].length + 1;
+    if (variant < 1 || variant > EXPECTED_VARIATIONS_PER_RATIO) continue;
     rows[rowNumber].links[ratio][variant - 1] = String(row.image_url).trim();
   }
 
   let completedRows = 0;
   for (const entry of Object.values(rows)) {
-    const found = Object.values(entry.links)
-      .reduce((total, links) => total + links.filter(Boolean).length, 0);
-    if (found >= EXPECTED_VARIATIONS_PER_ROW) {
+    const isComplete = BATCH_ASPECT_RATIOS.every((ratio) =>
+      Array.from({ length: EXPECTED_VARIATIONS_PER_RATIO }, (_, index) =>
+        Boolean(entry.links[ratio]?.[index]),
+      ).every(Boolean),
+    );
+    if (isComplete) {
       entry.status = 'completed';
       completedRows += 1;
     }
@@ -387,12 +611,21 @@ const findHeaderRowIndex = (rowData, maxScan = 20) => {
 
   const headerKeywords = ['categoria', 'ciudad', 'copy', 'preview'];
 
-  // First pass: look for a row that contains at least 2 header keywords
+  // First pass: an explicit 16:9 image header identifies the batch schema even
+  // when the rest of the columns use names we have never seen before.
+  for (let i = 0; i < Math.min(maxScan, rowData.length); i++) {
+    const texts = (rowData[i]?.values || []).map((cell) =>
+      cell?.userEnteredValue?.stringValue || cell?.formattedValue || '',
+    );
+    if (findSixteenNineImageColumn(texts) >= 0) return i;
+  }
+
+  // Second pass: look for a row that contains at least 2 familiar headers.
   for (let i = 0; i < Math.min(maxScan, rowData.length); i++) {
     const row = rowData[i];
     if (!row?.values) continue;
     const texts = row.values
-      .map((cell) => cell?.userEnteredValue?.stringValue || '')
+      .map((cell) => cell?.userEnteredValue?.stringValue || cell?.formattedValue || '')
       .map((t) => t.toLowerCase());
 
     const matches = headerKeywords.filter((kw) => texts.some((t) => t.includes(kw)));
@@ -420,23 +653,21 @@ const findHeaderRowIndex = (rowData, maxScan = 20) => {
 };
 
 const buildSheetRange = async (sheets, spreadsheetId, sheetName, maxRows = DEFAULT_MAX_SCAN_ROWS) => {
-  try {
-    const meta = await sheets.spreadsheets.get({
-      spreadsheetId,
-      fields: 'sheets(properties(title,gridProperties(columnCount,rowCount)))',
-    });
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets(properties(title,gridProperties(columnCount,rowCount)))',
+  });
 
-    const sheet = meta.data.sheets?.find((s) => s.properties?.title === sheetName);
-    const columnCount = sheet?.properties?.gridProperties?.columnCount || 26;
-    const rowCount = sheet?.properties?.gridProperties?.rowCount || maxRows;
-    const lastCol = columnIndexToLetter(Math.max(0, columnCount - 1));
-    const lastRow = Math.min(rowCount, maxRows);
-
-    return `${sheetName}!A1:${lastCol}${lastRow}`;
-  } catch (error) {
-    console.warn('[BATCH] Could not fetch sheet grid properties, falling back to A1:Z200');
-    return `${sheetName}!A1:Z${maxRows}`;
+  const sheet = meta.data.sheets?.find((candidate) => candidate.properties?.title === sheetName);
+  if (!sheet) {
+    throw new Error(`Sheet "${sheetName}" was not found.`);
   }
+  const columnCount = sheet.properties?.gridProperties?.columnCount || 26;
+  const rowCount = sheet.properties?.gridProperties?.rowCount || 1;
+  const lastCol = columnIndexToLetter(Math.max(0, columnCount - 1));
+  const lastRow = maxRows > 0 ? Math.min(rowCount, maxRows) : rowCount;
+
+  return buildRange(sheetName, `A1:${lastCol}${Math.max(1, lastRow)}`);
 };
 
 const extractDriveFileId = (url) => {
@@ -538,9 +769,10 @@ export const downloadImageAsDataUrl = async (imageUrl) => {
     
     // Optimize the image
     const optimized = await optimizeImageBuffer(buffer);
-    
+
     // Convert to data URL
-    const dataUrl = bufferToDataUrl(optimized, 'image/jpeg');
+    const mimeType = await detectImageMimeType(optimized);
+    const dataUrl = bufferToDataUrl(optimized, mimeType);
     
     return dataUrl;
   } catch (error) {
@@ -595,7 +827,7 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
       try {
         const dataResponse = await sheets.spreadsheets.values.get({
           spreadsheetId,
-          range: `${sheetName}!1:1`,
+          range: buildRange(sheetName, '1:1'),
         });
 
         const headers = dataResponse.data.values?.[0] || [];
@@ -621,7 +853,7 @@ export const findFirstSheetWithData = async (spreadsheetId) => {
       try {
         const dataResponse = await sheets.spreadsheets.values.get({
           spreadsheetId,
-          range: `${sheetName}!1:5`,
+          range: buildRange(sheetName, '1:5'),
         });
 
         const allRows = dataResponse.data.values || [];
@@ -681,8 +913,8 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
 
     // Parse header
     const headers = headerRow.values.map((cell, idx) => {
-      if (!cell) return `Column${String.fromCharCode(65 + idx)}`;
-      return cell.userEnteredValue?.stringValue || `Column${String.fromCharCode(65 + idx)}`;
+      if (!cell) return `Column${columnIndexToLetter(idx)}`;
+      return cell.userEnteredValue?.stringValue || `Column${columnIndexToLetter(idx)}`;
     });
 
     // Parse data rows (skip header row)
@@ -807,10 +1039,10 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
 
     // Scan data rows for URLs (in hyperlinks or cell values)
     // Increased from 15 to 50 rows to handle varied data
-    const rowsToScan = Math.min(
-      DEFAULT_URL_SCAN_ROWS,
-      Math.max(0, gridData.rowData.length - headerRowIndex - 1)
-    );
+    const availableRows = Math.max(0, gridData.rowData.length - headerRowIndex - 1);
+    const rowsToScan = DEFAULT_URL_SCAN_ROWS > 0
+      ? Math.min(DEFAULT_URL_SCAN_ROWS, availableRows)
+      : availableRows;
     logLine(`[URL DETECTION] Scanning ${rowsToScan} data rows for URLs...`);
 
     let urlsFoundPerColumn = {};
@@ -847,23 +1079,33 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
     }
     debug('URL counts', { urlsFoundPerColumn });
 
-    // Find column with most URLs
-    let bestColumnIdx = -1;
-    let maxUrls = 0;
-    for (const [colIdx, count] of Object.entries(urlsFoundPerColumn)) {
-      if (count > maxUrls) {
-        maxUrls = count;
-        bestColumnIdx = parseInt(colIdx);
-      }
+    const headerTexts = (headerRow?.values || []).map((cell) =>
+      cell?.userEnteredValue?.stringValue || cell?.formattedValue || '',
+    );
+    const sourceColumnIdx = findSixteenNineImageColumn(headerTexts, urlsFoundPerColumn);
+    const sourceUrlCount = Number(urlsFoundPerColumn[sourceColumnIdx] || 0);
+
+    if (sourceColumnIdx !== -1 && sourceUrlCount > 0) {
+      const sourceHeader = headerTexts[sourceColumnIdx] || `Column ${sourceColumnIdx + 1}`;
+      logLine(
+        `[URL DETECTION] SUCCESS: Using explicit 16:9 image column ${sourceColumnIdx} `
+        + `("${sourceHeader}") with ${sourceUrlCount} URLs`,
+      );
+      debug('16:9 source column', {
+        sourceColumnIdx,
+        sourceHeader,
+        sourceUrlCount,
+      });
+      return sourceColumnIdx;
     }
 
-    if (bestColumnIdx !== -1) {
-      logLine(`[URL DETECTION] SUCCESS: Found image URL column at index ${bestColumnIdx} with ${maxUrls} URLs`);
-      debug('Best column', { bestColumnIdx, maxUrls });
-      return bestColumnIdx;
+    if (sourceColumnIdx !== -1) {
+      logLine('[URL DETECTION] ERROR: The 16:9 image column contains no URLs');
+      debug('16:9 source column empty', { sourceColumnIdx, sourceHeader: headerTexts[sourceColumnIdx] });
+      return -1;
     }
 
-    logLine('[URL DETECTION] ERROR: No column with URLs found in scanned rows');
+    logLine('[URL DETECTION] ERROR: No explicit 16:9 image header was found');
     logLine(`[URL DETECTION] Debug: Header row index = ${headerRowIndex}`);
 
     try {
@@ -914,7 +1156,11 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
     debug('No URL column found', { headerRowIndex });
     return -1;
   } catch (error) {
-    return -1;
+    const detail = String(error?.message || error || 'Unknown Google Sheets error.');
+    const wrapped = new Error(`Failed to inspect the 16:9 image column in "${sheetName}": ${detail}`);
+    wrapped.status = error?.status || error?.response?.status || error?.code;
+    wrapped.cause = error;
+    throw wrapped;
   }
 };
 
@@ -937,13 +1183,16 @@ export const getBatchStatus = async (options) => {
 
   const imageUrlColumnIndex = await detectImageUrlColumn(spreadsheetId, sheetName);
   if (imageUrlColumnIndex === -1) {
-    throw new Error('Could not find any column with image URLs in the sheet');
+    throw new Error(
+      'Could not find a populated 16:9 image column. Expected a header such as "16.9 IMG" or "16:9 IMG".',
+    );
   }
 
   const sheetsClient = await getSheetsClient();
+  const headerRange = await buildSheetRange(sheetsClient, spreadsheetId, sheetName, 20);
   const headerResponse = await sheetsClient.spreadsheets.get({
     spreadsheetId,
-    ranges: [`${sheetName}!A:Z`],
+    ranges: [headerRange],
     includeGridData: true,
   });
 
@@ -955,15 +1204,22 @@ export const getBatchStatus = async (options) => {
     const headerRow = gridData.rowData[headerRowIndex]?.values || [];
     headerNames = headerRow.map((cell, idx) => {
       const text = cell?.userEnteredValue?.stringValue;
-      return text || `Column${String.fromCharCode(65 + idx)}`;
+      return text || `Column${columnIndexToLetter(idx)}`;
     });
   }
 
   const imageUrlColumnName =
-    headerNames[imageUrlColumnIndex] || `Column${String.fromCharCode(65 + imageUrlColumnIndex)}`;
+    headerNames[imageUrlColumnIndex] || `Column${columnIndexToLetter(imageUrlColumnIndex)}`;
 
   const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
-  const totalRows = rows.length;
+  const sourceRows = rows
+    .map((row, rowIndex) => ({
+      row,
+      rowNumber: row.__rowNumber || (headerRowIndex + 2 + rowIndex),
+      imageUrl: normalizeUrl(row[imageUrlColumnName]),
+    }))
+    .filter((entry) => entry.imageUrl);
+  const totalRows = sourceRows.length;
 
   // Read-only: never create the tab from a status poll.
   const variationRows = await readRowsIfPresent(
@@ -976,22 +1232,15 @@ export const getBatchStatus = async (options) => {
     spreadsheetId,
     sourceTab: sheetName,
     reviewBatchId,
+    sourceImageUrlsByRow: Object.fromEntries(
+      sourceRows.map((entry) => [entry.rowNumber, entry.imageUrl]),
+    ),
   });
 
   let completedRows = 0;
   const completedMap = {};
 
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-    const row = rows[rowIndex];
-    const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex);
-    const imageUrl = normalizeUrl(row[imageUrlColumnName]);
-
-    if (!imageUrl) {
-      completedRows += 1;
-      completedMap[rowNumber] = { status: 'skipped' };
-      continue;
-    }
-
+  for (const { rowNumber } of sourceRows) {
     const variation = summary.rows[rowNumber];
     if (variation?.status === 'completed') {
       completedRows += 1;
@@ -1005,6 +1254,8 @@ export const getBatchStatus = async (options) => {
   return {
     totalRows,
     completedRows,
+    remainingRows: Math.max(0, totalRows - completedRows),
+    batchComplete: totalRows > 0 && completedRows === totalRows,
     rows: completedMap,
     ...(summary.reviewBatchId && { reviewBatchId: summary.reviewBatchId }),
   };
@@ -1031,7 +1282,7 @@ export const getBatchStatus = async (options) => {
  *   imageUrl: string,
  *   rowData: object,
  *   error?: string,
- *   results?: { ratio: '1:1' | '9:16' | '1.91:1', links: string[] }
+ *   results?: { ratio: '1:1' | '9:16', links: string[] }
  * }
  */
 export const processBatch = async (options) => {
@@ -1040,18 +1291,25 @@ export const processBatch = async (options) => {
     sheetName: providedSheetName,
     driveFolderUrl,
     driveFolderId,
+    reviewBatchId: providedReviewBatchId,
+    rowsPerRequest: providedRowsPerRequest,
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
-  const reviewMetadata = getReviewMetadata(options);
-  let reviewBatchId = null;
+  let reviewMetadata = getReviewMetadata(options);
+  let reviewBatchId = String(providedReviewBatchId || '').trim() || null;
+  const rowsPerRequest = Math.min(
+    10,
+    Math.max(1, Number.parseInt(providedRowsPerRequest, 10) || DEFAULT_BATCH_ROWS_PER_REQUEST),
+  );
 
   // FIXED Drive folder ID for all uploads (fallback if Photos fails)
   const FIXED_DRIVE_FOLDER_ID = '0APcMUrimfyziUk9PVA';
   const runtimeConfig = getCreativeLibraryConfig();
   // Review assets must stay in private Drive storage. Google Photos is kept
   // only for the legacy non-review batch workflow.
-  const useGooglePhotos = runtimeConfig.preferGooglePhotosForBatch && !reviewMetadata;
+  const isReviewBatch = Boolean(reviewMetadata || reviewBatchId);
+  const useGooglePhotos = runtimeConfig.preferGooglePhotosForBatch && !isReviewBatch;
   const PHOTOS_ALBUM_SHARE_URL =
     process.env.PHOTOS_ALBUM_SHARE_URL?.trim() || 'https://photos.app.goo.gl/RRWkcPWwPApyi5y6A';
 
@@ -1070,7 +1328,7 @@ export const processBatch = async (options) => {
       console.warn(`[BATCH] Could not resolve Photos album, will fallback to Drive: ${e.message}`);
     }
   } else {
-    console.log(reviewMetadata
+    console.log(isReviewBatch
       ? '[BATCH] Using private Drive links for review assets.'
       : '[BATCH] Using Drive for batch output links by default.');
   }
@@ -1133,6 +1391,42 @@ export const processBatch = async (options) => {
       console.log(`[BATCH] Using provided sheet: "${sheetName}"`);
     }
 
+    if (reviewBatchId) {
+      const existingReviewBatch = await getReviewBatch({
+        sheetsUrl,
+        batchId: reviewBatchId,
+      });
+      const sourceSheetId = String(existingReviewBatch?.source_sheet_id || '').trim();
+      const sourceTab = String(existingReviewBatch?.source_tab || '').trim();
+      const sourceType = String(existingReviewBatch?.source_type || '').trim();
+      const status = String(existingReviewBatch?.status || '').trim().toLowerCase();
+      if (sourceSheetId !== spreadsheetId) {
+        throw new Error(`Review batch ${reviewBatchId} belongs to another spreadsheet.`);
+      }
+      if (sourceTab !== sheetName) {
+        throw new Error(`Review batch ${reviewBatchId} belongs to source tab "${sourceTab}".`);
+      }
+      if (sourceType !== 'batch_sheets') {
+        throw new Error(`Review batch ${reviewBatchId} is not a Batch from Sheets review.`);
+      }
+      if (!['draft', 'in_review'].includes(status)) {
+        throw new Error(`Review batch ${reviewBatchId} cannot be resumed while it is ${status}.`);
+      }
+      // The existing batch is authoritative on resume. Never let a later
+      // request silently change the title, category, plazas, or creator.
+      reviewMetadata = {
+        title: String(existingReviewBatch?.title || reviewMetadata?.title || '').trim(),
+        category: String(existingReviewBatch?.category || reviewMetadata?.category || '').trim(),
+        plazas: normalizePlazas(existingReviewBatch?.plazas || reviewMetadata?.plazas),
+        createdBy: String(
+          existingReviewBatch?.created_by
+          || existingReviewBatch?.createdBy
+          || reviewMetadata?.createdBy
+          || '',
+        ).trim(),
+      };
+    }
+
     onProgress?.({
       state: 'sheet-detected',
       message: `Using sheet: "${sheetName}"`,
@@ -1160,12 +1454,14 @@ export const processBatch = async (options) => {
 
     console.log(`[BATCH] URL column detection result: ${imageUrlColumnIndex}`);
     if (imageUrlColumnIndex === -1) {
-      console.log('[BATCH] ERROR: Could not find any column with image URLs');
-      throw new Error('Could not find any column with image URLs in the sheet');
+      console.log('[BATCH] ERROR: Could not find a populated 16:9 image column');
+      throw new Error(
+        'Could not find a populated 16:9 image column. Expected a header such as "16.9 IMG" or "16:9 IMG".',
+      );
     }
     console.log(`[BATCH] SUCCESS: Found image URL column at index ${imageUrlColumnIndex}`);
 
-    const columnLetter = String.fromCharCode(65 + imageUrlColumnIndex);
+    const columnLetter = columnIndexToLetter(imageUrlColumnIndex);
     onProgress?.({
       state: 'column-detected',
       message: `Using column ${columnLetter} for image URLs`,
@@ -1175,9 +1471,10 @@ export const processBatch = async (options) => {
     // Step 3.5: Get column header name for the detected column
     console.log('[BATCH] Reading header row...');
     const sheetsClient = await getSheetsClient();
+    const headerRange = await buildSheetRange(sheetsClient, spreadsheetId, sheetName, 20);
     const headerResponse = await sheetsClient.spreadsheets.get({
       spreadsheetId,
-      ranges: [`${sheetName}!A:Z`],
+      ranges: [headerRange],
       includeGridData: true,
     });
 
@@ -1205,15 +1502,22 @@ export const processBatch = async (options) => {
 
     console.log('[BATCH] Reading sheet rows...');
     const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
-    const totalRows = rows.length;
-    console.log(`[BATCH] Read ${totalRows} data rows`);
+    const sourceRows = rows
+      .map((row, sourceIndex) => ({
+        row,
+        rowNumber: row.__rowNumber || (headerRowIndex + 2 + sourceIndex),
+        imageUrl: normalizeUrl(row[imageUrlColumnName]),
+      }))
+      .filter((entry) => entry.imageUrl);
+    const totalRows = sourceRows.length;
+    console.log(`[BATCH] Read ${rows.length} data rows; ${totalRows} contain 16:9 source images`);
 
     if (totalRows === 0) {
-      throw new Error('No data rows found in the sheet');
+      throw new Error(`No source image URLs found under "${imageUrlColumnName}".`);
     }
 
-    if (reviewMetadata) {
-      const expectedSourceRows = rows.filter((row) => normalizeUrl(row[imageUrlColumnName])).length;
+    if (reviewMetadata && !reviewBatchId) {
+      const expectedSourceRows = totalRows;
       const expectedItemCount = expectedSourceRows * targetRatios.length * EXPECTED_VARIATIONS_PER_RATIO;
       const reviewBatch = await createReviewBatch({
         sheetsUrl,
@@ -1252,7 +1556,12 @@ export const processBatch = async (options) => {
       BATCH_VARIATIONS_SHEET,
       BATCH_VARIATION_HEADERS,
     );
+    await formatBatchVariationsSheet(sheetsClient, spreadsheetId, variationsSheetId);
     const variationsSheetUrl = canonicalSheetsUrl(spreadsheetId, variationsSheetId);
+    const studioBaseUrl = process.env.CREATIVE_REVIEW_STUDIO_BASE_URL?.trim()
+      || process.env.APP_BASE_URL?.trim()
+      || baseUrl;
+    const creativeReviewUrl = buildCreativeReviewUrl(studioBaseUrl, sheetsUrl, reviewBatchId);
     onProgress?.({
       state: 'variations-sheet-ready',
       message: `Writing variations to "${BATCH_VARIATIONS_SHEET}"`,
@@ -1260,39 +1569,48 @@ export const processBatch = async (options) => {
       ...(reviewBatchId && { reviewBatchId }),
     });
 
-    // Step 6: Process each row
+    const existingVariationRows = await readRowsIfPresent(
+      sheetsClient,
+      spreadsheetId,
+      BATCH_VARIATIONS_SHEET,
+      BATCH_VARIATION_HEADERS,
+    );
+    const existingSummary = summarizeBatchVariations(existingVariationRows || [], {
+      spreadsheetId,
+      sourceTab: sheetName,
+      reviewBatchId,
+      sourceImageUrlsByRow: Object.fromEntries(
+        sourceRows.map((entry) => [entry.rowNumber, entry.imageUrl]),
+      ),
+    });
+    const pendingSourceRows = sourceRows.filter(
+      (entry) => existingSummary.rows[entry.rowNumber]?.status !== 'completed',
+    );
+    const rowsForRequest = pendingSourceRows.slice(0, rowsPerRequest);
+
+    // Step 6: Process a bounded chunk. The browser opens the next request with
+    // the same reviewBatchId until the persisted output says the batch is done.
     let failedRows = 0;
 
-    console.log(`[BATCH] Starting row loop. imageUrlColumnName="${imageUrlColumnName}", targetRatios=${targetRatios.join(',')}`);
+    console.log(
+      `[BATCH] Processing ${rowsForRequest.length}/${pendingSourceRows.length} pending rows. `
+      + `imageUrlColumnName="${imageUrlColumnName}", targetRatios=${targetRatios.join(',')}`,
+    );
 
-    for (let rowIndex = 0; rowIndex < totalRows; rowIndex++) {
-      const row = rows[rowIndex];
-      const rowNumber = row.__rowNumber || (headerRowIndex + 2 + rowIndex); // Prefer real sheet row
+    for (let chunkIndex = 0; chunkIndex < rowsForRequest.length; chunkIndex++) {
+      const { row, rowNumber, imageUrl } = rowsForRequest[chunkIndex];
+      const currentRow = totalRows - pendingSourceRows.length + chunkIndex + 1;
       let uploadedLinks = createEmptyRatioLinks();
       let driveFileIds = createEmptyRatioLinks();
       let reviewRegistrationAttempted = false;
 
       try {
-        // Get image URL from the detected column (now using column name as key)
-        const imageUrl = row[imageUrlColumnName]?.trim();
         console.log(`[BATCH] Row ${rowNumber}: imageUrl=${imageUrl ? imageUrl.substring(0, 60) : 'EMPTY'}`);
-
-        if (!imageUrl || imageUrl === '') {
-          onProgress?.({
-            rowNumber,
-            currentRow: rowIndex + 1,
-            totalRows,
-            status: 'skipped',
-            reason: `No image URL in column "${imageUrlColumnName}"`,
-            rowData: row,
-          });
-          continue;
-        }
 
         // Download image
         onProgress?.({
           rowNumber,
-          currentRow: rowIndex + 1,
+          currentRow,
           totalRows,
           status: 'downloading',
           imageUrl,
@@ -1307,37 +1625,33 @@ export const processBatch = async (options) => {
         for (const ratio of targetRatios) {
           onProgress?.({
             rowNumber,
-            currentRow: rowIndex + 1,
+            currentRow,
             totalRows,
             status: 'generating',
             ratio,
             rowData: row,
           });
 
-          const { images, errors: generationErrors } = await generateAspectRatioImages(imageDataUrl, ratio, {
-            profile: ASPECT_RATIO_PROMPT_PROFILE,
+          const { images, errors: generationErrors } = await generateAspectRatioImages(
+            imageDataUrl,
+            ratio,
+            {
+              profile: ASPECT_RATIO_PROMPT_PROFILE,
+              maxAttemptsPerVariation: 2,
+            },
+          );
+          generatedImagesByRatio[ratio] = assertCompleteRatioVariations({
+            images,
+            ratio,
+            rowNumber,
+            errors: generationErrors,
           });
-          if (!Array.isArray(images) || images.length === 0) {
-            const detail = generationErrors?.length
-              ? ` Underlying errors: ${generationErrors.join(' | ')}`
-              : '';
-            console.error(
-              `[BATCH] Row ${rowNumber}: 0/3 ${ratio} variants generated.${detail}`
-            );
-            throw new Error(`No ${ratio} variants were generated for row ${rowNumber}.${detail}`);
-          }
-          if (generationErrors?.length) {
-            console.warn(
-              `[BATCH] Row ${rowNumber}: ${images.length}/3 ${ratio} variants generated, ${generationErrors.length} attempt(s) failed: ${generationErrors.join(' | ')}`
-            );
-          }
-          generatedImagesByRatio[ratio] = images;
         }
 
         // Upload all variations to Drive
         onProgress?.({
           rowNumber,
-          currentRow: rowIndex + 1,
+          currentRow,
           totalRows,
           status: 'uploading',
           rowData: row,
@@ -1354,7 +1668,7 @@ export const processBatch = async (options) => {
             } else {
               const upload = await uploadImageToDrive(images[i], fileName, folderId);
               fileId = upload.fileId;
-              link = reviewMetadata
+              link = isReviewBatch
                 ? await getShareableLink(upload.fileId)
                 : await makeFilePublic(upload.fileId);
             }
@@ -1373,8 +1687,8 @@ export const processBatch = async (options) => {
             rowNumber,
             referenceUrl: imageUrl,
             uploadedLinks,
-            category: reviewMetadata.category,
-            plazas: reviewMetadata.plazas,
+            category: reviewMetadata?.category,
+            plazas: reviewMetadata?.plazas,
           });
           reviewRegistrationAttempted = true;
           const registration = await registerReviewItems({
@@ -1382,8 +1696,7 @@ export const processBatch = async (options) => {
             batchId: reviewBatchId,
             items: reviewItems,
           });
-          reviewItemIds = (registration?.items || [])
-            .map((item) => String(item.review_item_id || item.reviewItemId || '').trim());
+          reviewItemIds = orderRegisteredReviewItemIds(reviewItems, registration?.items || []);
         }
 
         // Write the row's variations only once its review items exist, so the
@@ -1396,6 +1709,7 @@ export const processBatch = async (options) => {
           buildBatchVariationRows({
             batchId: reviewBatchId,
             batchTitle: reviewMetadata?.title || '',
+            creativeReviewUrl,
             spreadsheetId,
             sourceTab: sheetName,
             rowNumber,
@@ -1411,7 +1725,7 @@ export const processBatch = async (options) => {
 
         onProgress?.({
           rowNumber,
-          currentRow: rowIndex + 1,
+          currentRow,
           totalRows,
           status: 'completed',
           links: uploadedLinks,
@@ -1430,10 +1744,10 @@ export const processBatch = async (options) => {
             sheetName,
             row,
             rowNumber,
-            referenceUrl: row[imageUrlColumnName]?.trim() || '',
+            referenceUrl: imageUrl,
             uploadedLinks,
-            category: reviewMetadata.category,
-            plazas: reviewMetadata.plazas,
+            category: reviewMetadata?.category,
+            plazas: reviewMetadata?.plazas,
           });
           if (partiallyUploadedItems.length > 0) {
             try {
@@ -1451,7 +1765,7 @@ export const processBatch = async (options) => {
         }
         onProgress?.({
           rowNumber,
-          currentRow: rowIndex + 1,
+          currentRow,
           totalRows,
           status: 'error',
           error: error.message,
@@ -1461,16 +1775,41 @@ export const processBatch = async (options) => {
       }
     }
 
-    if (reviewBatchId && failedRows > 0) {
+    if (failedRows > 0) {
       throw new Error(
-        `Batch review ${reviewBatchId} is incomplete: ${failedRows} source row(s) failed and no review link should be issued yet.`,
+        `Batch${reviewBatchId ? ` review ${reviewBatchId}` : ''} is incomplete: ${failedRows} source row(s) failed.`,
       );
     }
 
+    const finalVariationRows = await readRowsIfPresent(
+      sheetsClient,
+      spreadsheetId,
+      BATCH_VARIATIONS_SHEET,
+      BATCH_VARIATION_HEADERS,
+    );
+    const finalSummary = summarizeBatchVariations(finalVariationRows || [], {
+      spreadsheetId,
+      sourceTab: sheetName,
+      reviewBatchId,
+      sourceImageUrlsByRow: Object.fromEntries(
+        sourceRows.map((entry) => [entry.rowNumber, entry.imageUrl]),
+      ),
+    });
+    const completedRows = sourceRows.filter(
+      (entry) => finalSummary.rows[entry.rowNumber]?.status === 'completed',
+    ).length;
+    const remainingRows = Math.max(0, totalRows - completedRows);
+    const batchComplete = remainingRows === 0;
+
     onProgress?.({
-      state: 'completed',
-      message: 'Batch processing completed successfully',
+      state: batchComplete ? 'batch-completed' : 'chunk-completed',
+      message: batchComplete
+        ? 'Batch processing completed successfully'
+        : `Chunk completed. ${remainingRows} source row(s) remain.`,
       totalRows,
+      completedRows,
+      remainingRows,
+      batchComplete,
       variationsSheetUrl,
       ...(reviewBatchId && { reviewBatchId }),
     });
@@ -1478,7 +1817,10 @@ export const processBatch = async (options) => {
     return {
       success: true,
       totalRows,
-      processedRows: totalRows - failedRows,
+      processedRows: completedRows,
+      completedRows,
+      remainingRows,
+      batchComplete,
       variationsSheetUrl,
       ...(reviewBatchId && { reviewBatchId }),
     };

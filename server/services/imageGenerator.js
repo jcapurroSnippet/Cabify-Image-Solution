@@ -297,6 +297,17 @@ const getTargetFrameGeometry = (targetRatio, profile) => {
   return '';
 };
 
+const NINE_SIXTEEN_SUBJECT_COMPOSITION = `## 9:16 SUBJECT COMPOSITION - NON-NEGOTIABLE
+- Reframe horizontally so the primary person's face and upper torso are centred around x=50% and remain inside the central x=42%-58% band. The person must read as centred, not pressed against either side.
+- When an arm, phone or other held object extends sideways, centre the person's face and torso rather than the combined silhouette. The extended hand or object may remain off-centre.
+- Add or extend the same background on the side that needs room to achieve this balance. Horizontal translation/reframing of the complete unchanged subject is required when needed and is not a subject redesign.
+- Preserve the person's exact identity, pose, anatomy, clothing, scale and photographic detail. Do not mirror, redraw, warp or crop the person.`;
+
+const NINE_SIXTEEN_CARD_SAFE_ZONE = `**9:16 PLATFORM SAFE ZONE - ABSOLUTE:**
+- The copy-card safe region runs vertically from y=15% through y=84% of the canvas. The top 15% and bottom 16% are exclusion bands used by the platform UI.
+- Keep the ENTIRE card inside that safe region: panel, shadow, headline, CTA/button, partner marks and every decorative extension. No card pixel may enter either exclusion band.
+- The yellow areas shown in review guides are annotations only. Never render a yellow overlay, safe-zone tint, guide line or boundary in the final creative.`;
+
 const parseJsonResponseText = (text) => {
   if (typeof text !== 'string' || text.trim().length === 0) {
     return null;
@@ -664,16 +675,17 @@ ${buttonSpec('left-aligned')}`;
 
   return `${shared}
 
-**CARD DIMENSIONS - 9:16 (non-negotiable):**
+${isAspectRatioTool ? `${NINE_SIXTEEN_CARD_SAFE_ZONE}\n\n` : ''}**CARD DIMENSIONS - 9:16 (non-negotiable):**
 ${isAspectRatioTool
-    ? '- TARGET BOUNDING BOX: x=3.5%, y=65.5%, width=93%, height=17.9% of canvas. Its bottom edge is fixed at y=83.4%. This is the geometry for every variation, regardless of Image 2.'
+    ? '- TARGET BOUNDING BOX: x=3.5%, y=62%, width=93%, height=18% of canvas. Its bottom edge is fixed at y=80%, leaving a visible 4% buffer before the safe region ends at y=84%. This is the geometry for every variation, regardless of Image 2.'
     : '- Card width: 93% of canvas width (1002px at 1080 reference). NEVER less than 91%. The card spans almost edge to edge - only about 3.5% gap on each side (about 39px at 1080).'}
 ${isAspectRatioTool
     ? `- Card width is ALWAYS 93%; left and right gaps are ALWAYS 3.5% each and must NEVER be larger. Never use the narrow source-card width.
-- Default card height is 17.9% (343px at 1920). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 28%; its bottom edge remains fixed at 83.4%. Never solve overflow by changing its width, side gaps or bottom gap.`
+- Default card height is 18% (346px at 1920). If exact copy plus CTA cannot fit after target reflow, grow the card UPWARD only to a maximum of 28%; its bottom edge remains fixed at 80%. Never solve overflow by changing its width, side gaps or bottom gap.
+- The fixed y=80% bottom edge applies to the panel AND its shadow. Text, CTA and partner marks must stay inside the panel; never let any component hang below it or cross into the bottom exclusion band.`
     : `- Card height: about 18% of canvas height (343px at 1920 reference). Flat and wide - NOT tall or square.
 - Card top edge: about 65.5% from the top of the canvas (y about 1258px at 1920).`}
-- Bottom gap below card: about 16.6% of canvas height (about 319px at 1920). Visible empty scene below card.
+- Bottom gap below card: ${isAspectRatioTool ? '20% of canvas height, including a mandatory 4% clear buffer inside the safe region before the bottom exclusion band begins' : 'about 16.6% of canvas height (about 319px at 1920). Visible empty scene below card'}.
 - ${isAspectRatioTool ? 'Card corner radius and edge treatment: copy the CURRENT source card and scale it responsively inside this box. Do not inherit corner styling from the old target examples.' : 'Corner radius: about 3.9% of canvas width (42px at 1080).' }
 ${cardColourSpec}
 - ${isAspectRatioTool ? 'Text alignment and line-height: preserve the CURRENT source treatment; text size and the outer box geometry follow this target guide.' : 'Text alignment: centered. Line-height about 1.1.'}
@@ -804,7 +816,7 @@ ${buildLogoLayoutLine(
     '24%',
     'Place the visible logo lockup inside the LOCAL TOP-LEFT frame notch, anchored to the left frame edge at x=4.7%, with its top edge at y=5.5% of the canvas. It must fit completely inside the local notch and never create a full-width header. This left tab/notch position and size are fixed across all three variations. The wordmark must be perfectly straight and horizontal: baseline parallel to the top edge, 0-degree rotation, upright, with no tilt, skew, curve or perspective distortion.',
   )}
-- Subject: large and prominent, fills most of the canvas height.
+${isAspectRatioTool ? NINE_SIXTEEN_SUBJECT_COMPOSITION : '- Subject: large and prominent, fills most of the canvas height.'}
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
 ${geometry}
@@ -812,7 +824,7 @@ ${geometry}
 
   return isAspectRatioTool
     ? [
-      `${base}\n\n## THIS VARIATION\nMinimal intervention. Preserve the source background and only extend it where strictly necessary to fill the canvas.`,
+      `${base}\n\n## THIS VARIATION\nMinimal intervention. Preserve the source background and only extend it where strictly necessary to fill the canvas, while still obeying the required subject centring above.`,
       `${base}\n\n## THIS VARIATION\nMore headroom above the subject, extending the existing sky or background upward. Do NOT change the subject's size.`,
       // Never assert that a vehicle exists: half the approved creatives are
       // phone-in-hand scenes, and demanding a visible car invites the model to
@@ -987,7 +999,30 @@ export const placeCardOnScene = async (
  * `profile` selects the prompt wording. Callers from the Aspect Ratio tool pass
  * ASPECT_RATIO_PROMPT_PROFILE; the ciclo omits it and keeps the legacy prompts.
  */
-export const generateAspectRatioImages = async (imageDataUrl, targetRatio, { profile = '' } = {}) => {
+const getGenerationRetryDelayMs = (error, attempt) => {
+  const message = String(error?.message || error || '');
+  const retrySeconds = Number(message.match(/retry(?:\s+in|Delay["']?\s*[:=])\s*["']?([\d.]+)\s*s/i)?.[1]);
+  if (Number.isFinite(retrySeconds) && retrySeconds > 0) {
+    return Math.min(60_000, Math.ceil(retrySeconds * 1000));
+  }
+  return Math.min(10_000, 1000 * (2 ** Math.max(0, attempt - 1)));
+};
+
+const isRetryableGenerationError = (error) => {
+  const message = String(error?.message || error || '');
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const status = Number(error?.status || error?.code || error?.response?.status);
+  return status === 429
+    || status === 503
+    || /^(ECONNRESET|ETIMEDOUT)$/.test(code)
+    || /RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|rate.?limit|quota|time(?:d?\s*out|out)|ECONNRESET|ETIMEDOUT/i.test(message);
+};
+
+export const generateAspectRatioImages = async (
+  imageDataUrl,
+  targetRatio,
+  { profile = '', maxAttemptsPerVariation = 1 } = {},
+) => {
   const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error('Invalid imageDataUrl format.');
   const [, mimeType, imageData] = match;
@@ -1007,27 +1042,33 @@ export const generateAspectRatioImages = async (imageDataUrl, targetRatio, { pro
     errors.push(`Card copy extraction failed: ${error.message}`);
   }
 
+  const attemptsPerVariation = Math.min(3, Math.max(1, Number(maxAttemptsPerVariation) || 1));
   for (const prompt of variationPrompts) {
-    try {
-      const sceneResponse = await ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
-        config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
-      });
+    for (let attempt = 1; attempt <= attemptsPerVariation; attempt += 1) {
+      try {
+        const sceneResponse = await ai.models.generateContent({
+          model: 'gemini-3-pro-image-preview',
+          contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
+          config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
+        });
 
-      let sceneUrl = extractFirstImageFromResponse(sceneResponse);
-      if (!sceneUrl) {
-        errors.push('Pass 1 returned no scene.');
-        continue;
-      }
-      if (needsAspectRatioCrop(targetRatio)) {
-        sceneUrl = await cropDataUrlToAspectRatio(sceneUrl, targetRatio);
-      }
+        let sceneUrl = extractFirstImageFromResponse(sceneResponse);
+        if (!sceneUrl) throw new Error('Pass 1 returned no scene.');
+        if (needsAspectRatioCrop(targetRatio)) {
+          sceneUrl = await cropDataUrlToAspectRatio(sceneUrl, targetRatio);
+        }
 
-      const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio, cardCopy, profile);
-      outputs.push(finalUrl ?? sceneUrl);
-    } catch (error) {
-      errors.push(error.message);
+        const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio, cardCopy, profile);
+        outputs.push(finalUrl ?? sceneUrl);
+        break;
+      } catch (error) {
+        const errorMessage = String(error?.message || error || 'Unknown generation error.');
+        errors.push(`Variation attempt ${attempt}/${attemptsPerVariation}: ${errorMessage}`);
+        const canRetry = attempt < attemptsPerVariation
+          && (isRetryableGenerationError(error) || /returned no scene/i.test(errorMessage));
+        if (!canRetry) break;
+        await new Promise((resolve) => setTimeout(resolve, getGenerationRetryDelayMs(error, attempt)));
+      }
     }
   }
 

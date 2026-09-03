@@ -2,6 +2,31 @@
 
 import sharp from 'sharp';
 
+const IMAGE_MIME_TYPES = {
+  avif: 'image/avif',
+  gif: 'image/gif',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  tiff: 'image/tiff',
+  webp: 'image/webp',
+};
+
+/**
+ * Detect the source bytes instead of trusting a URL extension or labelling
+ * every Sheet image as JPEG. Gemini uses this MIME type to decode the source.
+ */
+export const detectImageMimeType = async (imageBuffer) => {
+  const metadata = await sharp(imageBuffer).metadata();
+  const mimeType = IMAGE_MIME_TYPES[String(metadata.format || '').toLowerCase()];
+  if (!mimeType) {
+    throw new Error(`Unsupported source image format: ${metadata.format || 'unknown'}.`);
+  }
+  return mimeType;
+};
+
 /**
  * Resize and compress image buffer
  * Reduces size to ~500x500 with 80% quality for better API performance

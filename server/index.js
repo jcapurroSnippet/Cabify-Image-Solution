@@ -469,6 +469,8 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       category,
       plazas,
       createdBy,
+      reviewBatchId,
+      rowsPerRequest,
     } = request.body ?? {};
 
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
@@ -529,6 +531,8 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       category,
       plazas,
       createdBy,
+      reviewBatchId: reviewBatchId ? String(reviewBatchId).trim() : undefined,
+      rowsPerRequest,
       baseUrl: `${protocol}://${host}`,
       onProgress,
     })

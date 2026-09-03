@@ -7,7 +7,7 @@ export enum AspectRatio {
   RATIO_1_91_1 = '1.91:1',
 }
 
-export type BatchAspectRatio = '1:1' | '9:16' | '1.91:1';
+export type BatchAspectRatio = '1:1' | '9:16';
 
 export interface GeneratedImage {
   id: string;
@@ -47,6 +47,9 @@ export interface BatchProgressEvent {
   rowNumber?: number;
   currentRow?: number;
   totalRows?: number;
+  completedRows?: number;
+  remainingRows?: number;
+  batchComplete?: boolean;
   status?: BatchProgressStatus;
   ratio?: BatchAspectRatio;
   imageUrl?: string;
@@ -57,7 +60,6 @@ export interface BatchProgressEvent {
   links?: {
     '1:1': string[];
     '9:16': string[];
-    '1.91:1': string[];
   };
 }
 
@@ -65,6 +67,9 @@ export interface BatchResult {
   success: boolean;
   totalRows: number;
   processedRows: number;
+  completedRows: number;
+  remainingRows: number;
+  batchComplete: boolean;
   reviewBatchId?: string;
   variationsSheetUrl?: string;
   errors?: {
@@ -106,7 +111,6 @@ export interface BatchState {
       links?: {
         '1:1': string[];
         '9:16': string[];
-        '1.91:1': string[];
       };
       error?: string;
     };

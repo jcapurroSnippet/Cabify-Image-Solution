@@ -5,7 +5,7 @@ replacement funnel; the individual tools stay available under **Herramientas** f
 one-off work:
 
 - `Nano Editor`: prompt-driven image editing with strict Cabify constraints.
-- `Aspect Ratio`: generates `1:1`, `9:16`, and `1.91:1` variants from one source image,
+- `Aspect Ratio`: generates `1:1` and `9:16` variants from one source image,
   or in bulk from a Google Sheet (`Batch from Sheets`).
 - `Editor Batch`: bulk scene transformation for 3-20 uploaded images.
 - `Creative Library`: Google Ads + Meta low-performer detection and creative replacement.
@@ -43,28 +43,36 @@ State lives in two Sheets tabs, created and migrated automatically:
 
 ## Batch from Sheets
 
-Point it at a Google Sheet (any URL form, including `.../edit?gid=NNN#gid=NNN`)
-and it generates three variants in each of the three ratios for every row that
-carries a source image URL.
+Point it at a Google Sheet URL whose `gid` identifies the source tab (including
+the `.../edit?gid=NNN#gid=NNN` form). In that tab, Batch explicitly selects the
+`16:9` image column and generates exactly three `1:1` variants plus three `9:16`
+variants for every row that carries a source image URL.
 
-**The source tab is read-only.** Output goes to a `batch_variations` tab that the
-app creates and migrates itself — one row per generated variation, carrying the
-`review_batch_id → review_item_id` pair that ties it to the review portal. You do
-not prepare output columns, and nothing in your sheet is overwritten.
+**The source tab is read-only.** Output goes to a dedicated `batch_variations` tab
+in the same spreadsheet, which the app creates and migrates itself — one row per
+generated variation, carrying the `review_batch_id → review_item_id` pair that
+ties it to Creative Review plus a direct `creative_review_url`. You do not
+prepare output columns, and nothing in
+your source tab is overwritten. The output tab is highlighted in Cabify purple,
+has a frozen header and filters, and the UI links directly to both the tab and
+the completed review batch.
 
-The only thing detected in the source tab is which column holds the images: the
-column with the most URLs wins, reading plain text, `HYPERLINK()` formulas,
-native hyperlinks and rich-text links alike. A row with no URL is skipped, not
-failed. Header detection scans the first 20 rows for a row containing at least
-two of `categoria`, `ciudad`, `copy`, `preview`.
+The `16:9` source cells may contain plain text URLs, `HYPERLINK()` formulas,
+native hyperlinks or rich-text links. A row with no URL is skipped, not failed.
+Header detection first looks for an explicit image header such as `16.9 IMG`,
+`16:9 IMAGE`, or `16x9 IMG` and rejects similarly named video columns. The
+familiar `categoria`, `ciudad`, `copy`, and `preview` labels are only used to
+locate the header row before reporting that the required image column is absent.
 
 A row's variations are appended only after its review items are registered, so
-the tab never advertises pieces the review portal does not know about. Because
-the tab is written per row rather than in one final flush, `POST /api/batch-status`
-can rebuild progress from it — closing the browser mid-run no longer loses the
-work. The tab is append-only and accumulative across batches; pass
-`reviewBatchId` to scope a status read, otherwise the most recent batch for that
-source tab is used.
+the tab never advertises pieces the review portal does not know about. The browser
+processes three source rows per request and continues with the same
+`reviewBatchId`, keeping the run below Cloud Run's request deadline. Persisted
+rows are skipped on continuation; if a chunk fails, the UI offers to resume the
+same batch instead of creating a duplicate. `POST /api/batch-status` can rebuild
+progress from the persisted output. The tab is append-only and accumulative
+across batches; pass `reviewBatchId` to scope a status read, otherwise the most
+recent batch for that source tab is used.
 
 Steps 1 and 2 chain without user input; the funnel only stops at the approval
 gates. Generation streams NDJSON and is **resumable** — targets in a terminal
