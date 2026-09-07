@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { mapWithBoundedConcurrency } from './concurrency.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -143,8 +144,42 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       type: 'string',
       description: 'Partner, product or sub-brand logos shown INSIDE the card, named and briefly described, comma-separated (e.g. "Mercado Pago logo in a white rounded container"). Exclude the main Cabify wordmark. Empty string if there are none.',
     },
+    // Pass 2 redraws the copy, so the source typeface has to survive the trip.
+    // The box lets the pipeline crop and magnify the real letterforms; the two
+    // name fields let the prompt state the face instead of hoping the model
+    // infers it from a full creative it only ever sees downscaled.
+    cardTextBox: {
+      type: 'array',
+      items: { type: 'integer' },
+      minItems: 4,
+      maxItems: 4,
+      description: 'Bounding box of the card COPY BLOCK (headline plus CTA label, excluding the panel\'s empty margins) as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image.',
+    },
+    cardFontFamily: {
+      type: 'string',
+      description: 'Cabify family the card copy is set in: "Cabify Ciudad" (expressive headline) or "Cabify Ciudad Text" (UI-like text). Empty string if unclear.',
+    },
+    cardFontWeight: {
+      type: 'string',
+      description: 'Weight of the headline copy: Light, Book, SemiBold, Bold, ExtraBold or Black. Empty string if unclear.',
+    },
+    buttonFontWeight: {
+      type: 'string',
+      description: 'Weight of the CTA label, same options as cardFontWeight. Empty string if there is no button or it is unclear.',
+    },
   },
-  required: ['cardText', 'buttonPresent', 'buttonLabel', 'cardBackgroundColor', 'cardTextColor', 'cardBrandMarks'],
+  required: [
+    'cardText',
+    'buttonPresent',
+    'buttonLabel',
+    'cardBackgroundColor',
+    'cardTextColor',
+    'cardBrandMarks',
+    'cardTextBox',
+    'cardFontFamily',
+    'cardFontWeight',
+    'buttonFontWeight',
+  ],
 };
 
 const CARD_COPY_EXTRACTION_PROMPT = `
@@ -157,6 +192,10 @@ Return JSON with exactly these fields:
 - "cardBackgroundColor": the hex colour of the card/panel the copy sits on, sampled from a flat area away from any shadow or gradient.
 - "cardTextColor": the hex colour of that copy.
 - "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
+- "cardTextBox": the bounding box that tightly encloses the card's copy block - the headline plus the CTA label - as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude any partner logo that sits apart from the copy.
+- "cardFontFamily": "Cabify Ciudad" if the copy uses the expressive display family, "Cabify Ciudad Text" if it uses the UI/text family. Empty string if you cannot tell.
+- "cardFontWeight": the headline's weight, exactly one of "Light", "Book", "SemiBold", "Bold", "ExtraBold", "Black". Judge it from stroke thickness relative to letter height. Empty string if you cannot tell.
+- "buttonFontWeight": the CTA label's weight, same options. Empty string if there is no button or you cannot tell.
 
 Rules:
 - Extract text only from the card. Ignore the rest of the scene, logo, people, cars, and background.
@@ -340,6 +379,41 @@ const normalizeHexColour = (value) => {
   return `#${full.toUpperCase()}`;
 };
 
+const CABIFY_FONT_WEIGHTS = ['Light', 'Book', 'SemiBold', 'ExtraBold', 'Bold', 'Black'];
+const CABIFY_FONT_FAMILIES = ['Cabify Ciudad Text', 'Cabify Ciudad'];
+
+/** Matches loosely ("extra bold", "semibold") but only ever returns a real face name. */
+const normalizeFromVocabulary = (value, vocabulary) => {
+  const text = typeof value === 'string' ? value.toLowerCase().replace(/[^a-z]/g, '') : '';
+  if (!text) return '';
+  return vocabulary.find((entry) => text === entry.toLowerCase().replace(/[^a-z]/g, ''))
+    || vocabulary.find((entry) => text.includes(entry.toLowerCase().replace(/[^a-z]/g, '')))
+    || '';
+};
+
+/**
+ * Gemini reports boxes as [ymin, xmin, ymax, xmax] over a 0-1000 grid. A box
+ * that covers most of the canvas means the model never localised the copy, and
+ * a sliver means it locked onto an edge; both crop to something useless, so
+ * they are dropped rather than shipped as a typography reference.
+ */
+const CARD_TEXT_BOX_MIN_SPAN = 20;
+const CARD_TEXT_BOX_MAX_AREA = 0.6;
+
+const normalizeCardTextBox = (value) => {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const box = value.map(Number);
+  if (box.some((coordinate) => !Number.isFinite(coordinate) || coordinate < 0 || coordinate > 1000)) return null;
+
+  const [yMin, xMin, yMax, xMax] = box;
+  const height = yMax - yMin;
+  const width = xMax - xMin;
+  if (height < CARD_TEXT_BOX_MIN_SPAN || width < CARD_TEXT_BOX_MIN_SPAN) return null;
+  if ((width / 1000) * (height / 1000) > CARD_TEXT_BOX_MAX_AREA) return null;
+
+  return [yMin, xMin, yMax, xMax];
+};
+
 const normalizeExtractedCardCopy = (payload) => {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -356,7 +430,75 @@ const normalizeExtractedCardCopy = (payload) => {
     cardBackgroundColor: normalizeHexColour(payload.cardBackgroundColor),
     cardTextColor: normalizeHexColour(payload.cardTextColor),
     cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
+    cardTextBox: normalizeCardTextBox(payload.cardTextBox),
+    cardFontFamily: normalizeFromVocabulary(payload.cardFontFamily, CABIFY_FONT_FAMILIES),
+    cardFontWeight: normalizeFromVocabulary(payload.cardFontWeight, CABIFY_FONT_WEIGHTS),
+    buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
   };
+};
+
+/**
+ * The whole creative reaches Gemini downscaled, so a 60px headline arrives as
+ * a text-shaped smudge and pass 2 redraws it in whatever sans it likes. This
+ * crops the source copy block out at full resolution and magnifies it, so the
+ * letterforms the output has to match are actually legible in the request.
+ *
+ * Geometry from this crop is never usable - the prompt restricts it to
+ * letterforms - and it carries no content the source did not already have, so
+ * unlike the old campaign references it cannot leak a foreign element.
+ */
+const TYPOGRAPHY_REFERENCE_TARGET_EDGE = 1024;
+const TYPOGRAPHY_REFERENCE_MAX_EDGE = 1536;
+const TYPOGRAPHY_REFERENCE_PADDING = 0.06;
+const TYPOGRAPHY_REFERENCE_MIN_CROP = { width: 64, height: 24 };
+
+const clampToRange = (value, min, max) => Math.min(max, Math.max(min, value));
+
+export const buildSourceTypographyReference = async (sourceImageData, cardTextBox) => {
+  const box = normalizeCardTextBox(cardTextBox);
+  if (!box) return null;
+
+  try {
+    const buffer = Buffer.from(sourceImageData, 'base64');
+    const { width, height } = await sharp(buffer).metadata();
+    if (!width || !height) return null;
+
+    const [yMin, xMin, yMax, xMax] = box;
+    const padX = ((xMax - xMin) / 1000) * width * TYPOGRAPHY_REFERENCE_PADDING;
+    const padY = ((yMax - yMin) / 1000) * height * TYPOGRAPHY_REFERENCE_PADDING;
+
+    const left = Math.round(clampToRange((xMin / 1000) * width - padX, 0, width - 1));
+    const top = Math.round(clampToRange((yMin / 1000) * height - padY, 0, height - 1));
+    const right = Math.round(clampToRange((xMax / 1000) * width + padX, left + 1, width));
+    const bottom = Math.round(clampToRange((yMax / 1000) * height + padY, top + 1, height));
+
+    const cropWidth = right - left;
+    const cropHeight = bottom - top;
+    if (cropWidth < TYPOGRAPHY_REFERENCE_MIN_CROP.width || cropHeight < TYPOGRAPHY_REFERENCE_MIN_CROP.height) {
+      return null;
+    }
+
+    // Magnify a small crop up to a legible size, but never past the point where
+    // the upscale invents edges the source never had - a fake glyph is worse
+    // than a small one. PNG keeps the letter edges free of JPEG ringing.
+    const scale = clampToRange(TYPOGRAPHY_REFERENCE_TARGET_EDGE / Math.max(cropWidth, cropHeight), 1, 4);
+    const data = await sharp(buffer)
+      .extract({ left, top, width: cropWidth, height: cropHeight })
+      .resize({
+        width: Math.min(TYPOGRAPHY_REFERENCE_MAX_EDGE, Math.round(cropWidth * scale)),
+        height: Math.min(TYPOGRAPHY_REFERENCE_MAX_EDGE, Math.round(cropHeight * scale)),
+        fit: 'inside',
+        kernel: 'lanczos3',
+      })
+      .png()
+      .toBuffer();
+
+    return { data: data.toString('base64'), mimeType: 'image/png' };
+  } catch {
+    // A typography reference is an enhancement; losing it must never take the
+    // generation down with it.
+    return null;
+  }
 };
 
 const hasReliableCardCopy = (cardCopy) =>
@@ -411,6 +553,44 @@ ${copyJson}
 ${referenceRule}${brandMarkRules}`;
 };
 
+/**
+ * Typography kept drifting to a generic sans because its rules were scattered
+ * across the colour lock, the identity lock and the per-ratio card block. This
+ * states the requirement once, in one place, and points at the highest-fidelity
+ * evidence available for it: the magnified crop when there is one, Image 2
+ * otherwise.
+ */
+const buildTypographyLockBlock = (cardCopy, typographyReferenceIndex) => {
+  const family = typeof cardCopy?.cardFontFamily === 'string' ? cardCopy.cardFontFamily : '';
+  const headlineWeight = typeof cardCopy?.cardFontWeight === 'string' ? cardCopy.cardFontWeight : '';
+  const buttonWeight = typeof cardCopy?.buttonFontWeight === 'string' ? cardCopy.buttonFontWeight : '';
+  const authority = typographyReferenceIndex ? `Image ${typographyReferenceIndex}` : 'Image 2';
+
+  const referenceLines = typographyReferenceIndex
+    ? `- ${authority} is a MAGNIFIED CROP of the source card's own copy, attached for exactly one purpose: letterforms. It is the highest authority on typeface, glyph skeleton, stroke weight, width, capitalization and letter-spacing.
+- Redraw the CARD COPY LOCK words in those letterforms. Compare glyph by glyph before you finish: a, e, g, y, t, s and the numerals must share the same skeleton, terminals, corner rounding, counter shapes and stroke modulation as ${authority}.
+- ${authority} supplies LETTERFORMS ONLY. Ignore its crop boundaries, its background, its line breaks, its type size, its position and the fact that it is a fragment. Never draw its edges, its background block, a zoomed panel or a second copy of the text into the output.`
+    : `- ${authority} is the authority on typeface, glyph skeleton, stroke weight, width, capitalization and letter-spacing. Redraw the copy in exactly those letterforms, at the target type scale.`;
+
+  const detectedLines = [
+    family ? `- The source copy is set in ${family}. Use that family; do not switch to the other Cabify family or to anything else.` : '',
+    headlineWeight ? `- The headline weight reads as ${family || 'Cabify Ciudad'} ${headlineWeight}. Use that weight.` : '',
+    buttonWeight ? `- The CTA label weight reads as ${headlineWeight && buttonWeight === headlineWeight ? 'the same' : buttonWeight}. Preserve the weight difference between headline and CTA exactly as the source has it.` : '',
+    family || headlineWeight || buttonWeight
+      ? `- These names describe what ${authority} already shows. Where a name and ${authority} disagree, ${authority} wins.`
+      : '',
+  ].filter(Boolean).join('\n');
+
+  return [
+    '## TYPOGRAPHY LOCK - THE INPUT OWNS THE LETTERFORMS',
+    referenceLines,
+    detectedLines,
+    `- Substituting a system or generic sans - Helvetica, Arial, Inter, Roboto, Poppins, Montserrat, Nunito, DM Sans or similar - is a FAILED output, even when the words, colours and layout are correct.
+- Never synthesize a weight: do not fake bold by thickening strokes, do not fake light by thinning them, and never condense, stretch, slant, outline or re-space the letters to make copy fit. Reflow the words instead.
+- Final check before returning the image: read your rendered headline and CTA against ${authority}. If any glyph differs in skeleton, weight or proportion, redraw it.`,
+  ].filter(Boolean).join('\n');
+};
+
 const buildReferenceInputList = (startIndex, count) =>
   Array.from({ length: count }, (_, index) => {
     const imageNumber = startIndex + index;
@@ -460,6 +640,7 @@ const getCardPlacementPrompt = (
   useSourceImageForCopy = false,
   profile = '',
   useSourceImageForMarks = false,
+  hasTypographyReference = false,
 ) => {
   const ratio = String(targetRatio).trim();
   const isAspectRatioTool = usesAspectRatioProfile(profile);
@@ -498,8 +679,11 @@ const getCardPlacementPrompt = (
   // The Aspect Ratio profile always supplies the source as a visual style
   // authority. Legacy callers retain the smaller conditional payload.
   const sourceAttached = usesSourceCardStyleReference || useSourceImageForCopy || useSourceImageForMarks;
-  const referenceStartIndex = sourceAttached ? 3 : 2;
-  const referenceLabel = sourceAttached ? 'Images 3+' : 'Images 2+';
+  // The magnified copy crop only rides along when the source itself does, so it
+  // always lands right after it and pushes the old campaign references down one.
+  const typographyReferenceIndex = sourceAttached && hasTypographyReference ? 3 : 0;
+  const referenceStartIndex = (sourceAttached ? 3 : 2) + (typographyReferenceIndex ? 1 : 0);
+  const referenceLabel = `Images ${referenceStartIndex}+`;
   const referenceInputs = hasRefs ? buildReferenceInputList(referenceStartIndex, refCount) : '';
 
   const sourceInputLine = usesSourceCardStyleReference
@@ -517,13 +701,22 @@ const getCardPlacementPrompt = (
 - Do not tilt, skew, warp, curve, rotate, redraw or apply perspective to the wordmark. Never place it vertically or diagonally.`
     : '';
 
+  const typographyInputLine = typographyReferenceIndex
+    ? `${typographyReferenceIndex}. Image ${typographyReferenceIndex} - a magnified crop of the SOURCE card copy. Letterform reference only: it defines the typeface, never the layout, size or position.`
+    : null;
+
   const inputs = [
     '1. Image 1 - the clean scene (target aspect ratio, no card). Use this as the immutable base.',
     sourceInputLine,
+    typographyInputLine,
     referenceInputs || null,
   ]
     .filter(Boolean)
     .join('\n');
+
+  const typographyLock = usesSourceCardStyleReference
+    ? buildTypographyLockBlock(cardCopy, typographyReferenceIndex)
+    : '';
 
   const cardCopySection = useSourceImageForCopy
     ? `**CARD COPY LOCK:**
@@ -550,6 +743,8 @@ ${cardCopySection}
 
 ${usesSourceCardStyleReference ? SOURCE_CARD_APPEARANCE_LOCK : ''}
 
+${typographyLock}
+
 ${logoOrientationLock}
 
 ${buildReferenceStyleSection(referenceLabel, hasRefs, profile, usesSourceCardStyleReference)}
@@ -573,6 +768,8 @@ ${inputs}
 ${cardCopySection}
 
 ${usesSourceCardStyleReference ? SOURCE_CARD_APPEARANCE_LOCK : ''}
+
+${typographyLock}
 
 ${logoOrientationLock}
 
@@ -937,6 +1134,28 @@ export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeT
   return normalizeExtractedCardCopy(parseJsonResponseText(response.text));
 };
 
+/**
+ * A caller generating more than one ratio from the same source image should
+ * call this ONCE and pass the result to every generateAspectRatioImages call
+ * via `cardCopy`/`cardCopyError`, instead of letting each ratio re-run its
+ * own extraction pass against an identical source image.
+ */
+export const resolveCardCopyForSource = async (ai, imageDataUrl) => {
+  const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) throw new Error('Invalid imageDataUrl format.');
+  const [, mimeType, imageData] = match;
+
+  try {
+    const cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType);
+    if (!hasReliableCardCopy(cardCopy)) {
+      return { cardCopy, error: 'Card copy extraction was incomplete; falling back to source-image copy reading.' };
+    }
+    return { cardCopy, error: null };
+  } catch (error) {
+    return { cardCopy: null, error: `Card copy extraction failed: ${error.message}` };
+  }
+};
+
 export const placeCardOnScene = async (
   ai,
   sceneDataUrl,
@@ -966,10 +1185,20 @@ export const placeCardOnScene = async (
   const usesSourceCardStyleReference = usesAspectRatioProfile(profile) &&
     ['1:1', '9:16'].includes(String(targetRatio).trim());
   const includeSourceImage = usesSourceCardStyleReference || !canLockCopy || needsSourceForMarks;
+  // The full source arrives downscaled on Gemini's side, which is where the
+  // source typeface stops being legible and a generic sans creeps in. When the
+  // extraction located the copy block, its magnified crop rides along so the
+  // letterforms the output must match are actually readable in the request.
+  const typographyReference = includeSourceImage
+    ? await buildSourceTypographyReference(sourceImageData, cardCopy?.cardTextBox)
+    : null;
   const parts = [
     { inlineData: { data: sceneData, mimeType: sceneMimeType } },
     ...(includeSourceImage
       ? [{ inlineData: { data: sourceImageData, mimeType: sourceMimeType } }]
+      : []),
+    ...(typographyReference
+      ? [{ inlineData: { data: typographyReference.data, mimeType: typographyReference.mimeType } }]
       : []),
     ...refs.map((ref) => ({ inlineData: { data: ref.data, mimeType: ref.mimeType } })),
     {
@@ -980,6 +1209,7 @@ export const placeCardOnScene = async (
         !canLockCopy,
         profile,
         needsSourceForMarks,
+        Boolean(typographyReference),
       ),
     },
   ];
@@ -995,10 +1225,6 @@ export const placeCardOnScene = async (
   return needsAspectRatioCrop(targetRatio) ? await cropDataUrlToAspectRatio(finalUrl, targetRatio) : finalUrl;
 };
 
-/**
- * `profile` selects the prompt wording. Callers from the Aspect Ratio tool pass
- * ASPECT_RATIO_PROMPT_PROFILE; the ciclo omits it and keeps the legacy prompts.
- */
 const getGenerationRetryDelayMs = (error, attempt) => {
   const message = String(error?.message || error || '');
   const retrySeconds = Number(message.match(/retry(?:\s+in|Delay["']?\s*[:=])\s*["']?([\d.]+)\s*s/i)?.[1]);
@@ -1018,59 +1244,93 @@ const isRetryableGenerationError = (error) => {
     || /RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|rate.?limit|quota|time(?:d?\s*out|out)|ECONNRESET|ETIMEDOUT/i.test(message);
 };
 
+/**
+ * `profile` selects the prompt wording. Callers from the Aspect Ratio tool pass
+ * ASPECT_RATIO_PROMPT_PROFILE; the ciclo omits it and keeps the legacy prompts.
+ *
+ * A caller generating several ratios from the same source image should
+ * resolve card copy once via resolveCardCopyForSource and pass it (plus a
+ * shared `ai` client) through `cardCopy`/`cardCopyError`/`ai`, instead of
+ * paying for a fresh extraction pass on every ratio.
+ */
 export const generateAspectRatioImages = async (
   imageDataUrl,
   targetRatio,
-  { profile = '', maxAttemptsPerVariation = 1 } = {},
+  {
+    profile = '',
+    maxAttemptsPerVariation = 1,
+    ai: providedAi,
+    cardCopy: providedCardCopy,
+    cardCopyError,
+    variationConcurrency = 3,
+  } = {},
 ) => {
   const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error('Invalid imageDataUrl format.');
   const [, mimeType, imageData] = match;
 
-  const ai = getGeminiClient();
+  const ai = providedAi || getGeminiClient();
   const variationPrompts = getVariationPrompts(targetRatio, profile);
-  const outputs = [];
   const errors = [];
 
-  let cardCopy = null;
-  try {
-    cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType);
-    if (!hasReliableCardCopy(cardCopy)) {
-      errors.push('Card copy extraction was incomplete; falling back to source-image copy reading.');
-    }
-  } catch (error) {
-    errors.push(`Card copy extraction failed: ${error.message}`);
+  let cardCopy;
+  if (providedCardCopy !== undefined) {
+    cardCopy = providedCardCopy;
+    if (cardCopyError) errors.push(cardCopyError);
+  } else {
+    const resolved = await resolveCardCopyForSource(ai, imageDataUrl);
+    cardCopy = resolved.cardCopy;
+    if (resolved.error) errors.push(resolved.error);
   }
 
   const attemptsPerVariation = Math.min(3, Math.max(1, Number(maxAttemptsPerVariation) || 1));
-  for (const prompt of variationPrompts) {
+
+  const generateOneVariation = async (prompt) => {
+    // Pass 1 (scene) is cached across retries of this variation: only pass 2
+    // (card placement) is redone when IT is the one that failed, so a flaky
+    // card composite doesn't burn a fresh - and billed - scene regeneration.
+    let sceneUrl = null;
+    let sceneReady = false;
+
     for (let attempt = 1; attempt <= attemptsPerVariation; attempt += 1) {
       try {
-        const sceneResponse = await ai.models.generateContent({
-          model: 'gemini-3-pro-image-preview',
-          contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
-          config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
-        });
+        if (!sceneReady) {
+          const sceneResponse = await ai.models.generateContent({
+            model: 'gemini-3-pro-image-preview',
+            contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
+            config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
+          });
 
-        let sceneUrl = extractFirstImageFromResponse(sceneResponse);
-        if (!sceneUrl) throw new Error('Pass 1 returned no scene.');
-        if (needsAspectRatioCrop(targetRatio)) {
-          sceneUrl = await cropDataUrlToAspectRatio(sceneUrl, targetRatio);
+          let candidateSceneUrl = extractFirstImageFromResponse(sceneResponse);
+          if (!candidateSceneUrl) throw new Error('Pass 1 returned no scene.');
+          if (needsAspectRatioCrop(targetRatio)) {
+            candidateSceneUrl = await cropDataUrlToAspectRatio(candidateSceneUrl, targetRatio);
+          }
+          sceneUrl = candidateSceneUrl;
+          sceneReady = true;
         }
 
         const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio, cardCopy, profile);
-        outputs.push(finalUrl ?? sceneUrl);
-        break;
+        // A cardless scene is not a usable variant - it just moves the "missing
+        // card" failure downstream to whoever reviews the output. Treat it as
+        // a failed attempt so it can retry (pass 2 only) or drop out cleanly.
+        if (!finalUrl) throw new Error('Pass 2 returned no card composite.');
+        return finalUrl;
       } catch (error) {
         const errorMessage = String(error?.message || error || 'Unknown generation error.');
         errors.push(`Variation attempt ${attempt}/${attemptsPerVariation}: ${errorMessage}`);
         const canRetry = attempt < attemptsPerVariation
-          && (isRetryableGenerationError(error) || /returned no scene/i.test(errorMessage));
-        if (!canRetry) break;
+          && (isRetryableGenerationError(error) || /returned no (scene|card composite)/i.test(errorMessage));
+        if (!canRetry) return null;
         await new Promise((resolve) => setTimeout(resolve, getGenerationRetryDelayMs(error, attempt)));
       }
     }
-  }
+    return null;
+  };
+
+  const concurrency = Math.min(variationPrompts.length, Math.max(1, Number(variationConcurrency) || 1));
+  const results = await mapWithBoundedConcurrency(variationPrompts, concurrency, generateOneVariation);
+  const outputs = results.filter(Boolean);
 
   return { images: outputs, errors };
 };

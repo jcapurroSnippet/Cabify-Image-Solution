@@ -15,7 +15,13 @@ import {
 import { uploadImageToDrive, makeFilePublic, getShareableLink, extractFolderId } from './driveService.js';
 import { getSheetsClient, getDriveClient } from './googleAuth.js';
 import { uploadImageToPhotos, resolveAlbumIdFromShareUrl } from './photosService.js';
-import { ASPECT_RATIO_PROMPT_PROFILE, generateAspectRatioImages } from './imageGenerator.js';
+import {
+  ASPECT_RATIO_PROMPT_PROFILE,
+  generateAspectRatioImages,
+  getGeminiClient,
+  resolveCardCopyForSource,
+} from './imageGenerator.js';
+import { mapWithBoundedConcurrency } from './concurrency.js';
 import { optimizeImageBuffer, bufferToDataUrl, detectImageMimeType } from './imageOptimizer.js';
 import {
   BATCH_VARIATIONS_SHEET,
@@ -1621,8 +1627,13 @@ export const processBatch = async (options) => {
         const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
         console.log(`[BATCH] Row ${rowNumber}: download complete, size=${imageDataUrl?.length ?? 0}`);
 
-        const generatedImagesByRatio = {};
-        for (const ratio of targetRatios) {
+        // Resolved once per row instead of once per ratio: every ratio reads
+        // the identical source image, so a second extraction pass would just
+        // re-pay for the same answer.
+        const ai = getGeminiClient();
+        const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl);
+
+        const ratioEntries = await mapWithBoundedConcurrency(targetRatios, targetRatios.length, async (ratio) => {
           onProgress?.({
             rowNumber,
             currentRow,
@@ -1638,15 +1649,19 @@ export const processBatch = async (options) => {
             {
               profile: ASPECT_RATIO_PROMPT_PROFILE,
               maxAttemptsPerVariation: 2,
+              ai,
+              cardCopy,
+              cardCopyError,
             },
           );
-          generatedImagesByRatio[ratio] = assertCompleteRatioVariations({
+          return [ratio, assertCompleteRatioVariations({
             images,
             ratio,
             rowNumber,
             errors: generationErrors,
-          });
-        }
+          })];
+        });
+        const generatedImagesByRatio = Object.fromEntries(ratioEntries);
 
         // Upload all variations to Drive
         onProgress?.({

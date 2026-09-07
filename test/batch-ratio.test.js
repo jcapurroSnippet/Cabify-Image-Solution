@@ -10,14 +10,24 @@ import {
   orderRegisteredReviewItemIds,
   summarizeBatchVariations,
 } from '../server/services/batchProcessor.js';
+import sharp from 'sharp';
 import {
   ASPECT_RATIO_PROMPT_PROFILE,
+  buildSourceTypographyReference,
   extractCardCopyFromSource,
   getVariationPrompts,
   placeCardOnScene,
 } from '../server/services/imageGenerator.js';
 
-const captureAspectRatioCardPrompt = async (targetRatio, cardCopyOverrides = {}) => {
+/** A stand-in source creative big enough for a copy-block crop to be magnified. */
+const buildSourceImageData = async (width = 1080, height = 1080) => {
+  const buffer = await sharp({
+    create: { width, height, channels: 3, background: '#6f49e8' },
+  }).png().toBuffer();
+  return buffer.toString('base64');
+};
+
+const captureAspectRatioCardPrompt = async (targetRatio, cardCopyOverrides = {}, sourceImageData = 'c291cmNl') => {
   let requestPayload = null;
   const ai = {
     models: {
@@ -54,7 +64,7 @@ const captureAspectRatioCardPrompt = async (targetRatio, cardCopyOverrides = {})
   await placeCardOnScene(
     ai,
     'data:image/png;base64,c2NlbmU=',
-    'c291cmNl',
+    sourceImageData,
     'image/png',
     targetRatio,
     cardCopy,
@@ -282,6 +292,105 @@ test('the Aspect Ratio card prompt locks target geometry while preserving curren
       assert.match(prompt, /bottom edge is fixed at y=93%/);
     }
   }
+});
+
+test('the card pass ships a magnified crop of the source copy as the letterform authority', async () => {
+  const { parts, prompt } = await captureAspectRatioCardPrompt(
+    '1:1',
+    {
+      cardTextBox: [710, 75, 930, 925],
+      cardFontFamily: 'Cabify Ciudad',
+      cardFontWeight: 'Bold',
+      buttonFontWeight: 'SemiBold',
+    },
+    await buildSourceImageData(),
+  );
+
+  assert.equal(parts.length, 4);
+  assert.equal(parts[2].inlineData.mimeType, 'image/png');
+
+  // The crop must be magnified, not just cut out: the copy block is 850x220 in
+  // the 1080px source, and it is the upscale that makes the glyphs legible.
+  const cropped = await sharp(Buffer.from(parts[2].inlineData.data, 'base64')).metadata();
+  assert.ok(cropped.width > 900, `expected a magnified crop, got ${cropped.width}px wide`);
+  assert.ok(cropped.width < 1600 && cropped.height < 1600);
+
+  assert.match(prompt, /TYPOGRAPHY LOCK - THE INPUT OWNS THE LETTERFORMS/);
+  assert.match(prompt, /3\. Image 3 - a magnified crop of the SOURCE card copy/);
+  assert.match(prompt, /Image 3 is a MAGNIFIED CROP of the source card's own copy/);
+  assert.match(prompt, /Image 3 supplies LETTERFORMS ONLY/);
+  assert.match(prompt, /Never draw its edges, its background block, a zoomed panel or a second copy of the text/);
+  assert.match(prompt, /The source copy is set in Cabify Ciudad\./);
+  assert.match(prompt, /The headline weight reads as Cabify Ciudad Bold/);
+  assert.match(prompt, /The CTA label weight reads as SemiBold/);
+  assert.match(prompt, /Where a name and Image 3 disagree, Image 3 wins/);
+  assert.match(prompt, /is a FAILED output/);
+  assert.match(prompt, /Never synthesize a weight/);
+  assert.match(prompt, /Final check before returning the image/);
+
+  // The box is source geometry, and source geometry is exactly what the target
+  // layout must not inherit - it may never reach the prompt.
+  assert.doesNotMatch(prompt, /cardTextBox/);
+  assert.doesNotMatch(prompt, /710/);
+});
+
+test('the typography lock falls back to Image 2 when no copy crop could be built', async () => {
+  const { parts, prompt } = await captureAspectRatioCardPrompt('9:16');
+
+  assert.equal(parts.length, 3);
+  assert.match(prompt, /TYPOGRAPHY LOCK - THE INPUT OWNS THE LETTERFORMS/);
+  assert.match(prompt, /Image 2 is the authority on typeface, glyph skeleton/);
+  assert.doesNotMatch(prompt, /Image 3/);
+});
+
+test('rejects copy-block boxes that localise nothing usable', async () => {
+  const sourceImageData = await buildSourceImageData();
+
+  for (const box of [
+    null,
+    [0, 0, 1000, 1000],
+    [400, 400, 405, 900],
+    [400, 0, 900, 1200],
+    ['a', 'b', 'c', 'd'],
+    [710, 75, 930],
+  ]) {
+    assert.equal(
+      await buildSourceTypographyReference(sourceImageData, box),
+      null,
+      `expected ${JSON.stringify(box)} to be rejected`,
+    );
+  }
+
+  assert.equal(await buildSourceTypographyReference('bm90LWFuLWltYWdl', [710, 75, 930, 925]), null);
+});
+
+test('card-copy extraction normalises the typeface fields and drops an unusable box', async () => {
+  const ai = {
+    models: {
+      generateContent: async () => ({
+        text: JSON.stringify({
+          cardText: 'Movete mejor',
+          buttonPresent: true,
+          buttonLabel: 'Pedí ahora',
+          cardBackgroundColor: '#fff',
+          cardTextColor: '#6f49e8',
+          cardBrandMarks: '',
+          cardTextBox: [0, 0, 1000, 1000],
+          cardFontFamily: 'cabify ciudad text',
+          cardFontWeight: 'extra bold',
+          buttonFontWeight: 'not a weight',
+        }),
+      }),
+    },
+  };
+
+  const copy = await extractCardCopyFromSource(ai, 'c291cmNl', 'image/png');
+
+  assert.equal(copy.cardTextBox, null);
+  assert.equal(copy.cardFontFamily, 'Cabify Ciudad Text');
+  assert.equal(copy.cardFontWeight, 'ExtraBold');
+  assert.equal(copy.buttonFontWeight, '');
+  assert.equal(copy.cardBackgroundColor, '#FFFFFF');
 });
 
 test('long 9:16 copy removes source visual wraps and keeps its fixed bottom edge', async () => {

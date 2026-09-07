@@ -1,5 +1,6 @@
 import axios from 'axios';
 import crypto from 'node:crypto';
+import { mapWithBoundedConcurrency } from './concurrency.js';
 import {
   CREATIVE_REVIEW_BATCHES_SHEET,
   CREATIVE_REVIEW_BATCH_HEADERS,
@@ -665,30 +666,6 @@ const persistReviewItemImage = async ({ imageUrl, batchId, batchFolderId, item, 
     imageResolution,
     aspectRatio,
   };
-};
-
-const mapWithBoundedConcurrency = async (values, limit, mapper) => {
-  const results = new Array(values.length);
-  let nextIndex = 0;
-  let firstError = null;
-  const workerCount = Math.min(values.length, Math.max(1, limit));
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (!firstError) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= values.length) return;
-      try {
-        results[index] = await mapper(values[index], index);
-      } catch (error) {
-        firstError ||= error;
-      }
-    }
-  });
-  // Wait for every in-flight Drive operation to settle before releasing the
-  // per-spreadsheet lock. No additional item is started after the first error.
-  await Promise.all(workers);
-  if (firstError) throw firstError;
-  return results;
 };
 
 export const registerReviewItems = async (input = {}) => {

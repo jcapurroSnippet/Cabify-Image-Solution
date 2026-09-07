@@ -17,7 +17,13 @@ import {
   getCreativeLibraryConfig,
 } from './creativeLibraryConfig.js';
 import { getAdsLowPerformers, buildAdsReplacementPlan, executeAdsReplacements } from './adsReplacementService.js';
-import { generateAspectRatioImages } from './imageGenerator.js';
+import {
+  ASPECT_RATIO_PROMPT_PROFILE,
+  generateAspectRatioImages,
+  getGeminiClient,
+  resolveCardCopyForSource,
+} from './imageGenerator.js';
+import { mapWithBoundedConcurrency } from './concurrency.js';
 import { resolveSourceImage } from './sourceImageResolver.js';
 import {
   createReviewBatch,
@@ -496,42 +502,78 @@ export const generateRunCreatives = async (input = {}, onProgress = () => {}) =>
       const items = [];
       const ratioErrors = [];
 
-      for (const ratio of RUN_TARGET_RATIOS) {
-        try {
-          const { images, errors } = await dep('generateAspectRatioImages', generateAspectRatioImages)(
-            source.dataUrl,
-            ratio,
-          );
-          (errors || []).forEach((error) => ratioErrors.push(`${ratio}: ${clean(error?.message || error)}`));
-          (images || []).forEach((imageUrl, index) => {
-            items.push({
-              familyId,
-              generationId: buildRunGenerationId(runId, targetId, ratio, index + 1),
+      // Resolved once per target instead of once per ratio: RUN_TARGET_RATIOS
+      // all read the identical source image, so a second extraction pass
+      // would just re-pay for the same answer. Guarded like the ratio loop
+      // below so a malformed source can't abort the whole run - only this
+      // target's generation degrades to "no reliable copy, retry per ratio".
+      const ai = dep('getGeminiClient', getGeminiClient)();
+      let cardCopy = null;
+      let cardCopyError = null;
+      try {
+        ({ cardCopy, error: cardCopyError } = await dep(
+          'resolveCardCopyForSource',
+          resolveCardCopyForSource,
+        )(ai, source.dataUrl));
+      } catch (error) {
+        cardCopyError = `Card copy extraction failed: ${clean(error?.message) || 'unknown error'}`;
+      }
+
+      const ratioResults = await mapWithBoundedConcurrency(
+        RUN_TARGET_RATIOS,
+        RUN_TARGET_RATIOS.length,
+        async (ratio) => {
+          try {
+            const { images, errors } = await dep('generateAspectRatioImages', generateAspectRatioImages)(
+              source.dataUrl,
               ratio,
-              variantIndex: index + 1,
-              imageUrl,
-              referenceUrl: source.sourceUrl || '',
-              category: clean(target.detected_category) || clean(runRow.category),
-              plazas: parseIdList(target.detected_plazas).length > 0
-                ? parseIdList(target.detected_plazas)
-                : parseIdList(runRow.plazas),
-              sourceOutput: `run:${runId}:${targetId}:${ratio}:${index + 1}`,
-              metadata: {
-                runId,
-                targetId,
-                ratio,
-                sourceImageOrigin: source.origin,
-                oldImageUrl: clean(target.old_image_url),
-                campaignName: clean(target.campaign_name),
-                adGroupName: clean(target.ad_group_name),
-              },
-            });
+              { profile: ASPECT_RATIO_PROMPT_PROFILE, ai, cardCopy, cardCopyError },
+            );
+            onProgress({ state: 'ratio_done', runId, targetId, ratio, variants: (images || []).length });
+            return {
+              ratio,
+              images: images || [],
+              errorMessages: (errors || []).map((error) => `${ratio}: ${clean(error?.message || error)}`),
+            };
+          } catch (error) {
+            onProgress({ state: 'ratio_failed', runId, targetId, ratio, error: clean(error?.message) });
+            return {
+              ratio,
+              images: [],
+              errorMessages: [`${ratio}: ${clean(error?.message) || 'generation failed'}`],
+            };
+          }
+        },
+      );
+
+      // Flushed in RUN_TARGET_RATIOS order (not completion order) so item
+      // ordering stays deterministic regardless of which ratio finishes first.
+      for (const { ratio, images, errorMessages } of ratioResults) {
+        errorMessages.forEach((message) => ratioErrors.push(message));
+        images.forEach((imageUrl, index) => {
+          items.push({
+            familyId,
+            generationId: buildRunGenerationId(runId, targetId, ratio, index + 1),
+            ratio,
+            variantIndex: index + 1,
+            imageUrl,
+            referenceUrl: source.sourceUrl || '',
+            category: clean(target.detected_category) || clean(runRow.category),
+            plazas: parseIdList(target.detected_plazas).length > 0
+              ? parseIdList(target.detected_plazas)
+              : parseIdList(runRow.plazas),
+            sourceOutput: `run:${runId}:${targetId}:${ratio}:${index + 1}`,
+            metadata: {
+              runId,
+              targetId,
+              ratio,
+              sourceImageOrigin: source.origin,
+              oldImageUrl: clean(target.old_image_url),
+              campaignName: clean(target.campaign_name),
+              adGroupName: clean(target.ad_group_name),
+            },
           });
-          onProgress({ state: 'ratio_done', runId, targetId, ratio, variants: (images || []).length });
-        } catch (error) {
-          ratioErrors.push(`${ratio}: ${clean(error?.message) || 'generation failed'}`);
-          onProgress({ state: 'ratio_failed', runId, targetId, ratio, error: clean(error?.message) });
-        }
+        });
       }
 
       let updated;
