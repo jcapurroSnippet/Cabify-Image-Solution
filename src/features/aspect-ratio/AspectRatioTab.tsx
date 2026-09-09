@@ -507,6 +507,10 @@ export default function AspectRatioTab() {
             <span className="font-medium text-slate-200">3 variantes 9:16</span>. Las 6 salidas se
             guardan en una pestaña de esta misma spreadsheet y quedan listas para Creative Review.
           </p>
+          <p className="text-sm leading-6 text-slate-400">
+            El copy y la tipografía se detectan automáticamente desde cada pieza original. El texto
+            final se compone con el archivo OTF de Cabify correspondiente.
+          </p>
 
           <div className="space-y-3">
             <div>
@@ -829,6 +833,16 @@ export default function AspectRatioTab() {
                 </button>
               </div>
             )}
+          </section>
+
+          <section className="panel-surface space-y-3">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Contenido automático</h3>
+            </div>
+            <p className="text-sm leading-6 text-slate-400">
+              El copy y la tipografía se detectan automáticamente desde la pieza original. El texto
+              final se compone con el archivo OTF de Cabify correspondiente.
+            </p>
           </section>
 
           <section className="panel-surface space-y-3">

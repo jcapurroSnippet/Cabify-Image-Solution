@@ -16,7 +16,6 @@ import {
   buildSourceTypographyReference,
   extractCardCopyFromSource,
   getVariationPrompts,
-  placeCardOnScene,
 } from '../server/services/imageGenerator.js';
 
 /** A stand-in source creative big enough for a copy-block crop to be magnified. */
@@ -25,55 +24,6 @@ const buildSourceImageData = async (width = 1080, height = 1080) => {
     create: { width, height, channels: 3, background: '#6f49e8' },
   }).png().toBuffer();
   return buffer.toString('base64');
-};
-
-const captureAspectRatioCardPrompt = async (targetRatio, cardCopyOverrides = {}, sourceImageData = 'c291cmNl') => {
-  let requestPayload = null;
-  const ai = {
-    models: {
-      generateContent: async (payload) => {
-        requestPayload = payload;
-        return {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-                  mimeType: 'image/png',
-                },
-              }],
-            },
-          }],
-        };
-      },
-    },
-  };
-
-  const cardCopy = cardCopyOverrides === null
-    ? null
-    : {
-      cardText: 'Texto original',
-      buttonPresent: true,
-      buttonLabel: 'Pedí ahora',
-      cardBackgroundColor: '#ffffff',
-      cardTextColor: '#6f49e8',
-      cardBrandMarks: '',
-      ...cardCopyOverrides,
-    };
-
-  await placeCardOnScene(
-    ai,
-    'data:image/png;base64,c2NlbmU=',
-    sourceImageData,
-    'image/png',
-    targetRatio,
-    cardCopy,
-    ASPECT_RATIO_PROMPT_PROFILE,
-  );
-
-  assert.ok(requestPayload);
-  const parts = requestPayload.contents.parts;
-  return { parts, prompt: parts.at(-1).text };
 };
 
 test('prefers the explicit 16.9 image header over columns with more URLs', () => {
@@ -215,132 +165,24 @@ test('the Aspect Ratio prompt profile is scoped to that tool alone', () => {
   assert.doesNotMatch(getVariationPrompts('9:16', ASPECT_RATIO_PROMPT_PROFILE).join('\n'), carDemand);
 });
 
-test('the Aspect Ratio reframe applies supplied frames as geometry only and keeps the 9:16 logo straight', () => {
+test('the Aspect Ratio reframe generates only the background for immutable 1:1 and 9:16 templates', () => {
   const square = getVariationPrompts('1:1', ASPECT_RATIO_PROMPT_PROFILE).join('\n');
   const vertical = getVariationPrompts('9:16', ASPECT_RATIO_PROMPT_PROFILE).join('\n');
 
-  assert.match(square, /PREVIOUS visual identity/);
-  assert.match(square, /SOURCE layout is NOT authoritative/);
-  assert.match(square, /TARGET FRAME GEOMETRY - 1:1 \(frame only\)/);
-  assert.match(square, /outer ground is therefore a thin, even frame of about 5%/);
-  assert.match(square, /must never exceed 6\.5%/);
-  assert.match(vertical, /TARGET FRAME GEOMETRY - 9:16 \(frame only\)/);
-  assert.match(vertical, /left and right frame gaps of about 4\.7%/);
-  assert.match(vertical, /top\/bottom frame gaps of about 2\.7%/);
-  assert.match(vertical, /side gaps must never exceed 5\.5%/);
-  assert.match(vertical, /must never create a full-width header/);
-  assert.match(square, /width about 19% of canvas width/);
-  assert.match(vertical, /width about 24% of canvas width/);
-  assert.match(vertical, /LOCAL TOP-LEFT notch/);
-  assert.match(vertical, /anchored to the left frame edge at x=4\.7%/);
-  assert.match(vertical, /left tab\/notch position and size are fixed/);
-  assert.match(vertical, /perfectly straight and horizontal/);
-  assert.match(vertical, /0-degree rotation/);
-  assert.match(vertical, /no tilt, skew, curve or perspective distortion/);
-  assert.match(vertical, /9:16 SUBJECT COMPOSITION - NON-NEGOTIABLE/);
-  assert.match(vertical, /centred around x=50%/);
-  assert.match(vertical, /central x=42%-58% band/);
-  assert.match(vertical, /centre the person's face and torso rather than the combined silhouette/);
-  assert.match(vertical, /Horizontal translation\/reframing of the complete unchanged subject is required/);
-});
-
-test('the Aspect Ratio card pass receives the source for current identity, never its layout', async () => {
-  const { parts, prompt } = await captureAspectRatioCardPrompt('1:1');
-
-  assert.equal(parts.length, 3);
-  assert.deepEqual(parts[0].inlineData, { data: 'c2NlbmU=', mimeType: 'image/png' });
-  assert.deepEqual(parts[1].inlineData, { data: 'c291cmNl', mimeType: 'image/png' });
-  assert.match(prompt, /Image 2 - the CURRENT source creative and identity reference/);
-  assert.match(prompt, /CARD COPY LOCK is authoritative for literal words/);
-  assert.match(prompt, /IMAGE 2 DEFINES STYLE, NEVER LAYOUT/);
-  assert.match(prompt, /NEVER take from Image 2: card width, card height, card aspect ratio/);
-  assert.match(prompt, /Never scale Image 2's complete card as one rigid object/);
-});
-
-test('the Aspect Ratio card prompt locks target geometry while preserving current typography and CTA styling', async () => {
-  for (const ratio of ['1:1', '9:16']) {
-    const { prompt } = await captureAspectRatioCardPrompt(ratio);
-
-    assert.match(prompt, ratio === '1:1' ? /width=85%/ : /width=93%/);
-    assert.match(prompt, ratio === '1:1'
-      ? /left and right gaps are ALWAYS 7\.5% each/
-      : /left and right gaps are ALWAYS 3\.5% each/);
-    assert.match(prompt, /Never use the narrow source-card width/);
-    assert.match(prompt, /INPUT COLOUR LOCK - ABSOLUTE/);
-    assert.match(prompt, /Every visible colour from the input is locked/);
-    assert.match(prompt, /Never borrow a colour from a target-frame example or another campaign/);
-    assert.match(prompt, /typeface and glyph shapes, weight, width, capitalization/);
-    assert.match(prompt, /Do NOT substitute a generic sans-serif/);
-    assert.match(prompt, /CABIFY CIUDAD TYPOGRAPHY SYSTEM - REQUIRED/);
-    assert.match(prompt, /Promotional headlines and expressive card messages use Cabify Ciudad only/);
-    assert.match(prompt, /CTA labels, promo codes, buttons and any UI-like component use Cabify Ciudad Text only/);
-    assert.match(prompt, /Never tighten tracking or line-height merely to fit more copy/);
-    assert.match(prompt, /Source line wrapping is incidental and must NOT be copied/);
-    assert.match(prompt, /same proportions, shape, internal spacing, fill or gradient, colour values/);
-    assert.match(prompt, /icon, logo, illustration, photograph and image crop/);
-    assert.match(prompt, /Card background colour: EXACTLY #FFFFFF/);
-    assert.match(prompt, /Text colour: EXACTLY #6F49E8/);
-    assert.match(prompt, /grow the card UPWARD only to a maximum/);
-    assert.match(prompt, /scale down uniformly by at most 10%/);
-    assert.match(prompt, ratio === '1:1' ? /maximum of 32%/ : /maximum of 28%/);
-
-    if (ratio === '1:1') {
-      assert.match(prompt, /1:1 card is ALWAYS HORIZONTAL \/ LANDSCAPE/);
-      assert.match(prompt, /width-to-height ratio must never be below 2\.3:1/);
-      assert.match(prompt, /Never make it square, portrait, narrow, tall or vertically oriented/);
-      assert.match(prompt, /x=7\.5%, y=71%, width=85%, height=22%/);
-      assert.match(prompt, /bottom edge is fixed at y=93%/);
-    }
+  for (const prompt of [square, vertical]) {
+    assert.match(prompt, /BACKGROUND-ONLY GENERATION - CRITICAL/);
+    assert.match(prompt, /Return only the photograph\/background/);
+    assert.match(prompt, /IMMUTABLE TEMPLATE LAYERS/);
+    assert.match(prompt, /This model call owns ONLY the photograph\/background/);
+    assert.match(prompt, /adds the reference template's frame, logo and text box at exact pixel coordinates/);
+    assert.match(prompt, /real Cabify OTF/);
+    assert.match(prompt, /Return no text of any kind/);
   }
-});
 
-test('the card pass ships a magnified crop of the source copy as the letterform authority', async () => {
-  const { parts, prompt } = await captureAspectRatioCardPrompt(
-    '1:1',
-    {
-      cardTextBox: [710, 75, 930, 925],
-      cardFontFamily: 'Cabify Ciudad',
-      cardFontWeight: 'Bold',
-      buttonFontWeight: 'SemiBold',
-    },
-    await buildSourceImageData(),
-  );
-
-  assert.equal(parts.length, 4);
-  assert.equal(parts[2].inlineData.mimeType, 'image/png');
-
-  // The crop must be magnified, not just cut out: the copy block is 850x220 in
-  // the 1080px source, and it is the upscale that makes the glyphs legible.
-  const cropped = await sharp(Buffer.from(parts[2].inlineData.data, 'base64')).metadata();
-  assert.ok(cropped.width > 900, `expected a magnified crop, got ${cropped.width}px wide`);
-  assert.ok(cropped.width < 1600 && cropped.height < 1600);
-
-  assert.match(prompt, /TYPOGRAPHY LOCK - THE INPUT OWNS THE LETTERFORMS/);
-  assert.match(prompt, /3\. Image 3 - a magnified crop of the SOURCE card copy/);
-  assert.match(prompt, /Image 3 is a MAGNIFIED CROP of the source card's own copy/);
-  assert.match(prompt, /Image 3 supplies LETTERFORMS ONLY/);
-  assert.match(prompt, /Never draw its edges, its background block, a zoomed panel or a second copy of the text/);
-  assert.match(prompt, /The source copy is set in Cabify Ciudad\./);
-  assert.match(prompt, /The headline weight reads as Cabify Ciudad Bold/);
-  assert.match(prompt, /The CTA label weight reads as SemiBold/);
-  assert.match(prompt, /Where a name and Image 3 disagree, Image 3 wins/);
-  assert.match(prompt, /is a FAILED output/);
-  assert.match(prompt, /Never synthesize a weight/);
-  assert.match(prompt, /Final check before returning the image/);
-
-  // The box is source geometry, and source geometry is exactly what the target
-  // layout must not inherit - it may never reach the prompt.
-  assert.doesNotMatch(prompt, /cardTextBox/);
-  assert.doesNotMatch(prompt, /710/);
-});
-
-test('the typography lock falls back to Image 2 when no copy crop could be built', async () => {
-  const { parts, prompt } = await captureAspectRatioCardPrompt('9:16');
-
-  assert.equal(parts.length, 3);
-  assert.match(prompt, /TYPOGRAPHY LOCK - THE INPUT OWNS THE LETTERFORMS/);
-  assert.match(prompt, /Image 2 is the authority on typeface, glyph skeleton/);
-  assert.doesNotMatch(prompt, /Image 3/);
+  assert.match(square, /TEMPLATE APERTURE - 1:1/);
+  assert.match(square, /rounded photo aperture, outer frame, local logo notch, logo or text box/);
+  assert.match(vertical, /TEMPLATE APERTURE - 9:16/);
+  assert.match(vertical, /continuous vertical photograph\/background all the way to every canvas edge/);
 });
 
 test('rejects copy-block boxes that localise nothing usable', async () => {
@@ -364,7 +206,7 @@ test('rejects copy-block boxes that localise nothing usable', async () => {
   assert.equal(await buildSourceTypographyReference('bm90LWFuLWltYWdl', [710, 75, 930, 925]), null);
 });
 
-test('card-copy extraction normalises the typeface fields and drops an unusable box', async () => {
+test('card-copy extraction selects a bundled OTF and drops an unusable box', async () => {
   const ai = {
     models: {
       generateContent: async () => ({
@@ -376,8 +218,7 @@ test('card-copy extraction normalises the typeface fields and drops an unusable 
           cardTextColor: '#6f49e8',
           cardBrandMarks: '',
           cardTextBox: [0, 0, 1000, 1000],
-          cardFontFamily: 'cabify ciudad text',
-          cardFontWeight: 'extra bold',
+          cardFontId: 'cabify-ciudad-text-semibold',
           buttonFontWeight: 'not a weight',
         }),
       }),
@@ -387,52 +228,11 @@ test('card-copy extraction normalises the typeface fields and drops an unusable 
   const copy = await extractCardCopyFromSource(ai, 'c291cmNl', 'image/png');
 
   assert.equal(copy.cardTextBox, null);
+  assert.equal(copy.cardFontId, 'cabify-ciudad-text-semibold');
   assert.equal(copy.cardFontFamily, 'Cabify Ciudad Text');
-  assert.equal(copy.cardFontWeight, 'ExtraBold');
+  assert.equal(copy.cardFontWeight, 'SemiBold');
   assert.equal(copy.buttonFontWeight, '');
   assert.equal(copy.cardBackgroundColor, '#FFFFFF');
-});
-
-test('long 9:16 copy removes source visual wraps and keeps its fixed bottom edge', async () => {
-  const { prompt } = await captureAspectRatioCardPrompt('9:16', {
-    cardText: 'Línea uno\nLínea dos\nLínea tres\nLínea cuatro',
-  });
-
-  assert.match(prompt, /"cardText": "Línea uno Línea dos Línea tres Línea cuatro"/);
-  assert.match(prompt, /9:16 PLATFORM SAFE ZONE - ABSOLUTE/);
-  assert.match(prompt, /safe region runs vertically from y=15% through y=84%/);
-  assert.match(prompt, /No card pixel may enter either exclusion band/);
-  assert.match(prompt, /x=3\.5%, y=62%, width=93%, height=18%/);
-  assert.match(prompt, /bottom edge is fixed at y=80%/);
-  assert.match(prompt, /visible 4% buffer/);
-  assert.match(prompt, /maximum of 28%/);
-  assert.match(prompt, /bottom edge remains fixed at 80%/);
-  assert.match(prompt, /fixed y=80% bottom edge applies to the panel AND its shadow/);
-  assert.match(prompt, /Never render a yellow overlay/);
-});
-
-test('the Aspect Ratio card prompt forbids inventing a CTA and re-locks the 9:16 logo orientation', async () => {
-  const { prompt } = await captureAspectRatioCardPrompt('9:16', {
-    buttonPresent: false,
-    buttonLabel: '',
-  });
-
-  assert.match(prompt, /"buttonPresent": false/);
-  assert.match(prompt, /If "buttonPresent" is false, do not render a button/);
-  assert.match(prompt, /If Image 2 has no CTA, do not create one/);
-  assert.match(prompt, /9:16 LOGO ORIENTATION LOCK/);
-  assert.match(prompt, /exactly 0-degree rotation/);
-  assert.match(prompt, /fixed LOCAL TOP-LEFT position/);
-  assert.match(prompt, /Do not tilt, skew, warp, curve, rotate, redraw or apply perspective/);
-});
-
-test('the Aspect Ratio fallback reads CTA presence and styling directly from the source', async () => {
-  const { parts, prompt } = await captureAspectRatioCardPrompt('9:16', null);
-
-  assert.equal(parts.length, 3);
-  assert.match(prompt, /Read the exact card text and button label from Image 2 only/);
-  assert.match(prompt, /extraction fallback reveals a CTA in Image 2/);
-  assert.match(prompt, /extraction fallback visibly shows one in Image 2/);
 });
 
 test('card-copy extraction collapses visual source line wrapping before target layout', async () => {
@@ -446,6 +246,9 @@ test('card-copy extraction collapses visual source line wrapping before target l
           cardBackgroundColor: '#6f49e8',
           cardTextColor: '#ffffff',
           cardBrandMarks: '',
+          cardFontId: 'cabify-ciudad-bold',
+          cardTextBox: [700, 100, 900, 900],
+          buttonFontWeight: '',
         }),
       }),
     },
@@ -454,16 +257,7 @@ test('card-copy extraction collapses visual source line wrapping before target l
   const copy = await extractCardCopyFromSource(ai, 'c291cmNl', 'image/png');
 
   assert.equal(copy.cardText, 'En Buenos Aires, movete mejor.');
-});
-
-test('the landscape template does not inherit the square and vertical source-card lock', async () => {
-  const { parts, prompt } = await captureAspectRatioCardPrompt('1.91:1');
-
-  assert.equal(parts.length, 2);
-  assert.doesNotMatch(prompt, /SOURCE CARD APPEARANCE LOCK/);
-  assert.doesNotMatch(prompt, /Image 2 remains the authoritative visual source/);
-  assert.match(prompt, /CANVAS COMPOSITION - 1\.91:1/);
-  assert.match(prompt, /Build the purple copy panel, the pastel background and the logo tab/);
+  assert.equal(copy.cardFontId, 'cabify-ciudad-bold');
 });
 
 test('maps uploaded batch variants to review items keyed on the source row', () => {

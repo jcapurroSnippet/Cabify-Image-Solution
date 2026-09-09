@@ -1627,10 +1627,9 @@ export const processBatch = async (options) => {
         const imageDataUrl = await downloadImageAsDataUrl(imageUrl);
         console.log(`[BATCH] Row ${rowNumber}: download complete, size=${imageDataUrl?.length ?? 0}`);
 
-        // Resolved once per row instead of once per ratio: every ratio reads
-        // the identical source image, so a second extraction pass would just
-        // re-pay for the same answer.
         const ai = getGeminiClient();
+        // Resolve both literal copy and the closest bundled Cabify OTF once per
+        // source row. Both output ratios then share the exact same detection.
         const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl);
 
         const ratioEntries = await mapWithBoundedConcurrency(targetRatios, targetRatios.length, async (ratio) => {

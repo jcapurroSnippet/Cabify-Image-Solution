@@ -3,6 +3,13 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import {
+  ASPECT_RATIO_FONT_REGISTRY,
+  DEFAULT_ASPECT_RATIO_FONT_ID,
+  buildAspectRatioFontReference,
+  composeAspectRatioTemplate,
+  resolveAspectRatioFontId,
+} from './aspectRatioTemplate.js';
 import { mapWithBoundedConcurrency } from './concurrency.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,6 +117,11 @@ const CARD_REFERENCE_FOLDERS = {
  */
 const CARD_REFERENCE_FALLBACKS = {};
 
+const ASPECT_RATIO_FONT_IDS = Object.freeze(Object.keys(ASPECT_RATIO_FONT_REGISTRY));
+const ASPECT_RATIO_FONT_CLASSIFICATION_OPTIONS = ASPECT_RATIO_FONT_IDS
+  .map((fontId) => `  - "${fontId}": ${ASPECT_RATIO_FONT_REGISTRY[fontId].label}`)
+  .join('\n');
+
 const CARD_COPY_EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -144,10 +156,9 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       type: 'string',
       description: 'Partner, product or sub-brand logos shown INSIDE the card, named and briefly described, comma-separated (e.g. "Mercado Pago logo in a white rounded container"). Exclude the main Cabify wordmark. Empty string if there are none.',
     },
-    // Pass 2 redraws the copy, so the source typeface has to survive the trip.
-    // The box lets the pipeline crop and magnify the real letterforms; the two
-    // name fields let the prompt state the face instead of hoping the model
-    // infers it from a full creative it only ever sees downscaled.
+    // Legacy model-backed profiles can still use the source box as a magnified
+    // letterform reference. Aspect Ratio itself uses cardFontId to render the
+    // copy deterministically with the matching bundled OTF.
     cardTextBox: {
       type: 'array',
       items: { type: 'integer' },
@@ -155,17 +166,14 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       maxItems: 4,
       description: 'Bounding box of the card COPY BLOCK (headline plus CTA label, excluding the panel\'s empty margins) as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image.',
     },
-    cardFontFamily: {
+    cardFontId: {
       type: 'string',
-      description: 'Cabify family the card copy is set in: "Cabify Ciudad" (expressive headline) or "Cabify Ciudad Text" (UI-like text). Empty string if unclear.',
-    },
-    cardFontWeight: {
-      type: 'string',
-      description: 'Weight of the headline copy: Light, Book, SemiBold, Bold, ExtraBold or Black. Empty string if unclear.',
+      enum: ASPECT_RATIO_FONT_IDS,
+      description: 'Closest bundled Cabify OTF face for the main card copy. Always select exactly one allow-listed id.',
     },
     buttonFontWeight: {
       type: 'string',
-      description: 'Weight of the CTA label, same options as cardFontWeight. Empty string if there is no button or it is unclear.',
+      description: 'Weight of the CTA label: Light, Book, SemiBold, Bold, ExtraBold or Black. Empty string if there is no button or it is unclear.',
     },
   },
   required: [
@@ -176,14 +184,16 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
     'cardTextColor',
     'cardBrandMarks',
     'cardTextBox',
-    'cardFontFamily',
-    'cardFontWeight',
+    'cardFontId',
     'buttonFontWeight',
   ],
 };
 
 const CARD_COPY_EXTRACTION_PROMPT = `
-Read the promotional card in this source creative and extract its literal copy.
+Image 1 is the source creative. Image 2 is a labelled visual catalog rendered
+with the exact ten Cabify OTF files available to the compositor.
+
+Read the promotional card in Image 1 and extract its literal copy.
 
 Return JSON with exactly these fields:
 - "cardText": every non-button word that appears inside the promotional card, in reading order. Preserve punctuation, accents, capitalization, and separators exactly. Join visual line wrapping with a single space: line breaks caused by the source card's narrow width are NOT content. Use "\\n" only for genuinely separate paragraphs or text blocks.
@@ -193,15 +203,17 @@ Return JSON with exactly these fields:
 - "cardTextColor": the hex colour of that copy.
 - "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
 - "cardTextBox": the bounding box that tightly encloses the card's copy block - the headline plus the CTA label - as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude any partner logo that sits apart from the copy.
-- "cardFontFamily": "Cabify Ciudad" if the copy uses the expressive display family, "Cabify Ciudad Text" if it uses the UI/text family. Empty string if you cannot tell.
-- "cardFontWeight": the headline's weight, exactly one of "Light", "Book", "SemiBold", "Bold", "ExtraBold", "Black". Judge it from stroke thickness relative to letter height. Empty string if you cannot tell.
-- "buttonFontWeight": the CTA label's weight, same options. Empty string if there is no button or you cannot tell.
+- "cardFontId": compare the main card copy in Image 1 directly against the labelled rows in Image 2 and choose the ONE bundled OTF face that is visually closest. Compare glyph proportions first (Cabify Ciudad versus Cabify Ciudad Text), then stroke thickness. Allowed values:
+${ASPECT_RATIO_FONT_CLASSIFICATION_OPTIONS}
+- "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
 
 Rules:
 - Extract text only from the card. Ignore the rest of the scene, logo, people, cars, and background.
+- Image 2 is typography reference only. Never copy its ids, alphabet samples, numbers or example sentence into "cardText".
 - Do NOT translate, rewrite, summarize, normalize, fix spelling, or infer missing words.
 - Do NOT borrow copy from any other image.
 - If a word is partially obscured, return the visible characters only.
+- "cardFontId" may never be blank or custom. If the match is ambiguous, choose the closest allowed face; default to "${DEFAULT_ASPECT_RATIO_FONT_ID}" only when the source has too little legible copy to compare.
 - Return JSON only.
 `.trim();
 
@@ -222,15 +234,12 @@ const SCENE_PROHIBITIONS = `
  * distinction the model treats the whole brand layer as an overlay to remove.
  */
 const SCENE_PROHIBITIONS_REFRAME = `
-## SCENE-ONLY GENERATION - CRITICAL
-- Remove the COMPLETE promotional copy card/panel from the source: its headline, CTA, partner mark, coloured panel and every reserved area belonging to it. Reclaim its footprint with a natural continuation of the source photograph/background. Do NOT leave an empty copy-panel placeholder, a solid-colour band or a split-screen layout behind.
-- Removing that card does NOT mean removing the main brand logo. Keep the Cabify wordmark/lockup exactly as the CURRENT source styles it: same artwork, colour, container (if any), proportions and orientation. Its target size and position are defined by the numeric target-ratio rules below, not by the source layout.
-- Do NOT add a new UI card, text overlay, CTA button, promo code or badge. Step 2 rebuilds the copy card later.
-- Keep the subject and scene background. Rebuild the thin target FRAME specified below: a current-brand outer ground surrounding one rounded photo panel. The frame geometry comes only from the supplied target-frame measurements; its colour/finish comes only from the current source. Never copy the source frame's size or split layout.
-- The photograph/background fills the rounded photo panel and continues behind the future card area. The logo uses only a LOCAL notch in the frame; never reserve a full-width header, footer or safe-area band. A logo container may exist only tightly around the source logo itself.
-- ${ASPECT_RATIO_BRAND_LOCK}
-- ${INPUT_COLOUR_LOCK}
-- Do NOT modify the main subject. Do NOT add filters, blur, gradients, or color shifts.
+## BACKGROUND-ONLY GENERATION - CRITICAL
+- Return only the photograph/background. A deterministic compositor adds the template frame, logo, text box and OTF-rendered text after this model call.
+- Remove the COMPLETE promotional copy card/panel from the source: headline, CTA, partner mark, coloured panel, shadow and every reserved area belonging to it. Reclaim its footprint with a natural continuation of the same photograph/background.
+- Remove every logo, wordmark, logo tab, frame, border, badge, promo code and text overlay from the source. Rebuild the pixels behind them as a plausible continuation of the same scene.
+- Do NOT draw a replacement frame, logo, card, placeholder, solid-colour band or split-screen layout. Do not leave an empty area reserved for them; the photograph/background must continue edge to edge.
+- Preserve the main subject and the source scene. Do NOT add filters, blur, gradients or colour shifts.
 `.trim();
 
 /**
@@ -272,6 +281,14 @@ const DESIGN_SYSTEM_LOCK = `
 - The three variants may change photographic framing only. Card and logo target geometry must remain identical across all variants.
 `.trim();
 
+const TEMPLATE_COMPOSITOR_LOCK = `
+## IMMUTABLE TEMPLATE LAYERS
+- This model call owns ONLY the photograph/background.
+- The server, not the model, adds the reference template's frame, logo and text box at exact pixel coordinates.
+- Do not imitate, reserve space for, redraw or include any of those layers in this output.
+- The server also renders the approved copy with a real Cabify OTF. Return no text of any kind.
+`.trim();
+
 /**
  * Pass 2 receives the original creative as a visual authority. The structured
  * extraction remains authoritative for literal copy, while the source pixels
@@ -306,7 +323,7 @@ const buildSceneGuards = (profile) => (usesAspectRatioProfile(profile)
  * so it is passed separately instead of being folded into "keep it as it is".
  */
 const buildLogoLayoutLine = (profile, legacyLine, widthRange, placement = '') => (usesAspectRatioProfile(profile)
-  ? `- Logo: use the source's CURRENT logo lockup exactly as it is styled - same artwork, colour, container (if any), proportions and orientation. The target dimensions below control the complete visible lockup, including any source container: width about ${widthRange} of canvas width. ${placement || 'Use the exact target position below; do not reuse the source position.'}`
+  ? '- Logo: do NOT render one. The deterministic target template adds the locked logo later at its exact pixel size and position.'
   : legacyLine);
 
 /**
@@ -318,19 +335,15 @@ const getTargetFrameGeometry = (targetRatio, profile) => {
   if (!usesAspectRatioProfile(profile)) return '';
 
   if (String(targetRatio).trim() === '1:1') {
-    return `## TARGET FRAME GEOMETRY - 1:1 (frame only)
-- Build ONE rounded photograph panel at approximately x=5%, y=5%, width=90%, height=90% of the canvas. The current-brand outer ground is therefore a thin, even frame of about 5% on every edge; it must never exceed 6.5%.
-- The photo panel corner radius is approximately 5% of canvas width. The photograph fills this panel completely edge to edge.
-- The logo may occupy a LOCAL notch that touches the top/left portion of the panel. That notch is no wider than 32% and no taller than 14% of the canvas. It is not a full-width header.
-- These are FRAME measurements only. Never copy any reference photo, copy card, CTA, colour, type or logo artwork.`;
+    return `## TEMPLATE APERTURE - 1:1
+- Generate a continuous square photograph/background all the way to every canvas edge.
+- Do NOT render the rounded photo aperture, outer frame, local logo notch, logo or text box. The server applies those immutable pixels from the 1:1 reference template afterward.`;
   }
 
   if (String(targetRatio).trim() === '9:16') {
-    return `## TARGET FRAME GEOMETRY - 9:16 (frame only)
-- Build ONE tall rounded photograph panel with left and right frame gaps of about 4.7% of canvas width, and top/bottom frame gaps of about 2.7% of canvas height. The side gaps must never exceed 5.5%; the vertical gaps must never exceed 3.5%.
-- The photograph fills this panel completely edge to edge. The panel corner radius is approximately 4.7% of canvas width.
-- The logo tab MUST occupy a LOCAL TOP-LEFT notch, anchored to the left frame edge. It may interrupt the photo panel only within at most 40% of canvas width and 12% of canvas height. Elsewhere the photograph reaches the top frame gap. Never make a full-width header or an empty band above the photograph.
-- These are FRAME measurements only. Never copy any reference photo, copy card, CTA, colour, type or logo artwork.`;
+    return `## TEMPLATE APERTURE - 9:16
+- Generate a continuous vertical photograph/background all the way to every canvas edge.
+- Do NOT render a frame, logo, logo tab or text box. The server applies the immutable 9:16 reference template afterward.`;
   }
 
   return '';
@@ -422,6 +435,30 @@ const normalizeExtractedCardCopy = (payload) => {
   const cardText = normalizeCardTextForResponsiveLayout(payload.cardText);
   const buttonLabel = normalizeCardCopyField(payload.buttonLabel);
   const buttonPresent = payload.buttonPresent === true;
+  const legacyFamily = normalizeFromVocabulary(payload.cardFontFamily, CABIFY_FONT_FAMILIES);
+  const legacyWeight = normalizeFromVocabulary(payload.cardFontWeight, CABIFY_FONT_WEIGHTS);
+  let cardFontId = null;
+  if (payload.cardFontId) {
+    try {
+      cardFontId = resolveAspectRatioFontId({ fontId: payload.cardFontId });
+    } catch {
+      // Try the old family/weight fields below before taking the default.
+    }
+  }
+  if (!cardFontId && (legacyFamily || legacyWeight)) {
+    try {
+      cardFontId = resolveAspectRatioFontId({
+        fontFamily: legacyFamily,
+        fontWeight: legacyWeight,
+      });
+    } catch {
+      // The requested family/weight combination may not exist as an OTF.
+    }
+  }
+  // The renderer must always land on a shipped OTF. Invalid or unavailable
+  // classifications fall back to the canonical display face.
+  cardFontId ||= DEFAULT_ASPECT_RATIO_FONT_ID;
+  const selectedFont = ASPECT_RATIO_FONT_REGISTRY[cardFontId];
 
   return {
     cardText,
@@ -431,8 +468,9 @@ const normalizeExtractedCardCopy = (payload) => {
     cardTextColor: normalizeHexColour(payload.cardTextColor),
     cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
     cardTextBox: normalizeCardTextBox(payload.cardTextBox),
-    cardFontFamily: normalizeFromVocabulary(payload.cardFontFamily, CABIFY_FONT_FAMILIES),
-    cardFontWeight: normalizeFromVocabulary(payload.cardFontWeight, CABIFY_FONT_WEIGHTS),
+    cardFontId,
+    cardFontFamily: selectedFont.family,
+    cardFontWeight: selectedFont.weight,
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
   };
 };
@@ -903,7 +941,7 @@ export const getVariationPrompts = (targetRatio, profile = '') => {
 **TASK:** Reframe the source image to a 1:1 square canvas - scene only, no UI card.
 
 ${guards}
-${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
+${isAspectRatioTool ? `\n${TEMPLATE_COMPOSITOR_LOCK}\n` : ''}
 ## LAYOUT
 - Canvas: 1:1 square.
 ${getTargetFrameGeometry(ratio, profile)}
@@ -918,7 +956,7 @@ ${buildLogoLayoutLine(
 
 ## GEOMETRY
 - CROP or EXTEND the background only as needed to reach 1:1.
-- Do NOT crop the subject face or logo.
+- Do NOT crop the subject face.
 `.trim();
 
     return isAspectRatioTool
@@ -990,10 +1028,10 @@ ${layout}
   // target, instead of leaving the model to pick which half to disobey.
   const geometry = isAspectRatioTool
     ? `## GEOMETRY
-- Reach 9:16 by EXTENDING (outpainting) the PHOTOGRAPH itself above and/or below the subject. Rebuild only the thin target frame described above; never grow a source margin, source flat ground or source split-panel proportion.
-- The photograph fills the target rounded panel and continues behind the future copy-card area. Do NOT reserve empty ground above the photo, below it, or between it and either overlay. The logo's local source container may sit in the frame notch, but must never create a full-width header. Bands beyond the specified thin target frame are a failure.
+- Reach 9:16 by EXTENDING (outpainting) the PHOTOGRAPH itself above and/or below the subject. Return a continuous edge-to-edge background; never grow a source margin, flat ground or split-panel proportion.
+- The photograph continues behind the future template overlays. Do NOT reserve empty ground above or below it and do not draw a frame, logo or card placeholder.
 - Do NOT rescale or re-shoot the subject to make it fit. The subject keeps its original scale and detail; the photograph grows around it, and the subject should still occupy roughly 45-60% of the canvas height.
-- Do NOT crop the subject's face or the logo.`
+- Do NOT crop the subject's face.`
     : `## GEOMETRY
 - EXTEND (outpaint) background above and/or below as needed.
 - Keep the subject large - do not zoom out.
@@ -1003,7 +1041,7 @@ ${layout}
 **TASK:** Reframe the source image to a 9:16 vertical canvas - scene only, no UI card.
 
 ${guards}
-${isAspectRatioTool ? `\n${DESIGN_SYSTEM_LOCK}\n` : ''}
+${isAspectRatioTool ? `\n${TEMPLATE_COMPOSITOR_LOCK}\n` : ''}
 ## LAYOUT
 - Canvas: 9:16 vertical.
 ${getTargetFrameGeometry(ratio, profile)}
@@ -1116,11 +1154,13 @@ export const getGeminiClient = () => {
 };
 
 export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeType) => {
+  const fontReference = await buildAspectRatioFontReference();
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
         { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
+        { inlineData: fontReference },
         { text: CARD_COPY_EXTRACTION_PROMPT },
       ],
     },
@@ -1148,7 +1188,7 @@ export const resolveCardCopyForSource = async (ai, imageDataUrl) => {
   try {
     const cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType);
     if (!hasReliableCardCopy(cardCopy)) {
-      return { cardCopy, error: 'Card copy extraction was incomplete; falling back to source-image copy reading.' };
+      return { cardCopy, error: 'Card copy extraction was incomplete.' };
     }
     return { cardCopy, error: null };
   } catch (error) {
@@ -1169,12 +1209,27 @@ export const placeCardOnScene = async (
   if (!sceneMatch) throw new Error('Invalid scene data URL');
   const [, sceneMimeType, sceneData] = sceneMatch;
 
-  // The Aspect Ratio tool ships no reference images. Three separate leaks - a
-  // promo code, a keyline, then an entire reference subject - survived every
-  // textual ban and a downscale to 512px. Asking the model to study six
-  // photographs and copy none of them is a losing instruction, and the written
-  // measurements below already took precedence over them anyway.
-  const refs = usesAspectRatioProfile(profile) ? [] : await loadCardReferences(targetRatio, profile);
+  if (usesAspectRatioProfile(profile)) {
+    const text = normalizeCardCopyField(cardCopy?.cardText);
+    if (!text) {
+      throw new Error('The immutable Aspect Ratio template requires non-empty card text.');
+    }
+
+    const resolvedFontId = resolveAspectRatioFontId({
+      fontId: cardCopy?.cardFontId,
+      fontFamily: cardCopy?.cardFontFamily,
+      fontWeight: cardCopy?.cardFontWeight,
+    });
+
+    return composeAspectRatioTemplate({
+      sceneDataUrl,
+      targetRatio,
+      text,
+      fontId: resolvedFontId,
+    });
+  }
+
+  const refs = await loadCardReferences(targetRatio, profile);
   const canLockCopy = hasReliableCardCopy(cardCopy);
   // A partner mark cannot be drawn from its name alone, so when the source card
   // carries one the source image rides along for the model to copy it from.
@@ -1286,9 +1341,9 @@ export const generateAspectRatioImages = async (
   const attemptsPerVariation = Math.min(3, Math.max(1, Number(maxAttemptsPerVariation) || 1));
 
   const generateOneVariation = async (prompt) => {
-    // Pass 1 (scene) is cached across retries of this variation: only pass 2
-    // (card placement) is redone when IT is the one that failed, so a flaky
-    // card composite doesn't burn a fresh - and billed - scene regeneration.
+    // The generated scene is cached across retries. Aspect Ratio composition
+    // is deterministic and local; legacy profiles may still use a model-backed
+    // card pass.
     let sceneUrl = null;
     let sceneReady = false;
 
@@ -1310,17 +1365,25 @@ export const generateAspectRatioImages = async (
           sceneReady = true;
         }
 
-        const finalUrl = await placeCardOnScene(ai, sceneUrl, imageData, mimeType, targetRatio, cardCopy, profile);
-        // A cardless scene is not a usable variant - it just moves the "missing
-        // card" failure downstream to whoever reviews the output. Treat it as
-        // a failed attempt so it can retry (pass 2 only) or drop out cleanly.
-        if (!finalUrl) throw new Error('Pass 2 returned no card composite.');
+        const finalUrl = await placeCardOnScene(
+          ai,
+          sceneUrl,
+          imageData,
+          mimeType,
+          targetRatio,
+          cardCopy,
+          profile,
+        );
+        // A background without its deterministic template is not a usable
+        // Aspect Ratio variant. Legacy profiles can still reach the old
+        // model-backed card pass, so both paths share this completion guard.
+        if (!finalUrl) throw new Error('Template composition returned no image.');
         return finalUrl;
       } catch (error) {
         const errorMessage = String(error?.message || error || 'Unknown generation error.');
         errors.push(`Variation attempt ${attempt}/${attemptsPerVariation}: ${errorMessage}`);
         const canRetry = attempt < attemptsPerVariation
-          && (isRetryableGenerationError(error) || /returned no (scene|card composite)/i.test(errorMessage));
+          && (isRetryableGenerationError(error) || /returned no (scene|image)/i.test(errorMessage));
         if (!canRetry) return null;
         await new Promise((resolve) => setTimeout(resolve, getGenerationRetryDelayMs(error, attempt)));
       }

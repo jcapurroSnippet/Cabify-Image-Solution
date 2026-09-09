@@ -74,6 +74,19 @@ progress from the persisted output. The tab is append-only and accumulative
 across batches; pass `reviewBatchId` to scope a status read, otherwise the most
 recent batch for that source tab is used.
 
+## Aspect Ratio templates
+
+For `1:1` and `9:16`, Gemini now generates only the mutable photographic
+background. The server then applies a ratio-specific reference template with
+Sharp: frame, logo and text-box geometry are fixed, while the approved copy is
+centred inside the box with one of the bundled Cabify OTF faces. A single visual
+extraction reads the exact copy from each input creative and classifies its
+typography against the ten available OTF faces. The three variations reuse that
+detection; Batch also shares it between the `1:1` and `9:16` outputs of a row.
+The template geometry and exact frame/logo/card/text palette are tied to the
+curated files in `server/assets/card-references`; Gemini never draws or recolours
+those locked brand layers.
+
 Steps 1 and 2 chain without user input; the funnel only stops at the approval
 gates. Generation streams NDJSON and is **resumable** — targets in a terminal
 state are skipped, so reopening a run after a closed tab continues where it left
