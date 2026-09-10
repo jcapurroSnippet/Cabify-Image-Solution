@@ -408,7 +408,8 @@ const RUNTIME_ASSET_ROOTS = Object.freeze([
   path.join(projectRoot, 'dist'),
 ]);
 
-const resolveRuntimeAsset = (folder, fileName) => {
+/** Exported so the typeface matcher can render with the very same OTF files. */
+export const resolveRuntimeAsset = (folder, fileName) => {
   const candidates = RUNTIME_ASSET_ROOTS.map((root) => path.join(root, folder, fileName));
   const assetPath = candidates.find((candidate) => existsSync(candidate));
   if (!assetPath) {
