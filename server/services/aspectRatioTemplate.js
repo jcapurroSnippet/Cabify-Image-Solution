@@ -121,7 +121,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         textBox: { x: 116, y: 779, width: 792, height: 139 },
         radius: 29,
         fontSize: { min: 28, max: 58 },
-        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
       },
     }),
     buildTemplate({
@@ -146,7 +145,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         // `min` stays at the ratio's floor: raising it with the taller box
         // would reject copy the blue frame still fits.
         fontSize: { min: 28, max: 64 },
-        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
       },
     }),
     buildTemplate({
@@ -163,7 +161,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         textBox: { x: 107, y: 764, width: 810, height: 160 },
         radius: 35,
         fontSize: { min: 28, max: 67 },
-        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
       },
     }),
   ],
@@ -187,7 +184,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         textBox: { x: 146, y: 1345, width: 790, height: 265 },
         radius: 44,
         fontSize: { min: 32, max: 74 },
-        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
       },
     }),
     buildTemplate({
@@ -211,7 +207,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         // This is the tightest text box of the three. `min` drops with it so a
         // copy length the other two accept cannot fail only here.
         fontSize: { min: 28, max: 61 },
-        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
       },
     }),
     buildTemplate({
@@ -237,7 +232,6 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         // at min 32 it accepted less copy than the template already in
         // production; 28 puts it back above that floor.
         fontSize: { min: 28, max: 78 },
-        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
       },
     }),
   ],
@@ -584,60 +578,35 @@ export const buildAspectRatioFontReference = async () => {
   return fontReferenceCache;
 };
 
-const buildTransparentCanvas = ({ width, height }) => sharp({
-  create: {
-    width,
-    height,
-    channels: 4,
-    background: { r: 0, g: 0, b: 0, alpha: 0 },
-  },
-});
-
-const roundedRectangleSvg = ({ width, height, radius, fill, opacity = 1 }) => Buffer.from(
+const roundedRectangleSvg = ({ width, height, radius, fill }) => Buffer.from(
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-  + `<rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="${fill}" fill-opacity="${opacity}"/>`
+  + `<rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="${fill}"/>`
   + '</svg>',
 );
 
-const fixedCardLayerCache = new Map();
+const fixedCardShapeCache = new Map();
 
-const buildFixedCardLayers = async (template) => {
-  if (fixedCardLayerCache.has(template.id)) return fixedCardLayerCache.get(template.id);
+/**
+ * The card is a flat rounded rectangle and nothing else. It carries no drop
+ * shadow: the reference creatives do not have one, and a synthesized shadow
+ * darkened the photograph in a halo around the box that no approved template
+ * shows.
+ */
+const buildFixedCardShape = async (template) => {
+  if (fixedCardShapeCache.has(template.id)) return fixedCardShapeCache.get(template.id);
 
-  const loading = (async () => {
-    const { canvas, card } = template;
-    const cardShape = await sharp(roundedRectangleSvg({
-      width: card.box.width,
-      height: card.box.height,
-      radius: card.radius,
-      fill: card.background,
-    })).png().toBuffer();
-
-    const shadowShape = await sharp(roundedRectangleSvg({
-      width: card.box.width,
-      height: card.box.height,
-      radius: card.radius,
-      fill: '#000000',
-      opacity: card.shadow.opacity,
-    })).png().toBuffer();
-
-    const shadow = await buildTransparentCanvas(canvas)
-      .composite([{
-        input: shadowShape,
-        left: card.box.x,
-        top: card.box.y + card.shadow.offsetY,
-      }])
-      .blur(card.shadow.sigma)
-      .png()
-      .toBuffer();
-
-    return { cardShape, shadow };
-  })().catch((error) => {
-    fixedCardLayerCache.delete(template.id);
+  const { card } = template;
+  const loading = sharp(roundedRectangleSvg({
+    width: card.box.width,
+    height: card.box.height,
+    radius: card.radius,
+    fill: card.background,
+  })).png().toBuffer().catch((error) => {
+    fixedCardShapeCache.delete(template.id);
     throw error;
   });
 
-  fixedCardLayerCache.set(template.id, loading);
+  fixedCardShapeCache.set(template.id, loading);
   return loading;
 };
 
@@ -874,16 +843,15 @@ export const composeAspectRatioTemplate = async ({
   const resolvedFontId = resolveAspectRatioFontId({ fontId });
   const sceneBuffer = await parseSceneDataUrl(sceneDataUrl);
 
-  const [base, cardLayers, textLayer, logoLayer] = await Promise.all([
+  const [base, cardShape, textLayer, logoLayer] = await Promise.all([
     buildTemplateBase(sceneBuffer, template),
-    buildFixedCardLayers(template),
+    buildFixedCardShape(template),
     buildTextLayer(template, normalizedText, resolvedFontId),
     buildFixedLogo(template),
   ]);
 
   const composites = [
-    { input: cardLayers.shadow, left: 0, top: 0 },
-    { input: cardLayers.cardShape, left: template.card.box.x, top: template.card.box.y },
+    { input: cardShape, left: template.card.box.x, top: template.card.box.y },
     ...(logoLayer ? [logoLayer] : []),
     { input: textLayer.input, left: textLayer.left, top: textLayer.top },
   ];

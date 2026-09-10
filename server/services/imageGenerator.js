@@ -457,7 +457,10 @@ const normalizeExtractedCardCopy = (payload) => {
     }
   }
   // The renderer must always land on a shipped OTF. Invalid or unavailable
-  // classifications fall back to the canonical display face.
+  // classifications fall back to the canonical display face — but the outputs
+  // are then NOT wearing the source's typeface, so the caller has to be able to
+  // tell that apart from a real detection.
+  const cardFontDetected = Boolean(cardFontId);
   cardFontId ||= DEFAULT_ASPECT_RATIO_FONT_ID;
   const selectedFont = ASPECT_RATIO_FONT_REGISTRY[cardFontId];
 
@@ -470,6 +473,7 @@ const normalizeExtractedCardCopy = (payload) => {
     cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
     cardTextBox: normalizeCardTextBox(payload.cardTextBox),
     cardFontId,
+    cardFontDetected,
     cardFontFamily: selectedFont.family,
     cardFontWeight: selectedFont.weight,
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),

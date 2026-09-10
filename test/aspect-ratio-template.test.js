@@ -17,6 +17,7 @@ import {
   ASPECT_RATIO_PROMPT_PROFILE,
   generateAspectRatioImages,
   getVariationPrompts,
+  resolveCardCopyForSource,
 } from '../server/services/imageGenerator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -614,6 +615,124 @@ test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the 
   // The whole point of the change: one source row can no longer ship three
   // outputs an operator cannot tell apart.
   assert.equal(new Set(result.images).size, 3, 'every variation must differ from the others');
+});
+
+test('the OTF the model read from the source drives every output, and a miss is reported', async () => {
+  const sourceDataUrl = await buildSolidDataUrl('#5A44A8', 160, 90);
+  const cardCopy = {
+    cardText: 'Viajá seguro',
+    buttonPresent: false,
+    buttonLabel: '',
+    cardBackgroundColor: '#6034c6',
+    cardTextColor: '#ffffff',
+    cardBrandMarks: '',
+    cardTextBox: [700, 100, 900, 900],
+    buttonFontWeight: '',
+  };
+  const extractionOnly = (cardFontId) => ({
+    models: { generateContent: async () => ({ text: JSON.stringify({ ...cardCopy, cardFontId }) }) },
+  });
+
+  // One classification, taken on the first call, reused everywhere.
+  const detected = await resolveCardCopyForSource(
+    extractionOnly('cabify-ciudad-text-light'),
+    sourceDataUrl,
+  );
+  assert.equal(detected.cardCopy.cardFontId, 'cabify-ciudad-text-light');
+  assert.equal(detected.cardCopy.cardFontDetected, true);
+
+  const generatedBackgroundDataUrl = await buildSolidDataUrl('#2A8CB8', 128, 128);
+  const generatedBackground = decodePngDataUrl(generatedBackgroundDataUrl);
+  const ai = {
+    models: {
+      generateContent: async (payload) => {
+        if (payload.config?.responseMimeType === 'application/json') {
+          return { text: JSON.stringify({ ...cardCopy, cardFontId: 'cabify-ciudad-text-light' }) };
+        }
+        return {
+          candidates: [{
+            content: {
+              parts: [{ inlineData: { data: generatedBackground.toString('base64'), mimeType: 'image/png' } }],
+            },
+          }],
+        };
+      },
+    },
+  };
+
+  const result = await generateAspectRatioImages(sourceDataUrl, '1:1', {
+    profile: ASPECT_RATIO_PROMPT_PROFILE,
+    ai,
+    variationConcurrency: 1,
+  });
+  const templateIds = listAspectRatioTemplateIds('1:1');
+  for (const [index, imageDataUrl] of result.images.entries()) {
+    assert.equal(
+      imageDataUrl,
+      await composeAspectRatioTemplate({
+        sceneDataUrl: generatedBackgroundDataUrl,
+        targetRatio: '1:1',
+        templateId: templateIds[index],
+        text: cardCopy.cardText,
+        fontId: 'cabify-ciudad-text-light',
+      }),
+      'the detected face, not the default, must render every variation',
+    );
+    assert.notEqual(
+      imageDataUrl,
+      await composeAspectRatioTemplate({
+        sceneDataUrl: generatedBackgroundDataUrl,
+        targetRatio: '1:1',
+        templateId: templateIds[index],
+        text: cardCopy.cardText,
+        fontId: DEFAULT_ASPECT_RATIO_FONT_ID,
+      }),
+    );
+  }
+
+  // A face outside the ten shipped OTFs still has to render, but silently
+  // wearing the default would hide that the output is not the source's type.
+  for (const unusable of ['helvetica-bold', '', undefined]) {
+    const missed = await resolveCardCopyForSource(extractionOnly(unusable), sourceDataUrl);
+    assert.equal(missed.cardCopy.cardFontId, DEFAULT_ASPECT_RATIO_FONT_ID);
+    assert.equal(missed.cardCopy.cardFontDetected, false);
+  }
+});
+
+test('the card is a flat panel: nothing is shaded outside its box', async () => {
+  // A pale, perfectly flat scene turns any drop shadow into an obvious halo.
+  const sceneDataUrl = await buildSolidDataUrl('#F2F2F2', 512, 512);
+
+  for (const ratio of ['1:1', '9:16']) {
+    for (const templateId of listAspectRatioTemplateIds(ratio)) {
+      const template = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio].find((entry) => entry.id === templateId);
+      assert.equal('shadow' in template.card, false, `${templateId} must not declare a shadow`);
+
+      const image = await readRaw(await composeAspectRatioTemplate({
+        sceneDataUrl,
+        targetRatio: ratio,
+        templateId,
+        text: 'Viajá seguro',
+        fontId: 'cabify-ciudad-bold',
+      }));
+      const { box } = template.card;
+      const centreX = box.x + Math.floor(box.width / 2);
+
+      // A drop shadow fell below the card and bled past its sides.
+      for (const offset of [1, 4, 10, 18]) {
+        assert.deepEqual(
+          pixelAt(image, centreX, box.y + box.height + offset).slice(0, 3),
+          [0xF2, 0xF2, 0xF2],
+          `${templateId} darkened the scene ${offset}px below the card`,
+        );
+        assert.deepEqual(
+          pixelAt(image, box.x - offset, box.y + Math.floor(box.height / 2)).slice(0, 3),
+          [0xF2, 0xF2, 0xF2],
+          `${templateId} darkened the scene ${offset}px left of the card`,
+        );
+      }
+    }
+  }
 });
 
 test('every ratio ships one variation per approved reference, and only the template changes', async () => {

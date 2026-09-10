@@ -1657,6 +1657,14 @@ export const processBatch = async (options) => {
         // Resolve both literal copy and the closest bundled Cabify OTF once per
         // source row. Both output ratios then share the exact same detection.
         const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl);
+        // Both ratios and all their templates render with this one detection,
+        // so a face the model could not read is worth saying out loud: the
+        // outputs then carry the default OTF, not the source's typeface.
+        if (cardCopy && !cardCopy.cardFontDetected) {
+          const warning = `Row ${rowNumber}: could not read the source typeface; composed with the default ${cardCopy.cardFontFamily} ${cardCopy.cardFontWeight}.`;
+          console.warn(`[BATCH] ${warning}`);
+          rowWarnings.push(warning);
+        }
 
         const ratioEntries = await mapWithBoundedConcurrency(targetRatios, targetRatios.length, async (ratio) => {
           onProgress?.({

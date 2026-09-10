@@ -844,16 +844,6 @@ export default function AspectRatioTab() {
           </section>
 
           <section className="panel-surface space-y-3">
-            <div>
-              <h3 className="text-lg font-semibold text-white">Contenido automático</h3>
-            </div>
-            <p className="text-sm leading-6 text-slate-400">
-              El copy y la tipografía se detectan automáticamente desde la pieza original. El texto
-              final se compone con el archivo OTF de Cabify correspondiente.
-            </p>
-          </section>
-
-          <section className="panel-surface space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-white">Ratio</h3>
