@@ -337,10 +337,10 @@ export const DEFAULT_ASPECT_RATIO_FONT_ID = 'cabify-ciudad-bold';
  * source and each candidate — three couplings, each able to move the answer a
  * full weight on its own, and none of them observable in the output.
  *
- * The approved creatives are set in SemiBold, so the answer never needed to be
+ * The approved creatives are set in Bold, so the answer never needed to be
  * inferred. A constant cannot drift.
  */
-export const CARD_COPY_FONT_ID = 'cabify-ciudad-semibold';
+export const CARD_COPY_FONT_ID = 'cabify-ciudad-bold';
 
 const normalizeToken = (value) => String(value ?? '')
   .trim()

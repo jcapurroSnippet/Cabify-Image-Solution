@@ -441,7 +441,7 @@ test('every card is set in the one hardcoded face, whatever the caller passes', 
   const sceneDataUrl = await buildSolidDataUrl('#186CAA');
   const common = { sceneDataUrl, targetRatio: '1:1', text: 'Movete con Cabify' };
 
-  assert.equal(CARD_COPY_FONT_ID, 'cabify-ciudad-semibold');
+  assert.equal(CARD_COPY_FONT_ID, 'cabify-ciudad-bold');
 
   // The compositor takes no font input. Anything a caller invents is ignored
   // rather than honoured, so no code path can ship a card in another weight.
@@ -453,8 +453,8 @@ test('every card is set in the one hardcoded face, whatever the caller passes', 
   assert.equal(withStrayFontId, plain, 'a stray fontId must not change the render');
   assert.equal(withStrayFamily, plain, 'stray family/weight must not change the render');
 
-  // And it really is SemiBold: rendering the same copy in Light and in Black
-  // brackets it, so a card matching neither confirms the fixed face is used.
+  // And the copy really renders: an empty text box would satisfy every
+  // assertion above, since all three renders would be identically blank.
   const ink = async (dataUrl) => {
     const image = await readRaw(dataUrl);
     const { textBox } = ASPECT_RATIO_TEMPLATE_DEFINITIONS['1:1'].card;
@@ -467,8 +467,7 @@ test('every card is set in the one hardcoded face, whatever the caller passes', 
     }
     return count;
   };
-  const semibold = await ink(plain);
-  assert.ok(semibold > 100, 'the copy should render visible glyphs');
+  assert.ok(await ink(plain) > 100, 'the copy should render visible glyphs');
 });
 
 test('copy is escaped before Pango rendering and cannot inject markup or colour', async () => {
