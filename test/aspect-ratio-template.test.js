@@ -8,6 +8,7 @@ import {
   ASPECT_RATIO_FONT_REGISTRY,
   ASPECT_RATIO_TEMPLATE_DEFINITIONS,
   ASPECT_RATIO_TEMPLATE_VARIANTS,
+  CARD_COPY_FONT_ID,
   DEFAULT_ASPECT_RATIO_FONT_ID,
   composeAspectRatioTemplate,
   listAspectRatioTemplateIds,
@@ -236,7 +237,6 @@ test('invalid font, template, ratio, scene and text inputs fail closed', async (
     targetRatio: '1:1',
     templateId: EXPECTED_TEMPLATES['1:1'].id,
     text: 'Texto válido',
-    fontId: DEFAULT_ASPECT_RATIO_FONT_ID,
   };
 
   await assert.rejects(
@@ -250,10 +250,6 @@ test('invalid font, template, ratio, scene and text inputs fail closed', async (
   await assert.rejects(
     () => composeAspectRatioTemplate({ ...valid, templateId: '' }),
     /templateId must be a non-empty string/,
-  );
-  await assert.rejects(
-    () => composeAspectRatioTemplate({ ...valid, fontId: 'cabify-ciudad-medium' }),
-    /Unknown Aspect Ratio fontId/,
   );
   await assert.rejects(
     () => composeAspectRatioTemplate({ ...valid, text: undefined }),
@@ -293,7 +289,6 @@ test('the compositor emits canonical PNG sizes and centres copy inside the fixed
       targetRatio: ratio,
       templateId: expected.id,
       text: 'Viajá seguro',
-      fontId: 'cabify-ciudad-bold',
     });
     const image = await readRaw(output);
     assert.equal(image.info.width, expected.canvas.width);
@@ -329,7 +324,6 @@ test('synthetic background changes cannot move or rewrite fixed template geometr
       targetRatio: ratio,
       templateId: expected.id,
       text: 'Siempre igual',
-      fontId: 'cabify-ciudad-bold',
     };
     const [redOutput, blueOutput] = await Promise.all([
       composeAspectRatioTemplate({ ...options, sceneDataUrl: redScene }),
@@ -410,7 +404,6 @@ test('callers cannot recolour the immutable template layers', async () => {
     sceneDataUrl: await buildSolidDataUrl('#102030'),
     targetRatio: '1:1',
     text: 'Color exacto',
-    fontId: 'cabify-ciudad-bold',
     ...attemptedOverrides,
   });
   const image = await readRaw(output);
@@ -444,42 +437,38 @@ test('callers cannot recolour the immutable template layers', async () => {
   assert.ok(exactLogoPixels > 1000, 'logo should be tinted with the source wordmark colour');
 });
 
-test('changing the detected OTF changes pixels only inside the declared text box', async () => {
+test('every card is set in the one hardcoded face, whatever the caller passes', async () => {
   const sceneDataUrl = await buildSolidDataUrl('#186CAA');
-  const common = {
-    sceneDataUrl,
-    targetRatio: '1:1',
-    templateId: EXPECTED_TEMPLATES['1:1'].id,
-    text: 'Movete con Cabify',
-  };
-  const [light, black] = await Promise.all([
-    composeAspectRatioTemplate({ ...common, fontId: 'cabify-ciudad-light' }),
+  const common = { sceneDataUrl, targetRatio: '1:1', text: 'Movete con Cabify' };
+
+  assert.equal(CARD_COPY_FONT_ID, 'cabify-ciudad-semibold');
+
+  // The compositor takes no font input. Anything a caller invents is ignored
+  // rather than honoured, so no code path can ship a card in another weight.
+  const [plain, withStrayFontId, withStrayFamily] = await Promise.all([
+    composeAspectRatioTemplate(common),
     composeAspectRatioTemplate({ ...common, fontId: 'cabify-ciudad-black' }),
+    composeAspectRatioTemplate({ ...common, cardFontFamily: 'Arial', cardFontWeight: 'Light' }),
   ]);
-  const [lightImage, blackImage] = await Promise.all([readRaw(light), readRaw(black)]);
-  const { textBox } = ASPECT_RATIO_TEMPLATE_DEFINITIONS['1:1'].card;
-  let changedPixels = 0;
+  assert.equal(withStrayFontId, plain, 'a stray fontId must not change the render');
+  assert.equal(withStrayFamily, plain, 'stray family/weight must not change the render');
 
-  for (let y = 0; y < lightImage.info.height; y += 1) {
-    for (let x = 0; x < lightImage.info.width; x += 1) {
-      const offset = pixelOffset(lightImage.info, x, y);
-      const differs = lightImage.data[offset] !== blackImage.data[offset]
-        || lightImage.data[offset + 1] !== blackImage.data[offset + 1]
-        || lightImage.data[offset + 2] !== blackImage.data[offset + 2]
-        || lightImage.data[offset + 3] !== blackImage.data[offset + 3];
-      if (!differs) continue;
-      changedPixels += 1;
-      assert.ok(
-        x >= textBox.x
-          && x < textBox.x + textBox.width
-          && y >= textBox.y
-          && y < textBox.y + textBox.height,
-        `font selection changed a pixel outside textBox at ${x},${y}`,
-      );
+  // And it really is SemiBold: rendering the same copy in Light and in Black
+  // brackets it, so a card matching neither confirms the fixed face is used.
+  const ink = async (dataUrl) => {
+    const image = await readRaw(dataUrl);
+    const { textBox } = ASPECT_RATIO_TEMPLATE_DEFINITIONS['1:1'].card;
+    let count = 0;
+    for (let y = textBox.y; y < textBox.y + textBox.height; y += 1) {
+      for (let x = textBox.x; x < textBox.x + textBox.width; x += 1) {
+        const [r, g, b] = pixelAt(image, x, y);
+        if (r > 205 && g > 205 && b > 205) count += 1;
+      }
     }
-  }
-
-  assert.ok(changedPixels > 100, 'Light and Black OTF faces should not render identically');
+    return count;
+  };
+  const semibold = await ink(plain);
+  assert.ok(semibold > 100, 'the copy should render visible glyphs');
 });
 
 test('copy is escaped before Pango rendering and cannot inject markup or colour', async () => {
@@ -487,7 +476,6 @@ test('copy is escaped before Pango rendering and cannot inject markup or colour'
     sceneDataUrl: await buildSolidDataUrl('#2080C0'),
     targetRatio: '1:1',
     text: '<span foreground="#FF0000">X</span> & literal',
-    fontId: 'cabify-ciudad-bold',
   });
   const image = await readRaw(output);
   const { textBox } = ASPECT_RATIO_TEMPLATE_DEFINITIONS['1:1'].card;
@@ -523,7 +511,7 @@ test('Aspect Ratio prompts request background only and never ask the model to dr
   }
 });
 
-test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the whole ratio', async () => {
+test('Aspect Ratio extracts the copy once, then makes ONE model call for the whole ratio', async () => {
   const sourceDataUrl = await buildSolidDataUrl('#5A44A8', 160, 90);
   const generatedBackgroundDataUrl = await buildSolidDataUrl('#2A8CB8', 128, 128);
   const generatedBackground = decodePngDataUrl(generatedBackgroundDataUrl);
@@ -574,18 +562,12 @@ test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the 
   assert.deepEqual(result.errors, []);
   const [extractionCall, ...backgroundCalls] = calls;
   assert.equal(extractionCall.config.responseMimeType, 'application/json');
-  assert.deepEqual(
-    [...extractionCall.config.responseJsonSchema.properties.cardFontId.enum].sort(),
-    Object.keys(EXPECTED_FONTS).sort(),
-  );
-  assert.equal(extractionCall.contents.parts.length, 3);
-  assert.equal(extractionCall.contents.parts[1].inlineData.mimeType, 'image/png');
-  const fontCatalog = await sharp(Buffer.from(
-    extractionCall.contents.parts[1].inlineData.data,
-    'base64',
-  )).metadata();
-  assert.deepEqual({ width: fontCatalog.width, height: fontCatalog.height }, { width: 1400, height: 920 });
-  assert.match(extractionCall.contents.parts[2].text, /choose the ONE bundled OTF face/);
+  // No face is requested any more, so the rendered OTF catalog that used to be
+  // the second part of this call is gone with it.
+  assert.equal('cardFontId' in extractionCall.config.responseJsonSchema.properties, false);
+  assert.equal(extractionCall.contents.parts.length, 2);
+  assert.match(extractionCall.contents.parts[1].text, /extract the literal copy/);
+  assert.doesNotMatch(extractionCall.contents.parts[1].text, /OTF/);
 
   for (const call of backgroundCalls) {
     assert.equal(call.contents.parts.length, 2);
@@ -601,7 +583,6 @@ test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the 
       targetRatio: '1:1',
       templateId: templateIds[index],
       text: 'Copy detectado desde el input',
-      fontId: 'cabify-ciudad-semibold',
     });
     assert.equal(
       imageDataUrl,
@@ -615,88 +596,6 @@ test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the 
   // The whole point of the change: one source row can no longer ship three
   // outputs an operator cannot tell apart.
   assert.equal(new Set(result.images).size, 3, 'every variation must differ from the others');
-});
-
-test('the OTF the model read from the source drives every output, and a miss is reported', async () => {
-  const sourceDataUrl = await buildSolidDataUrl('#5A44A8', 160, 90);
-  const cardCopy = {
-    cardText: 'Viajá seguro',
-    buttonPresent: false,
-    buttonLabel: '',
-    cardBackgroundColor: '#6034c6',
-    cardTextColor: '#ffffff',
-    cardBrandMarks: '',
-    cardTextBox: [700, 100, 900, 900],
-    buttonFontWeight: '',
-  };
-  const extractionOnly = (cardFontId) => ({
-    models: { generateContent: async () => ({ text: JSON.stringify({ ...cardCopy, cardFontId }) }) },
-  });
-
-  // One classification, taken on the first call, reused everywhere.
-  const detected = await resolveCardCopyForSource(
-    extractionOnly('cabify-ciudad-text-light'),
-    sourceDataUrl,
-  );
-  assert.equal(detected.cardCopy.cardFontId, 'cabify-ciudad-text-light');
-  assert.equal(detected.cardCopy.cardFontDetected, true);
-
-  const generatedBackgroundDataUrl = await buildSolidDataUrl('#2A8CB8', 128, 128);
-  const generatedBackground = decodePngDataUrl(generatedBackgroundDataUrl);
-  const ai = {
-    models: {
-      generateContent: async (payload) => {
-        if (payload.config?.responseMimeType === 'application/json') {
-          return { text: JSON.stringify({ ...cardCopy, cardFontId: 'cabify-ciudad-text-light' }) };
-        }
-        return {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { data: generatedBackground.toString('base64'), mimeType: 'image/png' } }],
-            },
-          }],
-        };
-      },
-    },
-  };
-
-  const result = await generateAspectRatioImages(sourceDataUrl, '1:1', {
-    profile: ASPECT_RATIO_PROMPT_PROFILE,
-    ai,
-    variationConcurrency: 1,
-  });
-  const templateIds = listAspectRatioTemplateIds('1:1');
-  for (const [index, imageDataUrl] of result.images.entries()) {
-    assert.equal(
-      imageDataUrl,
-      await composeAspectRatioTemplate({
-        sceneDataUrl: generatedBackgroundDataUrl,
-        targetRatio: '1:1',
-        templateId: templateIds[index],
-        text: cardCopy.cardText,
-        fontId: 'cabify-ciudad-text-light',
-      }),
-      'the detected face, not the default, must render every variation',
-    );
-    assert.notEqual(
-      imageDataUrl,
-      await composeAspectRatioTemplate({
-        sceneDataUrl: generatedBackgroundDataUrl,
-        targetRatio: '1:1',
-        templateId: templateIds[index],
-        text: cardCopy.cardText,
-        fontId: DEFAULT_ASPECT_RATIO_FONT_ID,
-      }),
-    );
-  }
-
-  // A face outside the ten shipped OTFs still has to render, but silently
-  // wearing the default would hide that the output is not the source's type.
-  for (const unusable of ['helvetica-bold', '', undefined]) {
-    const missed = await resolveCardCopyForSource(extractionOnly(unusable), sourceDataUrl);
-    assert.equal(missed.cardCopy.cardFontId, DEFAULT_ASPECT_RATIO_FONT_ID);
-    assert.equal(missed.cardCopy.cardFontDetected, false);
-  }
 });
 
 test('the card is a flat panel: nothing is shaded outside its box', async () => {
@@ -713,7 +612,6 @@ test('the card is a flat panel: nothing is shaded outside its box', async () => 
         targetRatio: ratio,
         templateId,
         text: 'Viajá seguro',
-        fontId: 'cabify-ciudad-bold',
       }));
       const { box } = template.card;
       const centreX = box.x + Math.floor(box.width / 2);
@@ -783,7 +681,6 @@ test('every ratio ships one variation per approved reference, and only the templ
         targetRatio: ratio,
         templateId,
         text: 'Viajá con la tranquilidad de moverte seguro',
-        fontId: 'cabify-ciudad-bold',
       }));
     }
 

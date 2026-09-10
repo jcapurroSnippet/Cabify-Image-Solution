@@ -252,7 +252,7 @@ test('rejects copy-block boxes that localise nothing usable', async () => {
   assert.equal(await buildSourceTypographyReference('bm90LWFuLWltYWdl', [710, 75, 930, 925]), null);
 });
 
-test('card-copy extraction selects a bundled OTF and drops an unusable box', async () => {
+test('card-copy extraction drops an unusable box and carries no card face', async () => {
   const ai = {
     models: {
       generateContent: async () => ({
@@ -264,7 +264,6 @@ test('card-copy extraction selects a bundled OTF and drops an unusable box', asy
           cardTextColor: '#6f49e8',
           cardBrandMarks: '',
           cardTextBox: [0, 0, 1000, 1000],
-          cardFontId: 'cabify-ciudad-text-semibold',
           buttonFontWeight: 'not a weight',
         }),
       }),
@@ -274,9 +273,11 @@ test('card-copy extraction selects a bundled OTF and drops an unusable box', asy
   const copy = await extractCardCopyFromSource(ai, 'c291cmNl', 'image/png');
 
   assert.equal(copy.cardTextBox, null);
-  assert.equal(copy.cardFontId, 'cabify-ciudad-text-semibold');
-  assert.equal(copy.cardFontFamily, 'Cabify Ciudad Text');
-  assert.equal(copy.cardFontWeight, 'SemiBold');
+  // The card face is a compositor constant now, so extraction neither reports
+  // nor carries one; a stray value from the model must not resurface.
+  assert.equal('cardFontId' in copy, false);
+  assert.equal('cardFontFamily' in copy, false);
+  assert.equal('cardFontWeight' in copy, false);
   assert.equal(copy.buttonFontWeight, '');
   assert.equal(copy.cardBackgroundColor, '#FFFFFF');
 });
@@ -292,7 +293,6 @@ test('card-copy extraction collapses visual source line wrapping before target l
           cardBackgroundColor: '#6f49e8',
           cardTextColor: '#ffffff',
           cardBrandMarks: '',
-          cardFontId: 'cabify-ciudad-bold',
           cardTextBox: [700, 100, 900, 900],
           buttonFontWeight: '',
         }),
@@ -303,7 +303,6 @@ test('card-copy extraction collapses visual source line wrapping before target l
   const copy = await extractCardCopyFromSource(ai, 'c291cmNl', 'image/png');
 
   assert.equal(copy.cardText, 'En Buenos Aires, movete mejor.');
-  assert.equal(copy.cardFontId, 'cabify-ciudad-bold');
 });
 
 test('maps uploaded batch variants to review items keyed on the source row', () => {

@@ -327,6 +327,21 @@ export const ASPECT_RATIO_FONT_REGISTRY = deepFreeze({
 
 export const DEFAULT_ASPECT_RATIO_FONT_ID = 'cabify-ciudad-bold';
 
+/**
+ * The face every Aspect Ratio card is set in. Fixed, not detected.
+ *
+ * Detecting it was tried twice and neither attempt earned its keep. The
+ * extraction model, shown a rendered catalog, scored 1 of 6 against inputs
+ * whose face was known and put nearly everything on Bold. Measuring the ink
+ * scored well but only after equalising scale, wrap and line count between the
+ * source and each candidate — three couplings, each able to move the answer a
+ * full weight on its own, and none of them observable in the output.
+ *
+ * The approved creatives are set in SemiBold, so the answer never needed to be
+ * inferred. A constant cannot drift.
+ */
+export const CARD_COPY_FONT_ID = 'cabify-ciudad-semibold';
+
 const normalizeToken = (value) => String(value ?? '')
   .trim()
   .toLowerCase()
@@ -513,71 +528,6 @@ const escapePangoMarkup = (value) => value
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&apos;');
-
-let fontReferenceCache = null;
-
-/**
- * Render the ten bundled OTFs into one labelled visual catalog. The extraction
- * model receives this beside the source creative, so font classification is a
- * direct glyph comparison rather than a guess based only on weight names.
- */
-export const buildAspectRatioFontReference = async () => {
-  if (fontReferenceCache) return fontReferenceCache;
-
-  fontReferenceCache = (async () => {
-    const width = 1400;
-    const rowHeight = 92;
-    const entries = Object.entries(ASPECT_RATIO_FONT_REGISTRY);
-    const height = rowHeight * entries.length;
-    const backgroundSvg = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-      + '<rect width="100%" height="100%" fill="#FFFFFF"/>'
-      + entries.map((_, index) => (
-        index % 2 === 0
-          ? `<rect x="0" y="${index * rowHeight}" width="${width}" height="${rowHeight}" fill="#F5F2FF"/>`
-          : ''
-      )).join('')
-      + entries.slice(1).map((_, index) => (
-        `<line x1="0" y1="${(index + 1) * rowHeight}" x2="${width}" y2="${(index + 1) * rowHeight}" stroke="#DED8F4" stroke-width="1"/>`
-      )).join('')
-      + '</svg>',
-    );
-
-    const textLayers = await Promise.all(entries.map(async ([fontId, font], index) => {
-      const fontPath = resolveRuntimeAsset('fonts', font.fileName);
-      const sample = `${fontId}  ·  Aa Ee Gg Rr 123  ·  Viajá cómodo y seguro`;
-      const input = await sharp({
-        text: {
-          text: `<span foreground="#241742">${escapePangoMarkup(sample)}</span>`,
-          font: `${font.pangoName} 32`,
-          fontfile: fontPath,
-          width: width - 64,
-          align: 'left',
-          rgba: true,
-          dpi: 72,
-          wrap: 'none',
-        },
-      }).png().toBuffer();
-      const metadata = await sharp(input).metadata();
-      return {
-        input,
-        left: 32,
-        top: index * rowHeight + Math.max(0, Math.floor((rowHeight - (metadata.height || 0)) / 2)),
-      };
-    }));
-
-    const output = await sharp(backgroundSvg)
-      .composite(textLayers)
-      .png()
-      .toBuffer();
-    return Object.freeze({ data: output.toString('base64'), mimeType: 'image/png' });
-  })().catch((error) => {
-    fontReferenceCache = null;
-    throw error;
-  });
-
-  return fontReferenceCache;
-};
 
 const roundedRectangleSvg = ({ width, height, radius, fill }) => Buffer.from(
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
@@ -835,19 +785,17 @@ const buildFixedLogo = async (template) => {
 export const composeAspectRatioTemplate = async ({
   sceneDataUrl,
   targetRatio,
-  text,
-  fontId,
   templateId,
+  text,
 } = {}) => {
   const template = resolveTemplate(targetRatio, templateId);
   const normalizedText = normalizeText(text);
-  const resolvedFontId = resolveAspectRatioFontId({ fontId });
   const sceneBuffer = await parseSceneDataUrl(sceneDataUrl);
 
   const [base, cardShape, textLayer, logoLayer] = await Promise.all([
     buildTemplateBase(sceneBuffer, template),
     buildFixedCardShape(template),
-    buildTextLayer(template, normalizedText, resolvedFontId),
+    buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID),
     buildFixedLogo(template),
   ]);
 

@@ -4,14 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import {
-  ASPECT_RATIO_FONT_REGISTRY,
   ASPECT_RATIO_TEMPLATE_VARIANTS,
-  DEFAULT_ASPECT_RATIO_FONT_ID,
-  buildAspectRatioFontReference,
   composeAspectRatioTemplate,
-  resolveAspectRatioFontId,
 } from './aspectRatioTemplate.js';
-import { classifyCardTypeface } from './cardTypeface.js';
 import { mapWithBoundedConcurrency } from './concurrency.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -119,11 +114,6 @@ const CARD_REFERENCE_FOLDERS = {
  */
 const CARD_REFERENCE_FALLBACKS = {};
 
-const ASPECT_RATIO_FONT_IDS = Object.freeze(Object.keys(ASPECT_RATIO_FONT_REGISTRY));
-const ASPECT_RATIO_FONT_CLASSIFICATION_OPTIONS = ASPECT_RATIO_FONT_IDS
-  .map((fontId) => `  - "${fontId}": ${ASPECT_RATIO_FONT_REGISTRY[fontId].label}`)
-  .join('\n');
-
 const CARD_COPY_EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -158,20 +148,14 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       type: 'string',
       description: 'Partner, product or sub-brand logos shown INSIDE the card, named and briefly described, comma-separated (e.g. "Mercado Pago logo in a white rounded container"). Exclude the main Cabify wordmark. Empty string if there are none.',
     },
-    // Legacy model-backed profiles can still use the source box as a magnified
-    // letterform reference. Aspect Ratio itself uses cardFontId to render the
-    // copy deterministically with the matching bundled OTF.
+    // Legacy model-backed profiles use this box as a magnified letterform
+    // reference. Aspect Ratio only needs it to place the copy.
     cardTextBox: {
       type: 'array',
       items: { type: 'integer' },
       minItems: 4,
       maxItems: 4,
       description: 'Bounding box of the card COPY BLOCK (headline plus CTA label, excluding the panel\'s empty margins) as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image.',
-    },
-    cardFontId: {
-      type: 'string',
-      enum: ASPECT_RATIO_FONT_IDS,
-      description: 'Closest bundled Cabify OTF face for the main card copy. Always select exactly one allow-listed id.',
     },
     buttonFontWeight: {
       type: 'string',
@@ -186,16 +170,14 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
     'cardTextColor',
     'cardBrandMarks',
     'cardTextBox',
-    'cardFontId',
     'buttonFontWeight',
   ],
 };
 
 const CARD_COPY_EXTRACTION_PROMPT = `
-Image 1 is the source creative. Image 2 is a labelled visual catalog rendered
-with the exact ten Cabify OTF files available to the compositor.
+The image is the source creative.
 
-Read the promotional card in Image 1 and extract its literal copy.
+Read its promotional card and extract the literal copy.
 
 Return JSON with exactly these fields:
 - "cardText": every non-button word that appears inside the promotional card, in reading order. Preserve punctuation, accents, capitalization, and separators exactly. Join visual line wrapping with a single space: line breaks caused by the source card's narrow width are NOT content. Use "\\n" only for genuinely separate paragraphs or text blocks.
@@ -205,17 +187,13 @@ Return JSON with exactly these fields:
 - "cardTextColor": the hex colour of that copy.
 - "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
 - "cardTextBox": the bounding box that tightly encloses the card's copy block - the headline plus the CTA label - as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude any partner logo that sits apart from the copy.
-- "cardFontId": compare the main card copy in Image 1 directly against the labelled rows in Image 2 and choose the ONE bundled OTF face that is visually closest. Compare glyph proportions first (Cabify Ciudad versus Cabify Ciudad Text), then stroke thickness. Allowed values:
-${ASPECT_RATIO_FONT_CLASSIFICATION_OPTIONS}
 - "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
 
 Rules:
 - Extract text only from the card. Ignore the rest of the scene, logo, people, cars, and background.
-- Image 2 is typography reference only. Never copy its ids, alphabet samples, numbers or example sentence into "cardText".
 - Do NOT translate, rewrite, summarize, normalize, fix spelling, or infer missing words.
 - Do NOT borrow copy from any other image.
 - If a word is partially obscured, return the visible characters only.
-- "cardFontId" may never be blank or custom. If the match is ambiguous, choose the closest allowed face; default to "${DEFAULT_ASPECT_RATIO_FONT_ID}" only when the source has too little legible copy to compare.
 - Return JSON only.
 `.trim();
 
@@ -395,7 +373,6 @@ const normalizeHexColour = (value) => {
 };
 
 const CABIFY_FONT_WEIGHTS = ['Light', 'Book', 'SemiBold', 'ExtraBold', 'Bold', 'Black'];
-const CABIFY_FONT_FAMILIES = ['Cabify Ciudad Text', 'Cabify Ciudad'];
 
 /** Matches loosely ("extra bold", "semibold") but only ever returns a real face name. */
 const normalizeFromVocabulary = (value, vocabulary) => {
@@ -437,34 +414,9 @@ const normalizeExtractedCardCopy = (payload) => {
   const cardText = normalizeCardTextForResponsiveLayout(payload.cardText);
   const buttonLabel = normalizeCardCopyField(payload.buttonLabel);
   const buttonPresent = payload.buttonPresent === true;
-  const legacyFamily = normalizeFromVocabulary(payload.cardFontFamily, CABIFY_FONT_FAMILIES);
-  const legacyWeight = normalizeFromVocabulary(payload.cardFontWeight, CABIFY_FONT_WEIGHTS);
-  let cardFontId = null;
-  if (payload.cardFontId) {
-    try {
-      cardFontId = resolveAspectRatioFontId({ fontId: payload.cardFontId });
-    } catch {
-      // Try the old family/weight fields below before taking the default.
-    }
-  }
-  if (!cardFontId && (legacyFamily || legacyWeight)) {
-    try {
-      cardFontId = resolveAspectRatioFontId({
-        fontFamily: legacyFamily,
-        fontWeight: legacyWeight,
-      });
-    } catch {
-      // The requested family/weight combination may not exist as an OTF.
-    }
-  }
-  // The renderer must always land on a shipped OTF. Invalid or unavailable
-  // classifications fall back to the canonical display face — but the outputs
-  // are then NOT wearing the source's typeface, so the caller has to be able to
-  // tell that apart from a real detection.
-  const cardFontDetected = Boolean(cardFontId);
-  cardFontId ||= DEFAULT_ASPECT_RATIO_FONT_ID;
-  const selectedFont = ASPECT_RATIO_FONT_REGISTRY[cardFontId];
-
+  // No card face is carried any more: the Aspect Ratio compositor sets every
+  // card in CARD_COPY_FONT_ID. `buttonFontWeight` stays for the legacy
+  // model-backed profiles, which still redraw a CTA rather than compositing it.
   return {
     cardText,
     buttonPresent,
@@ -473,10 +425,6 @@ const normalizeExtractedCardCopy = (payload) => {
     cardTextColor: normalizeHexColour(payload.cardTextColor),
     cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
     cardTextBox: normalizeCardTextBox(payload.cardTextBox),
-    cardFontId,
-    cardFontDetected,
-    cardFontFamily: selectedFont.family,
-    cardFontWeight: selectedFont.weight,
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
   };
 };
@@ -1153,14 +1101,17 @@ export const getGeminiClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
+/**
+ * Read the card's literal copy. Typography is no longer asked for: the face is
+ * fixed at CARD_COPY_FONT_ID, so the rendered OTF catalog that used to ride
+ * along as a second image is gone too, and with it its share of every request.
+ */
 export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeType) => {
-  const fontReference = await buildAspectRatioFontReference();
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
         { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
-        { inlineData: fontReference },
         { text: CARD_COPY_EXTRACTION_PROMPT },
       ],
     },
@@ -1180,49 +1131,13 @@ export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeT
  * via `cardCopy`/`cardCopyError`, instead of letting each ratio re-run its
  * own extraction pass against an identical source image.
  */
-/**
- * Replace the model's guess at the card face with a measurement of the source's
- * own glyphs.
- *
- * Measured against inputs whose face was known, the model scored 1 of 6 and put
- * almost everything on Bold — once the source has been downscaled into the
- * request, Light and Black stop being distinguishable. Measuring the ink scores
- * 9 of 10, and its errors stay inside the right family and within one weight
- * step. The model's answer is kept only when the copy block cannot be measured.
- */
-const applyMeasuredTypeface = async (cardCopy, sourceImageData) => {
-  if (!cardCopy) return cardCopy;
-
-  const measured = await classifyCardTypeface({
-    sourceImageData,
-    cardTextBox: cardCopy.cardTextBox,
-    cardText: cardCopy.cardText,
-    cardBackgroundColor: cardCopy.cardBackgroundColor,
-    cardTextColor: cardCopy.cardTextColor,
-  });
-  if (!measured) {
-    return { ...cardCopy, cardFontSource: cardCopy.cardFontDetected ? 'model' : 'default' };
-  }
-
-  const font = ASPECT_RATIO_FONT_REGISTRY[measured.fontId];
-  return {
-    ...cardCopy,
-    cardFontId: measured.fontId,
-    cardFontFamily: font.family,
-    cardFontWeight: font.weight,
-    cardFontDetected: true,
-    cardFontSource: 'measured',
-  };
-};
-
 export const resolveCardCopyForSource = async (ai, imageDataUrl) => {
   const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error('Invalid imageDataUrl format.');
   const [, mimeType, imageData] = match;
 
   try {
-    const extracted = await extractCardCopyFromSource(ai, imageData, mimeType);
-    const cardCopy = await applyMeasuredTypeface(extracted, imageData);
+    const cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType);
     if (!hasReliableCardCopy(cardCopy)) {
       return { cardCopy, error: 'Card copy extraction was incomplete.' };
     }
@@ -1252,21 +1167,15 @@ export const placeCardOnScene = async (
       throw new Error('The immutable Aspect Ratio template requires non-empty card text.');
     }
 
-    const resolvedFontId = resolveAspectRatioFontId({
-      fontId: cardCopy?.cardFontId,
-      fontFamily: cardCopy?.cardFontFamily,
-      fontWeight: cardCopy?.cardFontWeight,
-    });
-
     // `templateId` is what distinguishes one variation from the next: the same
-    // scene, the same copy and the same OTF, composed through a different
-    // approved reference. Omitting it keeps the ratio's canonical template.
+    // scene and the same copy, composed through a different approved reference.
+    // Omitting it keeps the ratio's canonical template. The face is fixed by
+    // the compositor — see CARD_COPY_FONT_ID.
     return composeAspectRatioTemplate({
       sceneDataUrl,
       targetRatio,
-      text,
-      fontId: resolvedFontId,
       templateId,
+      text,
     });
   }
 
