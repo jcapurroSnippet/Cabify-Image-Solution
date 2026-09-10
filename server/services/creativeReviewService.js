@@ -960,6 +960,22 @@ const assertBatchReadyForReview = (items, batch, config) => {
       { expectedItemCount, actualItemCount: active.length },
     );
   }
+  // Producers whose item count is a range rather than a number declare a floor
+  // instead. Batch from Sheets is one: it targets three template variations per
+  // ratio but ships whatever composed, so an exact count would block review on
+  // a single failed template.
+  const minimumItemCount = cleanInteger(
+    batchMetadata.minimumItemCount ?? batchMetadata.minimum_item_count,
+    0,
+  );
+  if (minimumItemCount > 0 && active.length < minimumItemCount) {
+    throw new CreativeReviewError(
+      `Review batch ${batchId} needs at least ${minimumItemCount} creatives but has ${active.length}.`,
+      'REVIEW_BATCH_PARTIAL',
+      409,
+      { minimumItemCount, actualItemCount: active.length },
+    );
+  }
   const allowedCategories = new Set((config.categories || []).map((category) => clean(category).toLowerCase()));
   const invalidCategories = active.filter((item) => !allowedCategories.has(clean(item.category).toLowerCase()));
   if (invalidCategories.length) {

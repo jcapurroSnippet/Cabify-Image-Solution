@@ -77,15 +77,27 @@ recent batch for that source tab is used.
 ## Aspect Ratio templates
 
 For `1:1` and `9:16`, Gemini now generates only the mutable photographic
-background. The server then applies a ratio-specific reference template with
-Sharp: frame, logo and text-box geometry are fixed, while the approved copy is
-centred inside the box with one of the bundled Cabify OTF faces. A single visual
-extraction reads the exact copy from each input creative and classifies its
-typography against the ten available OTF faces. The three variations reuse that
-detection; Batch also shares it between the `1:1` and `9:16` outputs of a row.
-The template geometry and exact frame/logo/card/text palette are tied to the
-curated files in `server/assets/card-references`; Gemini never draws or recolours
-those locked brand layers.
+background. The server then applies a reference template with Sharp: frame, logo
+and text-box geometry are fixed, while the approved copy is centred inside the
+box with one of the bundled Cabify OTF faces. A single visual extraction reads
+the exact copy from each input creative and classifies its typography against the
+ten available OTF faces.
+
+**The template is what varies.** Each ratio declares one template per approved
+reference in `ASPECT_RATIO_TEMPLATE_VARIANTS`, and a source row's three outputs
+are the *same* photograph composed through each of them — different frame ground,
+aperture, logo notch and card geometry. Reframing the photograph three ways
+(the previous approach) produced outputs an operator could not tell apart,
+because the deterministic overlay dominates what the eye reads. It also means
+one Gemini image call now covers a whole ratio instead of three.
+
+Every rectangle, radius and aperture is measured off the curated files in
+`server/assets/card-references/<ratio>/`, which are also the palette authority;
+Gemini never draws or recolours those locked brand layers. Adding a reference is
+a new entry in that table — the SVG aperture path is derived from the measured
+panel/notch rectangle, not hand-written. The batch pipeline expects exactly
+three variations per ratio (`EXPECTED_VARIATIONS_PER_RATIO`), so a ratio ships
+three templates.
 
 Steps 1 and 2 chain without user input; the funnel only stops at the approval
 gates. Generation streams NDJSON and is **resumable** — targets in a terminal

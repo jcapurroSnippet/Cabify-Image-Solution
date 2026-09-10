@@ -14,99 +14,249 @@ const deepFreeze = (value) => {
 };
 
 /**
- * Canonical, pixel-addressed templates for the Aspect Ratio tool.
- *
- * Reference images are the geometry and palette authority. The generated
- * photograph and OTF-rendered copy are the only mutable pixels.
+ * Brand palette. The reference files are JPEG-compressed, so sampling them
+ * lands a level or two off these values; the palette is authoritative, the
+ * compression artifact is not.
  */
-export const ASPECT_RATIO_TEMPLATE_DEFINITIONS = deepFreeze({
-  '1:1': {
-    id: '1-1-riders-frame',
-    ratio: '1:1',
-    canvas: { width: 1024, height: 1024 },
-    referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-2- (7).png',
-    frame: { background: '#C7E0F8' },
-    scene: {
-      mode: 'reference-panel',
-      // Rounded photo panel with the local top-left Cabify-logo notch removed.
-      path: [
-        'M 309 45',
-        'H 936',
-        'Q 977 45 977 86',
-        'V 934',
-        'Q 977 975 936 975',
-        'H 88',
-        'Q 47 975 47 934',
-        'V 211',
-        'Q 47 170 88 170',
-        'H 233',
-        'Q 274 170 274 129',
-        'V 86',
-        'Q 274 45 309 45',
-        'Z',
-      ].join(' '),
-    },
-    logo: {
-      mode: 'asset',
-      assetFolder: 'branding',
-      assetFile: 'cabify-logo-white-rgb.png',
-      box: { x: 72, y: 77, width: 187, height: 63 },
-      colour: '#7145CE',
-    },
-    card: {
-      box: { x: 76, y: 749, width: 872, height: 199 },
-      textBox: { x: 116, y: 779, width: 792, height: 139 },
-      radius: 29,
-      background: '#6034C6',
-      textColour: '#FFFFFF',
-      fontSize: { min: 28, max: 58 },
-      shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
-    },
+const FRAME_BLUE = '#C7E0F8';
+const FRAME_MINT = '#DAFBE8';
+const CARD_PURPLE = '#6034C6';
+const CARD_TEXT_COLOUR = '#FFFFFF';
+const LOGO_PURPLE = '#7145CE';
+
+/**
+ * Trace the rounded photo aperture: a rounded rectangle with a rounded bite
+ * removed from its top-left corner for the local Cabify-logo notch. Deriving
+ * the path from the measured rectangle keeps adding a reference a matter of
+ * one table entry instead of a hand-written run of SVG commands.
+ */
+const buildAperturePath = ({ panel, notch, radius, notchRadius }) => [
+  `M ${notch.right + notchRadius} ${panel.top}`,
+  `H ${panel.right - radius}`,
+  `Q ${panel.right} ${panel.top} ${panel.right} ${panel.top + radius}`,
+  `V ${panel.bottom - radius}`,
+  `Q ${panel.right} ${panel.bottom} ${panel.right - radius} ${panel.bottom}`,
+  `H ${panel.left + radius}`,
+  `Q ${panel.left} ${panel.bottom} ${panel.left} ${panel.bottom - radius}`,
+  `V ${notch.bottom + radius}`,
+  `Q ${panel.left} ${notch.bottom} ${panel.left + radius} ${notch.bottom}`,
+  `H ${notch.right - notchRadius}`,
+  `Q ${notch.right} ${notch.bottom} ${notch.right} ${notch.bottom - notchRadius}`,
+  `V ${panel.top + notchRadius}`,
+  `Q ${notch.right} ${panel.top} ${notch.right + notchRadius} ${panel.top}`,
+  'Z',
+].join(' ');
+
+const buildTemplate = ({
+  id,
+  ratio,
+  canvas,
+  referenceAsset,
+  referenceCanvas,
+  frameBackground,
+  aperture,
+  logoBox,
+  card,
+}) => ({
+  id,
+  ratio,
+  canvas,
+  ...(referenceCanvas ? { referenceCanvas } : {}),
+  referenceAsset,
+  // A full-bleed reference has no aperture to cut, so it also has no visible
+  // frame ground to declare.
+  ...(aperture ? { frame: { background: frameBackground } } : {}),
+  scene: aperture
+    ? { mode: 'reference-panel', path: buildAperturePath(aperture) }
+    : { mode: 'full-bleed' },
+  logo: {
+    mode: 'asset',
+    assetFolder: 'branding',
+    assetFile: 'cabify-logo-white-rgb.png',
+    box: logoBox,
+    colour: LOGO_PURPLE,
   },
-  '9:16': {
-    id: '9-16-riders-frame',
-    ratio: '9:16',
-    canvas: { width: 1080, height: 1920 },
-    referenceCanvas: { width: 768, height: 1376 },
-    referenceAsset: '../assets/card-references/9-16/aspect-9-16-9_16-2 (13).png',
-    frame: { background: '#C7E0F8' },
-    scene: {
-      mode: 'reference-panel',
-      path: [
-        'M 447 56',
-        'H 980',
-        'Q 1038 56 1038 114',
-        'V 1813',
-        'Q 1038 1872 980 1872',
-        'H 99',
-        'Q 41 1872 41 1813',
-        'V 272',
-        'Q 41 216 99 216',
-        'H 326',
-        'Q 388 216 388 154',
-        'V 114',
-        'Q 388 56 447 56',
-        'Z',
-      ].join(' '),
-    },
-    logo: {
-      mode: 'asset',
-      assetFolder: 'branding',
-      assetFile: 'cabify-logo-white-rgb.png',
-      box: { x: 91, y: 95, width: 246, height: 80 },
-      colour: '#7145CE',
-    },
-    card: {
-      box: { x: 86, y: 1291, width: 910, height: 374 },
-      textBox: { x: 146, y: 1345, width: 790, height: 265 },
-      radius: 44,
-      background: '#6034C6',
-      textColour: '#FFFFFF',
-      fontSize: { min: 32, max: 74 },
-      shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
-    },
+  card: {
+    background: CARD_PURPLE,
+    textColour: CARD_TEXT_COLOUR,
+    ...card,
   },
 });
+
+/**
+ * Canonical, pixel-addressed templates for the Aspect Ratio tool.
+ *
+ * Reference images are the geometry and palette authority: every rectangle,
+ * radius and aperture below was measured off the file named in
+ * `referenceAsset`. The generated photograph and the OTF-rendered copy are the
+ * only mutable pixels.
+ *
+ * A ratio ships one entry per approved reference, in variant order. That list
+ * IS the set of variations the tool produces: one photograph is generated per
+ * source row and composed once through each template, so the frame ground,
+ * aperture, notch and card geometry are the only things that differ between a
+ * row's outputs. Reframing the same photograph three ways produced
+ * near-identical results, because the deterministic overlay dominates what the
+ * eye actually reads.
+ *
+ * Index 0 is the default for callers that do not name a template.
+ */
+export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
+  '1:1': [
+    buildTemplate({
+      id: '1-1-riders-frame',
+      ratio: '1:1',
+      canvas: { width: 1024, height: 1024 },
+      referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-2- (7).png',
+      frameBackground: FRAME_BLUE,
+      aperture: {
+        panel: { left: 47, top: 45, right: 977, bottom: 975 },
+        notch: { right: 274, bottom: 170 },
+        radius: 41,
+        notchRadius: 41,
+      },
+      logoBox: { x: 72, y: 77, width: 187, height: 63 },
+      card: {
+        box: { x: 76, y: 749, width: 872, height: 199 },
+        textBox: { x: 116, y: 779, width: 792, height: 139 },
+        radius: 29,
+        fontSize: { min: 28, max: 58 },
+        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
+      },
+    }),
+    buildTemplate({
+      id: '1-1-riders-frame-mint',
+      ratio: '1:1',
+      canvas: { width: 1024, height: 1024 },
+      referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-0- (15).png',
+      frameBackground: FRAME_MINT,
+      // A wider notch, a deeper card and the mint ground: the same layout
+      // language as the blue frame, measurably not the same template.
+      aperture: {
+        panel: { left: 44, top: 45, right: 979, bottom: 977 },
+        notch: { right: 347, bottom: 190 },
+        radius: 52,
+        notchRadius: 51,
+      },
+      logoBox: { x: 89, y: 82, width: 218, height: 74 },
+      card: {
+        box: { x: 85, y: 720, width: 854, height: 220 },
+        textBox: { x: 124, y: 753, width: 776, height: 154 },
+        radius: 28,
+        // `min` stays at the ratio's floor: raising it with the taller box
+        // would reject copy the blue frame still fits.
+        fontSize: { min: 28, max: 64 },
+        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
+      },
+    }),
+    buildTemplate({
+      id: '1-1-riders-fullbleed',
+      ratio: '1:1',
+      canvas: { width: 1024, height: 1024 },
+      referenceAsset: '../assets/card-references/1-1/1024x1024_AR_FRAME_SEGURIDAD_ANIMA.png',
+      // This reference has no rounded aperture at all: the artwork runs to
+      // every canvas edge and only the logo and the card sit above it.
+      aperture: null,
+      logoBox: { x: 76, y: 77, width: 218, height: 74 },
+      card: {
+        box: { x: 66, y: 730, width: 892, height: 228 },
+        textBox: { x: 107, y: 764, width: 810, height: 160 },
+        radius: 35,
+        fontSize: { min: 28, max: 67 },
+        shadow: { offsetY: 9, sigma: 13, opacity: 0.18 },
+      },
+    }),
+  ],
+  '9:16': [
+    buildTemplate({
+      id: '9-16-riders-frame',
+      ratio: '9:16',
+      canvas: { width: 1080, height: 1920 },
+      referenceCanvas: { width: 768, height: 1376 },
+      referenceAsset: '../assets/card-references/9-16/aspect-9-16-9_16-2 (13).png',
+      frameBackground: FRAME_BLUE,
+      aperture: {
+        panel: { left: 41, top: 56, right: 1038, bottom: 1872 },
+        notch: { right: 388, bottom: 216 },
+        radius: 58,
+        notchRadius: 58,
+      },
+      logoBox: { x: 91, y: 95, width: 246, height: 80 },
+      card: {
+        box: { x: 86, y: 1291, width: 910, height: 374 },
+        textBox: { x: 146, y: 1345, width: 790, height: 265 },
+        radius: 44,
+        fontSize: { min: 32, max: 74 },
+        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
+      },
+    }),
+    buildTemplate({
+      id: '9-16-riders-frame-mint',
+      ratio: '9:16',
+      canvas: { width: 1080, height: 1920 },
+      referenceCanvas: { width: 768, height: 1376 },
+      referenceAsset: '../assets/card-references/9-16/aspect-9-16-9_16-0 (13).png',
+      frameBackground: FRAME_MINT,
+      aperture: {
+        panel: { left: 49, top: 56, right: 1031, bottom: 1863 },
+        notch: { right: 411, bottom: 219 },
+        radius: 52,
+        notchRadius: 58,
+      },
+      logoBox: { x: 113, y: 95, width: 252, height: 85 },
+      card: {
+        box: { x: 97, y: 1376, width: 886, height: 310 },
+        textBox: { x: 155, y: 1421, width: 770, height: 220 },
+        radius: 24,
+        // This is the tightest text box of the three. `min` drops with it so a
+        // copy length the other two accept cannot fail only here.
+        fontSize: { min: 28, max: 61 },
+        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
+      },
+    }),
+    buildTemplate({
+      id: '9-16-riders-frame-tall',
+      ratio: '9:16',
+      canvas: { width: 1080, height: 1920 },
+      referenceCanvas: { width: 768, height: 1376 },
+      referenceAsset: '../assets/card-references/9-16/alianzas chico 169.png',
+      frameBackground: FRAME_BLUE,
+      aperture: {
+        panel: { left: 49, top: 57, right: 1028, bottom: 1863 },
+        notch: { right: 363, bottom: 229 },
+        radius: 51,
+        notchRadius: 61,
+      },
+      logoBox: { x: 76, y: 99, width: 264, height: 88 },
+      card: {
+        box: { x: 97, y: 1214, width: 886, height: 395 },
+        textBox: { x: 155, y: 1271, width: 770, height: 281 },
+        radius: 42,
+        // This box is taller but 20px narrower than the canonical 9:16 one, so
+        // long copy wraps to more lines and runs out of height first. Measured
+        // at min 32 it accepted less copy than the template already in
+        // production; 28 puts it back above that floor.
+        fontSize: { min: 28, max: 78 },
+        shadow: { offsetY: 12, sigma: 18, opacity: 0.2 },
+      },
+    }),
+  ],
+});
+
+/**
+ * The first variant of each ratio, kept under the original export name for
+ * callers and tests that only ever needed the canonical template.
+ */
+export const ASPECT_RATIO_TEMPLATE_DEFINITIONS = deepFreeze(Object.fromEntries(
+  Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS).map(([ratio, variants]) => [ratio, variants[0]]),
+));
+
+/** Ordered template ids for a ratio: one generated variation per entry. */
+export const listAspectRatioTemplateIds = (targetRatio) => {
+  const variants = ASPECT_RATIO_TEMPLATE_VARIANTS[String(targetRatio ?? '').trim()];
+  if (!variants) throw new Error(`Unsupported Aspect Ratio template ratio: ${targetRatio}.`);
+  return variants.map((variant) => variant.id);
+};
 
 const buildFontDefinition = (id, family, weight, fileName) => ({
   id,
@@ -291,19 +441,18 @@ const resolveTemplate = (targetRatio, templateId) => {
     throw new Error('targetRatio is required.');
   }
   const ratio = targetRatio.trim();
-  const template = ASPECT_RATIO_TEMPLATE_DEFINITIONS[ratio];
-  if (!template) throw new Error(`Unsupported Aspect Ratio template ratio: ${targetRatio}.`);
+  const variants = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio];
+  if (!variants) throw new Error(`Unsupported Aspect Ratio template ratio: ${targetRatio}.`);
+  if (templateId === undefined || templateId === null) return variants[0];
 
-  if (templateId !== undefined && templateId !== null) {
-    if (typeof templateId !== 'string' || !templateId.trim()) {
-      throw new Error('templateId must be a non-empty string when supplied.');
-    }
-    const requested = templateId.trim();
-    if (requested !== template.id && requested !== ratio) {
-      throw new Error(`Template ${requested} is not valid for targetRatio ${ratio}.`);
-    }
+  if (typeof templateId !== 'string' || !templateId.trim()) {
+    throw new Error('templateId must be a non-empty string when supplied.');
   }
+  const requested = templateId.trim();
+  if (requested === ratio) return variants[0];
 
+  const template = variants.find((variant) => variant.id === requested);
+  if (!template) throw new Error(`Template ${requested} is not valid for targetRatio ${ratio}.`);
   return template;
 };
 

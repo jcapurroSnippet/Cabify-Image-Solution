@@ -57,6 +57,12 @@ export interface BatchProgressEvent {
   reviewBatchId?: string;
   variationsSheetUrl?: string;
   rowData?: BatchRowData;
+  /**
+   * Non-fatal shortfalls on a row that still succeeded — typically a template
+   * that did not compose, so the row ships fewer than the three variations a
+   * ratio targets. Without these the missing option is invisible.
+   */
+  warnings?: string[];
   links?: {
     '1:1': string[];
     '9:16': string[];
@@ -112,6 +118,7 @@ export interface BatchState {
         '1:1': string[];
         '9:16': string[];
       };
+      warnings?: string[];
       error?: string;
     };
   };

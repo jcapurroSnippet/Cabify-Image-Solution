@@ -7,8 +7,10 @@ import sharp from 'sharp';
 import {
   ASPECT_RATIO_FONT_REGISTRY,
   ASPECT_RATIO_TEMPLATE_DEFINITIONS,
+  ASPECT_RATIO_TEMPLATE_VARIANTS,
   DEFAULT_ASPECT_RATIO_FONT_ID,
   composeAspectRatioTemplate,
+  listAspectRatioTemplateIds,
   resolveAspectRatioFontId,
 } from '../server/services/aspectRatioTemplate.js';
 import {
@@ -506,7 +508,8 @@ test('copy is escaped before Pango rendering and cannot inject markup or colour'
 test('Aspect Ratio prompts request background only and never ask the model to draw overlays', () => {
   for (const ratio of ['1:1', '9:16']) {
     const prompts = getVariationPrompts(ratio, ASPECT_RATIO_PROMPT_PROFILE);
-    assert.equal(prompts.length, 3);
+    // One photograph per ratio: the variations differ by template, not framing.
+    assert.equal(prompts.length, 1);
     for (const prompt of prompts) {
       assert.match(prompt, /BACKGROUND-ONLY GENERATION - CRITICAL/);
       assert.match(prompt, /deterministic compositor adds the template frame, logo, text box and OTF-rendered text/);
@@ -519,7 +522,7 @@ test('Aspect Ratio prompts request background only and never ask the model to dr
   }
 });
 
-test('Aspect Ratio detects copy and OTF once, then makes one model call per background variation', async () => {
+test('Aspect Ratio detects copy and OTF once, then makes ONE model call for the whole ratio', async () => {
   const sourceDataUrl = await buildSolidDataUrl('#5A44A8', 160, 90);
   const generatedBackgroundDataUrl = await buildSolidDataUrl('#2A8CB8', 128, 128);
   const generatedBackground = decodePngDataUrl(generatedBackgroundDataUrl);
@@ -565,7 +568,7 @@ test('Aspect Ratio detects copy and OTF once, then makes one model call per back
     variationConcurrency: 1,
   });
 
-  assert.equal(calls.length, 4, 'expected one extraction and three background generations');
+  assert.equal(calls.length, 2, 'expected one extraction and one shared background generation');
   assert.equal(result.images.length, 3);
   assert.deepEqual(result.errors, []);
   const [extractionCall, ...backgroundCalls] = calls;
@@ -588,15 +591,90 @@ test('Aspect Ratio detects copy and OTF once, then makes one model call per back
     assert.match(call.contents.parts[1].text, /BACKGROUND-ONLY GENERATION - CRITICAL/);
   }
 
-  const expectedOutput = await composeAspectRatioTemplate({
-    sceneDataUrl: generatedBackgroundDataUrl,
-    targetRatio: '1:1',
-    text: 'Copy detectado desde el input',
-    fontId: 'cabify-ciudad-semibold',
-  });
-  for (const imageDataUrl of result.images) {
-    assert.equal(imageDataUrl, expectedOutput, 'the detected copy and OTF must drive local composition');
+  const templateIds = listAspectRatioTemplateIds('1:1');
+  assert.equal(templateIds.length, result.images.length);
+
+  for (const [index, imageDataUrl] of result.images.entries()) {
+    const expectedOutput = await composeAspectRatioTemplate({
+      sceneDataUrl: generatedBackgroundDataUrl,
+      targetRatio: '1:1',
+      templateId: templateIds[index],
+      text: 'Copy detectado desde el input',
+      fontId: 'cabify-ciudad-semibold',
+    });
+    assert.equal(
+      imageDataUrl,
+      expectedOutput,
+      `variation ${index + 1} must be the shared scene composed through ${templateIds[index]}`,
+    );
     const metadata = await sharp(decodePngDataUrl(imageDataUrl)).metadata();
     assert.deepEqual({ width: metadata.width, height: metadata.height }, { width: 1024, height: 1024 });
+  }
+
+  // The whole point of the change: one source row can no longer ship three
+  // outputs an operator cannot tell apart.
+  assert.equal(new Set(result.images).size, 3, 'every variation must differ from the others');
+});
+
+test('every ratio ships one variation per approved reference, and only the template changes', async () => {
+  const sceneDataUrl = await buildSolidDataUrl('#2E6F9E', 256, 256);
+
+  for (const ratio of ['1:1', '9:16']) {
+    const templateIds = listAspectRatioTemplateIds(ratio);
+    assert.equal(templateIds.length, 3, `${ratio} must declare exactly three templates`);
+    assert.equal(new Set(templateIds).size, 3, `${ratio} template ids must be unique`);
+    assert.equal(templateIds[0], ASPECT_RATIO_TEMPLATE_DEFINITIONS[ratio].id, 'index 0 is the default');
+
+    const referenceAssets = new Set();
+    const outputs = [];
+
+    for (const templateId of templateIds) {
+      const template = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio].find((entry) => entry.id === templateId);
+      assert.equal(template.ratio, ratio);
+      assert.deepEqual(template.canvas, ASPECT_RATIO_TEMPLATE_DEFINITIONS[ratio].canvas);
+
+      // Each variant must be measured off its own approved reference file.
+      const referencePath = path.resolve(serviceRoot, template.referenceAsset);
+      assert.equal(existsSync(referencePath), true, `missing reference asset ${referencePath}`);
+      assert.equal(referenceAssets.has(template.referenceAsset), false, 'references must not repeat');
+      referenceAssets.add(template.referenceAsset);
+      const metadata = await sharp(referencePath).metadata();
+      assert.deepEqual(
+        { width: metadata.width, height: metadata.height },
+        template.referenceCanvas || template.canvas,
+        `${templateId} must match its declared source canvas`,
+      );
+
+      const canvasBox = { x: 0, y: 0, ...template.canvas };
+      assertBoxWithin(canvasBox, template.logo.box, `${templateId}.logo.box`);
+      assertBoxWithin(canvasBox, template.card.box, `${templateId}.card.box`);
+      assertBoxWithin(template.card.box, template.card.textBox, `${templateId}.card.textBox`);
+
+      // A framed template hides its logo inside the aperture's notch; the
+      // full-bleed one has no notch to sit in.
+      if (template.scene.mode === 'reference-panel') {
+        assert.ok(template.frame.background.match(/^#[0-9A-F]{6}$/), `${templateId} needs a frame ground`);
+        assert.match(template.scene.path, /^M [\d.]+ [\d.]+ H /);
+      } else {
+        assert.equal(template.scene.mode, 'full-bleed');
+      }
+
+      outputs.push(await composeAspectRatioTemplate({
+        sceneDataUrl,
+        targetRatio: ratio,
+        templateId,
+        text: 'Viajá con la tranquilidad de moverte seguro',
+        fontId: 'cabify-ciudad-bold',
+      }));
+    }
+
+    assert.equal(new Set(outputs).size, 3, `${ratio} variants must not render identically`);
+    for (const output of outputs) {
+      const metadata = await sharp(decodePngDataUrl(output)).metadata();
+      assert.deepEqual(
+        { width: metadata.width, height: metadata.height },
+        ASPECT_RATIO_TEMPLATE_DEFINITIONS[ratio].canvas,
+      );
+    }
   }
 });

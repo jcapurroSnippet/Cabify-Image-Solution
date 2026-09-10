@@ -394,6 +394,77 @@ test('service flow isolates tokens, supersedes real regenerations and retries on
   }
 });
 
+test('a minimumItemCount batch opens for review below its ceiling but not below its floor', async () => {
+  const workspace = createFakeGoogleWorkspace();
+  setCreativeReviewServiceDependenciesForTest(workspace.dependencies);
+
+  try {
+    const sheetsUrl = 'https://docs.google.com/spreadsheets/d/sheet_minimum/edit';
+    const square = await imageDataUrl(100, 100);
+    const portrait = await imageDataUrl(90, 160, '#aa3377');
+
+    // One source row, two ratios, three templates each: at least 2, at most 6.
+    const newBatch = async (title) => createReviewBatch({
+      sheetsUrl,
+      title,
+      sourceType: 'batch_sheets',
+      createdBy: 'Studio User',
+      category: 'Generic',
+      plazas: 'AR',
+      sourceTab: 'RIDERS | AR',
+      metadata: { minimumItemCount: 2, maximumItemCount: 6 },
+    });
+
+    const item = (suffix, ratio, variantIndex, url) => ({
+      itemId: `min-${suffix}`,
+      generationId: `min-run-${suffix}`,
+      familyId: 'min-family',
+      ratio,
+      variantIndex,
+      imageUrl: url,
+      category: 'Generic',
+      plazas: 'AR',
+      sourceTab: 'RIDERS | AR',
+      sourceRowNumber: 2,
+      sourceOutput: `batch:min:${suffix}`,
+    });
+
+    // A 1:1 template failed to compose, so this row ships five of six pieces.
+    const partial = await newBatch('Partial review');
+    await registerReviewItems({
+      sheetsUrl,
+      batchId: partial.batchId,
+      items: [
+        item('s1', '1:1', 1, square),
+        item('s2', '1:1', 2, square),
+        item('p1', '9:16', 1, portrait),
+        item('p2', '9:16', 2, portrait),
+        item('p3', '9:16', 3, portrait),
+      ],
+    });
+    const link = await issueReviewLink({
+      sheetsUrl,
+      batchId: partial.batchId,
+      baseUrl: 'https://review.example',
+    });
+    assert.equal((await getPublicReviewBatch({ token: link.token })).review_batch_id, partial.batchId);
+
+    // A whole ratio missing is still refused: there is nothing to choose from.
+    const empty = await newBatch('Ratio-less review');
+    await registerReviewItems({
+      sheetsUrl,
+      batchId: empty.batchId,
+      items: [item('only', '1:1', 1, square)],
+    });
+    await assert.rejects(
+      () => issueReviewLink({ sheetsUrl, batchId: empty.batchId, baseUrl: 'https://review.example' }),
+      (error) => error.code === 'REVIEW_BATCH_PARTIAL',
+    );
+  } finally {
+    resetCreativeReviewServiceDependenciesForTest();
+  }
+});
+
 test('Studio HTTP review endpoints reuse versioned decisions and idempotent publication without a public token', async () => {
   const workspace = createFakeGoogleWorkspace();
   const publicationCalls = [];

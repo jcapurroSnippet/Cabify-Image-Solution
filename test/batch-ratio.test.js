@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  assertCompleteRatioVariations,
+  assertReviewableRatioVariations,
   buildBatchReviewItems,
   buildBatchVariationSheetFormatRequests,
   buildBatchVariationRows,
@@ -44,20 +44,44 @@ test('accepts 16:9 and 16x9 image header aliases', () => {
   assert.equal(findSixteenNineImageColumn(['16x9 IMG'], { 0: 1 }), 0);
 });
 
-test('requires exactly three generated variants for every ratio', () => {
-  assert.throws(
-    () => assertCompleteRatioVariations({
+test('keeps a ratio that lost a template and only fails one with nothing to review', () => {
+  // The operator picks one of the variations, so two usable options still make
+  // a shippable row. Only an empty ratio is a row failure.
+  assert.deepEqual(
+    assertReviewableRatioVariations({
       images: ['square-1', 'square-2'],
       ratio: '1:1',
       rowNumber: 8,
     }),
-    /Expected exactly 3 1:1 variants for row 8, but generated 2/,
+    ['square-1', 'square-2'],
   );
 
-  const complete = ['vertical-1', 'vertical-2', 'vertical-3'];
-  assert.strictEqual(
-    assertCompleteRatioVariations({ images: complete, ratio: '9:16', rowNumber: 8 }),
-    complete,
+  assert.deepEqual(
+    assertReviewableRatioVariations({
+      images: ['square-1', null, 'square-3'],
+      ratio: '1:1',
+      rowNumber: 8,
+    }),
+    ['square-1', 'square-3'],
+  );
+
+  assert.deepEqual(
+    assertReviewableRatioVariations({
+      images: ['vertical-1', 'vertical-2', 'vertical-3'],
+      ratio: '9:16',
+      rowNumber: 8,
+    }),
+    ['vertical-1', 'vertical-2', 'vertical-3'],
+  );
+
+  assert.throws(
+    () => assertReviewableRatioVariations({
+      images: [],
+      ratio: '1:1',
+      rowNumber: 8,
+      errors: ['Text overflow in template 1-1-riders-frame-mint.'],
+    }),
+    /Generated no 1:1 variants for row 8\. Underlying errors: Text overflow/,
   );
 });
 
@@ -88,7 +112,29 @@ test('rejects an incomplete Creative Review registration', () => {
 
   assert.throws(
     () => orderRegisteredReviewItemIds(expected, registered),
-    /must return 6 item IDs/,
+    /must return one item ID per generated variation/,
+  );
+});
+
+test('registers a row that lost a template against its own variation count', () => {
+  // Five variations because one 1:1 template did not compose. The guarantee is
+  // one review item per generated piece, not a fixed six.
+  const expected = Array.from({ length: 5 }, (_, index) => ({
+    generationId: `generation-${index + 1}`,
+  }));
+  const registered = expected.map((item, index) => ({
+    generationId: item.generationId,
+    reviewItemId: `item-${index + 1}`,
+  }));
+
+  assert.deepEqual(
+    orderRegisteredReviewItemIds(expected, registered),
+    ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'],
+  );
+
+  assert.throws(
+    () => orderRegisteredReviewItemIds([], []),
+    /must return one item ID per generated variation/,
   );
 });
 
@@ -107,11 +153,11 @@ test('rejects duplicate or mismatched Creative Review item IDs', () => {
 
   assert.throws(
     () => orderRegisteredReviewItemIds(expected, duplicated),
-    /must return 6 item IDs/,
+    /must return one item ID per generated variation/,
   );
   assert.throws(
     () => orderRegisteredReviewItemIds(expected, mismatched),
-    /must return 6 item IDs/,
+    /must return one item ID per generated variation/,
   );
 });
 
@@ -442,38 +488,44 @@ const variationRowsFor = (batchId, rowNumber, createdAt) =>
     createdAt,
   });
 
-test('summarizes a source row as completed only once all six variations exist', () => {
+test('summarizes a source row as completed once every ratio has something to review', () => {
   const complete = variationRowsFor('review-1', 5, '2026-08-24T10:00:00.000Z');
-  const partial = variationRowsFor('review-1', 6, '2026-08-24T10:00:00.000Z').slice(0, 4);
+  // Row 6 lost one 1:1 template. It is still a row an operator can decide on,
+  // so a resume must not regenerate it chasing the third variation.
+  const partial = variationRowsFor('review-1', 6, '2026-08-24T10:00:00.000Z')
+    .filter((row) => !(row.aspect_ratio === '1:1' && row.variant === 3));
+  // Row 7 produced no vertical piece at all: nothing to review for that ratio.
+  const missingRatio = variationRowsFor('review-1', 7, '2026-08-24T10:00:00.000Z')
+    .filter((row) => row.aspect_ratio === '1:1');
 
-  const summary = summarizeBatchVariations([...complete, ...partial], {
+  const summary = summarizeBatchVariations([...complete, ...partial, ...missingRatio], {
     spreadsheetId: 'sheet-456',
     sourceTab: 'Origen',
     reviewBatchId: 'review-1',
   });
 
-  assert.equal(summary.completedRows, 1);
+  assert.equal(summary.completedRows, 2);
   assert.equal(summary.rows[5].status, 'completed');
   assert.deepEqual(summary.rows[5].links['9:16'], ['https://d/t1', 'https://d/t2', 'https://d/t3']);
-  assert.equal(summary.rows[6].status, 'generating');
+  assert.equal(summary.rows[6].status, 'completed');
+  assert.deepEqual(summary.rows[6].links['1:1'], ['https://d/s1', 'https://d/s2']);
+  assert.equal(summary.rows[7].status, 'generating');
 });
 
-test('does not complete a row with four square entries and only two vertical slots', () => {
-  const rows = variationRowsFor('review-unbalanced', 9, '2026-08-24T10:00:00.000Z');
-  const unbalanced = [
-    ...rows.filter((row) => row.aspect_ratio === '1:1'),
-    { ...rows.find((row) => row.aspect_ratio === '1:1'), variant: 4, image_url: 'https://d/s4' },
-    ...rows.filter((row) => row.aspect_ratio === '9:16').slice(0, 2),
-  ];
+test('compacts variation slots so a lost template leaves no hole in the links', () => {
+  const rows = variationRowsFor('review-gap', 9, '2026-08-24T10:00:00.000Z')
+    // Variants 1 and 3 survived; the middle template did not compose.
+    .filter((row) => !(row.aspect_ratio === '1:1' && row.variant === 2));
 
-  const summary = summarizeBatchVariations(unbalanced, {
+  const summary = summarizeBatchVariations(rows, {
     spreadsheetId: 'sheet-456',
     sourceTab: 'Origen',
-    reviewBatchId: 'review-unbalanced',
+    reviewBatchId: 'review-gap',
   });
 
-  assert.equal(summary.completedRows, 0);
-  assert.equal(summary.rows[9].status, 'generating');
+  assert.deepEqual(summary.rows[9].links['1:1'], ['https://d/s1', 'https://d/s3']);
+  assert.equal(summary.rows[9].links['1:1'].every(Boolean), true);
+  assert.equal(summary.rows[9].status, 'completed');
 });
 
 test('counts only the requested batch when the accumulative tab holds several', () => {

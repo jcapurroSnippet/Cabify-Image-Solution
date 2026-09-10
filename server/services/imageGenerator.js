@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import {
   ASPECT_RATIO_FONT_REGISTRY,
+  ASPECT_RATIO_TEMPLATE_VARIANTS,
   DEFAULT_ASPECT_RATIO_FONT_ID,
   buildAspectRatioFontReference,
   composeAspectRatioTemplate,
@@ -931,6 +932,15 @@ ${textSizeSpec(
 ${buttonSpec('centered')}${cardSurfaceSpec}`;
 };
 
+/**
+ * One prompt per model call in pass 1.
+ *
+ * The ciclo still asks for three differently framed scenes. The Aspect Ratio
+ * tool asks for ONE: its variations now differ by template, not by framing.
+ * Three reframes of the same source produced outputs an operator could not
+ * tell apart, because the deterministic frame, logo and card dominate the
+ * composition; swapping the approved reference behind them does not.
+ */
 export const getVariationPrompts = (targetRatio, profile = '') => {
   const ratio = String(targetRatio).trim();
   const isAspectRatioTool = usesAspectRatioProfile(profile);
@@ -960,11 +970,7 @@ ${buildLogoLayoutLine(
 `.trim();
 
     return isAspectRatioTool
-      ? [
-        `${base}\n\n## THIS VARIATION\nClosest framing. Keep the original composition as intact as possible; extend background only where strictly needed to reach the square canvas.`,
-        `${base}\n\n## THIS VARIATION\nSame composition shifted down slightly, adding breathing room above the subject's head. Do NOT change the subject's size.`,
-        `${base}\n\n## THIS VARIATION\nWidest framing. Reveal more of the surroundings that already exist around the subject. Do NOT introduce new elements to fill the space.`,
-      ]
+      ? [base]
       : [
         `${base}\n\n## THIS VARIATION\nTight crop - preserve as much of the original composition as possible.`,
         `${base}\n\n## THIS VARIATION\nSlightly more headroom above the subject.`,
@@ -1010,11 +1016,7 @@ ${layout}
 `.trim();
 
     return isAspectRatioTool
-      ? [
-        `${base}\n\n## THIS VARIATION\nClosest framing. Keep the original composition as intact as possible; extend the sides only where strictly needed to reach the wide canvas.`,
-        `${base}\n\n## THIS VARIATION\nMore horizontal context, revealing more of the environment that already exists on both sides. Do NOT change the subject's size.`,
-        `${base}\n\n## THIS VARIATION\nWidest framing of the three. Reveal as much of the existing surroundings as the canvas allows, while keeping the subject centred. Do NOT introduce new elements to fill the space.`,
-      ]
+      ? [base]
       : [
         `${base}\n\n## THIS VARIATION\nBalanced landscape crop - preserve the original subject size and extend the sides naturally.`,
         `${base}\n\n## THIS VARIATION\nMore horizontal scene context - reveal extra environment on both sides while keeping the subject prominent.`,
@@ -1058,14 +1060,7 @@ ${geometry}
 `.trim();
 
   return isAspectRatioTool
-    ? [
-      `${base}\n\n## THIS VARIATION\nMinimal intervention. Preserve the source background and only extend it where strictly necessary to fill the canvas, while still obeying the required subject centring above.`,
-      `${base}\n\n## THIS VARIATION\nMore headroom above the subject, extending the existing sky or background upward. Do NOT change the subject's size.`,
-      // Never assert that a vehicle exists: half the approved creatives are
-      // phone-in-hand scenes, and demanding a visible car invites the model to
-      // invent one.
-      `${base}\n\n## THIS VARIATION\nWidest context of the three. If the source contains a vehicle or another defining object, keep it fully in frame alongside the subject. If the source contains no such object, simply reveal more of the surroundings that are already there. Never introduce an object that is not in the source.`,
-    ]
+    ? [base]
     : [
       `${base}\n\n## THIS VARIATION\nMinimal intervention - preserve source background. Only extend background where strictly necessary to fill the canvas.`,
       `${base}\n\n## THIS VARIATION\nMore headroom above the subject - extend sky/background at the top.`,
@@ -1204,6 +1199,7 @@ export const placeCardOnScene = async (
   targetRatio,
   cardCopy,
   profile = '',
+  templateId,
 ) => {
   const sceneMatch = sceneDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!sceneMatch) throw new Error('Invalid scene data URL');
@@ -1221,11 +1217,15 @@ export const placeCardOnScene = async (
       fontWeight: cardCopy?.cardFontWeight,
     });
 
+    // `templateId` is what distinguishes one variation from the next: the same
+    // scene, the same copy and the same OTF, composed through a different
+    // approved reference. Omitting it keeps the ratio's canonical template.
     return composeAspectRatioTemplate({
       sceneDataUrl,
       targetRatio,
       text,
       fontId: resolvedFontId,
+      templateId,
     });
   }
 
@@ -1303,6 +1303,13 @@ const isRetryableGenerationError = (error) => {
  * `profile` selects the prompt wording. Callers from the Aspect Ratio tool pass
  * ASPECT_RATIO_PROMPT_PROFILE; the ciclo omits it and keeps the legacy prompts.
  *
+ * It also selects how the variations are produced. The Aspect Ratio profile
+ * generates ONE photograph and composes it through every template declared for
+ * the ratio in ASPECT_RATIO_TEMPLATE_VARIANTS, so the reference template is the
+ * only difference between a source row's outputs — and one model call covers
+ * the whole ratio instead of three. The ciclo still generates one scene per
+ * variation prompt.
+ *
  * A caller generating several ratios from the same source image should
  * resolve card copy once via resolveCardCopyForSource and pass it (plus a
  * shared `ai` client) through `cardCopy`/`cardCopyError`/`ai`, instead of
@@ -1340,48 +1347,18 @@ export const generateAspectRatioImages = async (
 
   const attemptsPerVariation = Math.min(3, Math.max(1, Number(maxAttemptsPerVariation) || 1));
 
-  const generateOneVariation = async (prompt) => {
-    // The generated scene is cached across retries. Aspect Ratio composition
-    // is deterministic and local; legacy profiles may still use a model-backed
-    // card pass.
-    let sceneUrl = null;
-    let sceneReady = false;
-
+  // Each pass now carries its own attempt budget. Before, a card-pass failure
+  // burned an attempt the scene had already spent; the scene is generated once
+  // for the whole ratio here, so the two can no longer share a counter.
+  const runWithRetries = async (label, run) => {
     for (let attempt = 1; attempt <= attemptsPerVariation; attempt += 1) {
       try {
-        if (!sceneReady) {
-          const sceneResponse = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview',
-            contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
-            config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
-          });
-
-          let candidateSceneUrl = extractFirstImageFromResponse(sceneResponse);
-          if (!candidateSceneUrl) throw new Error('Pass 1 returned no scene.');
-          if (needsAspectRatioCrop(targetRatio)) {
-            candidateSceneUrl = await cropDataUrlToAspectRatio(candidateSceneUrl, targetRatio);
-          }
-          sceneUrl = candidateSceneUrl;
-          sceneReady = true;
-        }
-
-        const finalUrl = await placeCardOnScene(
-          ai,
-          sceneUrl,
-          imageData,
-          mimeType,
-          targetRatio,
-          cardCopy,
-          profile,
-        );
-        // A background without its deterministic template is not a usable
-        // Aspect Ratio variant. Legacy profiles can still reach the old
-        // model-backed card pass, so both paths share this completion guard.
-        if (!finalUrl) throw new Error('Template composition returned no image.');
-        return finalUrl;
+        const result = await run();
+        if (!result) throw new Error(`${label} returned no image.`);
+        return result;
       } catch (error) {
         const errorMessage = String(error?.message || error || 'Unknown generation error.');
-        errors.push(`Variation attempt ${attempt}/${attemptsPerVariation}: ${errorMessage}`);
+        errors.push(`${label} attempt ${attempt}/${attemptsPerVariation}: ${errorMessage}`);
         const canRetry = attempt < attemptsPerVariation
           && (isRetryableGenerationError(error) || /returned no (scene|image)/i.test(errorMessage));
         if (!canRetry) return null;
@@ -1391,9 +1368,59 @@ export const generateAspectRatioImages = async (
     return null;
   };
 
-  const concurrency = Math.min(variationPrompts.length, Math.max(1, Number(variationConcurrency) || 1));
-  const results = await mapWithBoundedConcurrency(variationPrompts, concurrency, generateOneVariation);
-  const outputs = results.filter(Boolean);
+  const generateScene = (prompt) => runWithRetries('Scene', async () => {
+    const sceneResponse = await ai.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: { parts: [{ inlineData: { data: imageData, mimeType } }, { text: prompt }] },
+      config: { imageConfig: { aspectRatio: resolveGeminiAspectRatio(targetRatio), imageSize: '1K' } },
+    });
 
-  return { images: outputs, errors };
+    const candidateSceneUrl = extractFirstImageFromResponse(sceneResponse);
+    if (!candidateSceneUrl) throw new Error('Pass 1 returned no scene.');
+    return needsAspectRatioCrop(targetRatio)
+      ? cropDataUrlToAspectRatio(candidateSceneUrl, targetRatio)
+      : candidateSceneUrl;
+  });
+
+  // A background without its deterministic template is not a usable Aspect
+  // Ratio variant. Legacy profiles can still reach the old model-backed card
+  // pass, so both paths share this completion guard.
+  const composeVariation = (sceneUrl, templateId) => runWithRetries('Variation', () => placeCardOnScene(
+    ai,
+    sceneUrl,
+    imageData,
+    mimeType,
+    targetRatio,
+    cardCopy,
+    profile,
+    templateId,
+  ));
+
+  const templateVariants = usesAspectRatioProfile(profile)
+    ? ASPECT_RATIO_TEMPLATE_VARIANTS[String(targetRatio).trim()]
+    : null;
+
+  // Aspect Ratio varies the template, not the framing: one photograph, one
+  // model call, then one local composition per approved reference. The ciclo
+  // keeps a scene per prompt.
+  if (templateVariants) {
+    const sceneUrl = await generateScene(variationPrompts[0]);
+    if (!sceneUrl) return { images: [], errors };
+
+    const templateIds = templateVariants.map((variant) => variant.id);
+    const results = await mapWithBoundedConcurrency(
+      templateIds,
+      Math.min(templateIds.length, Math.max(1, Number(variationConcurrency) || 1)),
+      (templateId) => composeVariation(sceneUrl, templateId),
+    );
+    return { images: results.filter(Boolean), errors };
+  }
+
+  const concurrency = Math.min(variationPrompts.length, Math.max(1, Number(variationConcurrency) || 1));
+  const results = await mapWithBoundedConcurrency(variationPrompts, concurrency, async (prompt) => {
+    const sceneUrl = await generateScene(prompt);
+    return sceneUrl ? composeVariation(sceneUrl, undefined) : null;
+  });
+
+  return { images: results.filter(Boolean), errors };
 };

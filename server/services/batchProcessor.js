@@ -35,6 +35,12 @@ import { createReviewBatch, getReviewBatch, registerReviewItems } from './creati
 // to stay under an arbitrary cell count.
 const DEFAULT_MAX_SCAN_ROWS = Math.max(0, Number(process.env.SHEET_MAX_SCAN_ROWS || 0));
 const DEFAULT_URL_SCAN_ROWS = Math.max(0, Number(process.env.SHEET_URL_SCAN_ROWS || 0));
+/**
+ * How many variations a ratio produces when every template composes: one per
+ * entry in ASPECT_RATIO_TEMPLATE_VARIANTS. It is a ceiling used for slot
+ * numbering and batch projections, NOT a completeness requirement — see
+ * assertReviewableRatioVariations.
+ */
 const EXPECTED_VARIATIONS_PER_RATIO = 3;
 const DEFAULT_BATCH_ROWS_PER_REQUEST = Math.max(
   1,
@@ -51,7 +57,6 @@ const DEFAULT_BATCH_ROWS_PER_REQUEST = Math.max(
  * still covers landscape, so the two lists are intentionally out of sync.
  */
 const BATCH_ASPECT_RATIOS = ['1:1', '9:16'];
-const EXPECTED_VARIATIONS_PER_ROW = BATCH_ASPECT_RATIOS.length * EXPECTED_VARIATIONS_PER_RATIO;
 
 const createEmptyRatioLinks = () =>
   Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => [ratio, []]));
@@ -97,15 +102,19 @@ export const findSixteenNineImageColumn = (headers = [], urlCounts = {}) => {
   return candidates[0]?.index ?? -1;
 };
 
-export const assertCompleteRatioVariations = ({ images, ratio, rowNumber, errors = [] }) => {
-  const count = Array.isArray(images) ? images.length : 0;
-  if (count !== EXPECTED_VARIATIONS_PER_RATIO) {
+/**
+ * A ratio ships one variation per approved template and the operator picks one
+ * of them in review, so a template that could not be composed — copy that
+ * overflows its text box, a scene the compositor rejects — costs that option,
+ * not the whole row. Only a ratio with nothing reviewable is a row failure.
+ */
+export const assertReviewableRatioVariations = ({ images, ratio, rowNumber, errors = [] }) => {
+  const usable = (Array.isArray(images) ? images : []).filter(Boolean);
+  if (usable.length === 0) {
     const detail = errors.length ? ` Underlying errors: ${errors.join(' | ')}` : '';
-    throw new Error(
-      `Expected exactly ${EXPECTED_VARIATIONS_PER_RATIO} ${ratio} variants for row ${rowNumber}, but generated ${count}.${detail}`,
-    );
+    throw new Error(`Generated no ${ratio} variants for row ${rowNumber}.${detail}`);
   }
-  return images;
+  return usable;
 };
 
 export const orderRegisteredReviewItemIds = (expectedItems = [], registeredItems = []) => {
@@ -127,15 +136,18 @@ export const orderRegisteredReviewItemIds = (expectedItems = [], registeredItems
     return String(positional?.review_item_id || positional?.reviewItemId || '').trim();
   });
 
+  // The guarantee is one review item per variation actually generated, not a
+  // fixed six: a row that lost one template still publishes the rest.
+  const expectedCount = expectedItems.length;
   if (
-    expectedItems.length !== EXPECTED_VARIATIONS_PER_ROW
-    || registeredItems.length !== EXPECTED_VARIATIONS_PER_ROW
-    || ordered.length !== EXPECTED_VARIATIONS_PER_ROW
+    expectedCount === 0
+    || registeredItems.length !== expectedCount
+    || ordered.length !== expectedCount
     || ordered.some((itemId) => !itemId)
-    || new Set(ordered).size !== EXPECTED_VARIATIONS_PER_ROW
+    || new Set(ordered).size !== expectedCount
   ) {
     throw new Error(
-      `Creative Review registration must return ${EXPECTED_VARIATIONS_PER_ROW} item IDs before the row is published to the output sheet.`,
+      `Creative Review registration must return one item ID per generated variation (${expectedCount}) before the row is published to the output sheet.`,
     );
   }
 
@@ -511,11 +523,16 @@ export const summarizeBatchVariations = (
 
   let completedRows = 0;
   for (const entry of Object.values(rows)) {
-    const isComplete = BATCH_ASPECT_RATIOS.every((ratio) =>
-      Array.from({ length: EXPECTED_VARIATIONS_PER_RATIO }, (_, index) =>
-        Boolean(entry.links[ratio]?.[index]),
-      ).every(Boolean),
-    );
+    // Slots are filled by variant number, so a row that lost a template leaves
+    // a hole. Compacting keeps the links a dense list the UI can render, and
+    // makes "did this ratio produce anything at all" the completeness test.
+    for (const ratio of BATCH_ASPECT_RATIOS) {
+      entry.links[ratio] = (entry.links[ratio] || []).filter(Boolean);
+    }
+    // A row is done once every ratio has at least one reviewable piece. It is
+    // NOT re-generated to chase a template that failed: the operator chooses
+    // among whatever variations the row produced.
+    const isComplete = BATCH_ASPECT_RATIOS.every((ratio) => entry.links[ratio].length > 0);
     if (isComplete) {
       entry.status = 'completed';
       completedRows += 1;
@@ -1524,7 +1541,12 @@ export const processBatch = async (options) => {
 
     if (reviewMetadata && !reviewBatchId) {
       const expectedSourceRows = totalRows;
-      const expectedItemCount = expectedSourceRows * targetRatios.length * EXPECTED_VARIATIONS_PER_RATIO;
+      // A range, not a number: every row must ship something reviewable for
+      // every ratio, and at most one piece per template. Declaring the ceiling
+      // as an exact count would refuse the whole review over one variation
+      // that did not compose.
+      const minimumItemCount = expectedSourceRows * targetRatios.length;
+      const maximumItemCount = minimumItemCount * EXPECTED_VARIATIONS_PER_RATIO;
       const reviewBatch = await createReviewBatch({
         sheetsUrl,
         title: reviewMetadata.title,
@@ -1536,7 +1558,8 @@ export const processBatch = async (options) => {
         category: reviewMetadata.category,
         plazas: reviewMetadata.plazas,
         metadata: {
-          expectedItemCount,
+          minimumItemCount,
+          maximumItemCount,
           expectedSourceRows,
           targetRatios,
           expectedVariantsPerRatio: EXPECTED_VARIATIONS_PER_RATIO,
@@ -1609,6 +1632,9 @@ export const processBatch = async (options) => {
       let uploadedLinks = createEmptyRatioLinks();
       let driveFileIds = createEmptyRatioLinks();
       let reviewRegistrationAttempted = false;
+      // A row that ships fewer variations than templates still succeeds, so the
+      // shortfall has to travel with the result or it disappears silently.
+      const rowWarnings = [];
 
       try {
         console.log(`[BATCH] Row ${rowNumber}: imageUrl=${imageUrl ? imageUrl.substring(0, 60) : 'EMPTY'}`);
@@ -1653,12 +1679,19 @@ export const processBatch = async (options) => {
               cardCopyError,
             },
           );
-          return [ratio, assertCompleteRatioVariations({
+          const usable = assertReviewableRatioVariations({
             images,
             ratio,
             rowNumber,
             errors: generationErrors,
-          })];
+          });
+          if (usable.length < EXPECTED_VARIATIONS_PER_RATIO) {
+            const detail = generationErrors.length ? ` ${generationErrors.join(' | ')}` : '';
+            const warning = `Row ${rowNumber} ${ratio}: ${usable.length} of ${EXPECTED_VARIATIONS_PER_RATIO} templates composed.${detail}`;
+            console.warn(`[BATCH] ${warning}`);
+            rowWarnings.push(warning);
+          }
+          return [ratio, usable];
         });
         const generatedImagesByRatio = Object.fromEntries(ratioEntries);
 
@@ -1744,6 +1777,7 @@ export const processBatch = async (options) => {
           status: 'completed',
           links: uploadedLinks,
           rowData: row,
+          ...(rowWarnings.length && { warnings: rowWarnings }),
           ...(reviewBatchId && { reviewBatchId }),
         });
       } catch (error) {

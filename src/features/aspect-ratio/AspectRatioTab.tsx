@@ -387,6 +387,7 @@ export default function AspectRatioTab() {
               ...(previousRow || {}),
               status: resolvedStatus,
               ...(event.links && { links: event.links }),
+              ...(event.warnings?.length && { warnings: event.warnings }),
               error: resolvedStatus === 'error' ? event.error || previousRow?.error : undefined,
             };
           }
@@ -760,11 +761,18 @@ export default function AspectRatioTab() {
                           {typedResult.error ? (
                             <span className="text-red-300">{typedResult.error}</span>
                           ) : typedResult.links ? (
-                            <div className="flex gap-1">
-                              <span className="text-green-300">✓</span>
-                              <span className="text-slate-300">
-                                {countBatchLinks(typedResult.links)} images uploaded
-                              </span>
+                            <div className="space-y-1">
+                              <div className="flex gap-1">
+                                <span className="text-green-300">✓</span>
+                                <span className="text-slate-300">
+                                  {countBatchLinks(typedResult.links)} images uploaded
+                                </span>
+                              </div>
+                              {typedResult.warnings?.map((warning) => (
+                                <div key={warning} className="text-amber-300 text-xs">
+                                  {warning}
+                                </div>
+                              ))}
                             </div>
                           ) : (
                             <span className="text-slate-500">-</span>
