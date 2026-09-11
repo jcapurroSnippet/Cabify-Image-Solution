@@ -79,6 +79,8 @@ const buildTemplate = ({
   card: {
     background: CARD_PURPLE,
     textColour: CARD_TEXT_COLOUR,
+    // Pango's own spelling, passed straight through: 'left' or 'centre'.
+    align: 'centre',
     ...card,
   },
 });
@@ -120,6 +122,7 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         box: { x: 76, y: 749, width: 872, height: 199 },
         textBox: { x: 116, y: 779, width: 792, height: 139 },
         radius: 29,
+        align: 'left',
         fontSize: { min: 28, max: 58 },
       },
     }),
@@ -142,6 +145,7 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         box: { x: 85, y: 720, width: 854, height: 220 },
         textBox: { x: 124, y: 753, width: 776, height: 154 },
         radius: 28,
+        align: 'left',
         // `min` stays at the ratio's floor: raising it with the taller box
         // would reject copy the blue frame still fits.
         fontSize: { min: 28, max: 64 },
@@ -160,6 +164,7 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
         box: { x: 66, y: 730, width: 892, height: 228 },
         textBox: { x: 107, y: 764, width: 810, height: 160 },
         radius: 35,
+        align: 'left',
         fontSize: { min: 28, max: 67 },
       },
     }),
@@ -651,7 +656,7 @@ const cacheTextLayer = (key, loader) => {
   return loading;
 };
 
-const renderTextAtSize = async ({ text, font, fontPath, card, fontSize }) => {
+const renderTextAtSize = async ({ text, font, fontPath, card, textBox, fontSize }) => {
   const escapedText = escapePangoMarkup(text);
   const markup = `<span foreground="${card.textColour}">${escapedText}</span>`;
   const buffer = await sharp({
@@ -659,8 +664,8 @@ const renderTextAtSize = async ({ text, font, fontPath, card, fontSize }) => {
       text: markup,
       font: `${font.pangoName} ${fontSize}`,
       fontfile: fontPath,
-      width: card.textBox.width,
-      align: 'centre',
+      width: textBox.width,
+      align: card.align,
       rgba: true,
       dpi: 72,
       wrap: 'word-char',
@@ -674,8 +679,12 @@ const renderTextAtSize = async ({ text, font, fontPath, card, fontSize }) => {
 const textFits = (rendered, textBox) =>
   rendered.width <= textBox.width && rendered.height <= textBox.height;
 
-const buildTextLayer = async (template, text, fontId) => {
-  const key = `${template.id}\u0000${fontId}\u0000${text}`;
+const buildTextLayer = async (template, text, fontId, textBoxOverride) => {
+  // The box is a parameter, not a constant: when the source card carries
+  // buttons or partner marks they take a share of it and the copy is fitted
+  // into what is left. The height goes in the cache key for that reason.
+  const textBox = textBoxOverride || template.card.textBox;
+  const key = `${template.id}\u0000${fontId}\u0000${textBox.height}\u0000${text}`;
   return cacheTextLayer(key, async () => {
     const font = ASPECT_RATIO_FONT_REGISTRY[fontId];
     const fontPath = resolveRuntimeAsset('fonts', font.fileName);
@@ -691,6 +700,7 @@ const buildTextLayer = async (template, text, fontId) => {
           font,
           fontPath,
           card,
+          textBox,
           fontSize,
         }));
       }
@@ -698,7 +708,7 @@ const buildTextLayer = async (template, text, fontId) => {
     };
 
     const minimumRender = await render(minimum);
-    if (!textFits(minimumRender, card.textBox)) {
+    if (!textFits(minimumRender, textBox)) {
       throw new Error(
         `Text overflow in template ${template.id}: copy does not fit at the minimum ${minimum}px font size.`,
       );
@@ -706,7 +716,7 @@ const buildTextLayer = async (template, text, fontId) => {
 
     let best = minimumRender;
     const maximumRender = await render(maximum);
-    if (textFits(maximumRender, card.textBox)) {
+    if (textFits(maximumRender, textBox)) {
       best = maximumRender;
     } else {
       let low = minimum + 1;
@@ -714,7 +724,7 @@ const buildTextLayer = async (template, text, fontId) => {
       while (low <= high) {
         const middle = Math.floor((low + high) / 2);
         const candidate = await render(middle);
-        if (textFits(candidate, card.textBox)) {
+        if (textFits(candidate, textBox)) {
           best = candidate;
           low = middle + 1;
         } else {
@@ -723,19 +733,83 @@ const buildTextLayer = async (template, text, fontId) => {
       }
     }
 
-    const left = card.textBox.x + Math.floor((card.textBox.width - best.width) / 2);
-    const top = card.textBox.y + Math.floor((card.textBox.height - best.height) / 2);
+    const left = card.align === 'left'
+      ? textBox.x
+      : textBox.x + Math.floor((textBox.width - best.width) / 2);
+    const top = textBox.y + Math.floor((textBox.height - best.height) / 2);
     if (
-      left < card.textBox.x
-      || top < card.textBox.y
-      || left + best.width > card.textBox.x + card.textBox.width
-      || top + best.height > card.textBox.y + card.textBox.height
+      left < textBox.x
+      || top < textBox.y
+      || left + best.width > textBox.x + textBox.width
+      || top + best.height > textBox.y + textBox.height
     ) {
       throw new Error(`Text overflow in template ${template.id}.`);
     }
 
     return { input: best.buffer, left, top, fontSize: best.fontSize };
   });
+};
+
+
+/**
+ * Buttons, pills and partner marks lifted from the source card.
+ *
+ * They cannot be synthesized: an "Efectivo" pill is artwork, not a string, so
+ * the only faithful way to keep it is to carry its pixels across. The card
+ * geometry does not move to accommodate them — it is measured from the approved
+ * references — so the crop is scaled down until it fits beside the copy.
+ */
+const EXTRAS_HEIGHT_SHARES = Object.freeze([0.5, 0.4, 0.3, 0.22]);
+const EXTRAS_GAP_SHARE = 0.08;
+/** Under this the marks are a smudge; shipping nothing beats shipping mush. */
+const EXTRAS_MIN_HEIGHT = 22;
+/** How close to the source panel colour still counts as its background. */
+const EXTRAS_KEY_TOLERANCE = 26;
+
+/**
+ * Drop the source panel colour to transparent so the crop sits on the target
+ * card instead of pasting a slab of the old one over it. Without this a source
+ * card in another colour arrives as a visible rectangle.
+ */
+const keyOutPanel = async (buffer, panelColour) => {
+  if (!panelColour) return buffer;
+  const { data, info } = await sharp(buffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    const distance = Math.max(
+      Math.abs(data[offset] - panelColour[0]),
+      Math.abs(data[offset + 1] - panelColour[1]),
+      Math.abs(data[offset + 2] - panelColour[2]),
+    );
+    if (distance <= EXTRAS_KEY_TOLERANCE) data[offset + 3] = 0;
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
+    .png()
+    .toBuffer();
+};
+
+const buildExtrasLayer = async (template, extrasBuffer, panelColour, heightShare) => {
+  const { card } = template;
+  const maxHeight = Math.floor(card.textBox.height * heightShare);
+  if (maxHeight < EXTRAS_MIN_HEIGHT) return null;
+
+  const keyed = await keyOutPanel(extrasBuffer, panelColour);
+  const resized = await sharp(keyed)
+    .resize({
+      width: card.textBox.width,
+      height: maxHeight,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .png()
+    .toBuffer();
+  const metadata = await sharp(resized).metadata();
+  if (!metadata.width || !metadata.height) return null;
+  if (metadata.height < EXTRAS_MIN_HEIGHT) return null;
+  return { buffer: resized, width: metadata.width, height: metadata.height };
 };
 
 const fixedLogoCache = new Map();
@@ -787,23 +861,81 @@ export const composeAspectRatioTemplate = async ({
   targetRatio,
   templateId,
   text,
+  cardExtras,
+  cardExtrasPanelColour,
 } = {}) => {
   const template = resolveTemplate(targetRatio, templateId);
   const normalizedText = normalizeText(text);
   const sceneBuffer = await parseSceneDataUrl(sceneDataUrl);
+  const { card } = template;
 
-  const [base, cardShape, textLayer, logoLayer] = await Promise.all([
+  const [base, cardShape, logoLayer] = await Promise.all([
     buildTemplateBase(sceneBuffer, template),
     buildFixedCardShape(template),
-    buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID),
     buildFixedLogo(template),
   ]);
 
+  // Copy and extras share one fixed box. Try the largest allowance for the
+  // extras first and step down until the copy also fits: shrinking the marks
+  // costs legibility, dropping the whole variation costs the operator a choice.
+  let textLayer = null;
+  let extrasLayer = null;
+  let textBox = card.textBox;
+
+  if (cardExtras) {
+    for (const share of EXTRAS_HEIGHT_SHARES) {
+      const candidate = await buildExtrasLayer(template, cardExtras, cardExtrasPanelColour, share);
+      if (!candidate) continue;
+      const gap = Math.round(card.textBox.height * EXTRAS_GAP_SHARE);
+      const remaining = {
+        ...card.textBox,
+        height: card.textBox.height - candidate.height - gap,
+      };
+      if (remaining.height < EXTRAS_MIN_HEIGHT) continue;
+      try {
+        textLayer = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, remaining);
+        extrasLayer = candidate;
+        textBox = remaining;
+        break;
+      } catch {
+        // Copy will not fit beside marks this tall; try a smaller allowance.
+      }
+    }
+  }
+
+  // No extras, or none small enough to leave room: the copy owns the box.
+  if (!textLayer) {
+    textLayer = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID);
+    extrasLayer = null;
+  }
+
   const composites = [
-    { input: cardShape, left: template.card.box.x, top: template.card.box.y },
+    { input: cardShape, left: card.box.x, top: card.box.y },
     ...(logoLayer ? [logoLayer] : []),
-    { input: textLayer.input, left: textLayer.left, top: textLayer.top },
   ];
+
+  if (extrasLayer) {
+    // Centre the copy-plus-marks stack in the box, then place the marks under
+    // the copy on the card's own alignment.
+    const gap = Math.round(card.textBox.height * EXTRAS_GAP_SHARE);
+    const stackHeight = textLayer.input ? textBox.height + gap + extrasLayer.height : extrasLayer.height;
+    const stackTop = card.textBox.y + Math.floor((card.textBox.height - stackHeight) / 2);
+    const textShift = stackTop - textBox.y;
+    composites.push({
+      input: textLayer.input,
+      left: textLayer.left,
+      top: textLayer.top + textShift,
+    });
+    composites.push({
+      input: extrasLayer.buffer,
+      left: card.align === 'left'
+        ? card.textBox.x
+        : card.textBox.x + Math.floor((card.textBox.width - extrasLayer.width) / 2),
+      top: stackTop + textBox.height + gap,
+    });
+  } else {
+    composites.push({ input: textLayer.input, left: textLayer.left, top: textLayer.top });
+  }
 
   const result = await sharp(base, { failOn: 'error' })
     .resize(template.canvas.width, template.canvas.height, { fit: 'fill' })

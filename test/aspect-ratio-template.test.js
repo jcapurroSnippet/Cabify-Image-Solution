@@ -280,7 +280,7 @@ test('invalid font, template, ratio, scene and text inputs fail closed', async (
   );
 });
 
-test('the compositor emits canonical PNG sizes and centres copy inside the fixed text boxes', async () => {
+test('the compositor emits canonical PNG sizes and honours each template alignment', async () => {
   const sceneDataUrl = await buildSolidDataUrl('#1277CC');
 
   for (const [ratio, expected] of Object.entries(EXPECTED_TEMPLATES)) {
@@ -304,12 +304,26 @@ test('the compositor emits canonical PNG sizes and centres copy inside the fixed
     const ink = findInkBounds(image, template.card.textBox, background);
     assert.ok(ink && ink.pixels > 50, `${ratio} copy should render visible glyphs`);
 
-    const inkCentreX = (ink.minX + ink.maxX + 1) / 2;
+    // Vertical centring is shared; horizontal placement is the template's call.
     const inkCentreY = (ink.minY + ink.maxY + 1) / 2;
-    const boxCentreX = template.card.textBox.x + template.card.textBox.width / 2;
     const boxCentreY = template.card.textBox.y + template.card.textBox.height / 2;
-    assert.ok(Math.abs(inkCentreX - boxCentreX) <= 2, `${ratio} copy is not horizontally centred`);
     assert.ok(Math.abs(inkCentreY - boxCentreY) <= 2, `${ratio} copy is not vertically centred`);
+
+    if (template.card.align === 'left') {
+      // Flush to the box edge: a couple of pixels of side bearing, no more.
+      assert.ok(
+        ink.minX - template.card.textBox.x <= 6,
+        `${ratio} copy should start at the left edge of its text box`,
+      );
+      assert.ok(
+        template.card.textBox.x + template.card.textBox.width - (ink.maxX + 1) > 20,
+        `${ratio} copy should leave the ragged right edge open`,
+      );
+    } else {
+      const inkCentreX = (ink.minX + ink.maxX + 1) / 2;
+      const boxCentreX = template.card.textBox.x + template.card.textBox.width / 2;
+      assert.ok(Math.abs(inkCentreX - boxCentreX) <= 2, `${ratio} copy is not horizontally centred`);
+    }
   }
 });
 

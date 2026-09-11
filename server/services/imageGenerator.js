@@ -157,6 +157,17 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
       maxItems: 4,
       description: 'Bounding box of the card COPY BLOCK (headline plus CTA label, excluding the panel\'s empty margins) as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image.',
     },
+    // Buttons, pills and partner marks are artwork: they cannot be rebuilt from
+    // a description, so the compositor lifts these pixels out of the source and
+    // scales them into the card. Kept apart from cardTextBox because the two
+    // are laid out separately.
+    cardExtrasBox: {
+      type: 'array',
+      items: { type: 'integer' },
+      minItems: 4,
+      maxItems: 4,
+      description: 'Bounding box enclosing every non-headline element INSIDE the card - CTA buttons, option pills, icons, promo codes and partner logos - as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Return [0, 0, 0, 0] if the card holds nothing but its headline.',
+    },
     buttonFontWeight: {
       type: 'string',
       description: 'Weight of the CTA label: Light, Book, SemiBold, Bold, ExtraBold or Black. Empty string if there is no button or it is unclear.',
@@ -170,6 +181,7 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
     'cardTextColor',
     'cardBrandMarks',
     'cardTextBox',
+    'cardExtrasBox',
     'buttonFontWeight',
   ],
 };
@@ -186,7 +198,8 @@ Return JSON with exactly these fields:
 - "cardBackgroundColor": the hex colour of the card/panel the copy sits on, sampled from a flat area away from any shadow or gradient.
 - "cardTextColor": the hex colour of that copy.
 - "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
-- "cardTextBox": the bounding box that tightly encloses the card's copy block - the headline plus the CTA label - as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude any partner logo that sits apart from the copy.
+- "cardTextBox": the bounding box that tightly encloses the card's HEADLINE text only, as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude buttons, pills, icons and partner logos.
+- "cardExtrasBox": the bounding box enclosing everything else INSIDE the card - CTA buttons, option pills and their icons, promo codes, partner logos - as [ymin, xmin, ymax, xmax] over the same 0-1000 grid. Include all of them in one box. Return [0, 0, 0, 0] when the card holds nothing but its headline. Never include the headline, the card's empty margins, the Cabify wordmark or anything outside the card.
 - "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
 
 Rules:
@@ -406,6 +419,52 @@ const normalizeCardTextBox = (value) => {
   return [yMin, xMin, yMax, xMax];
 };
 
+/**
+ * The extras box is optional by design: most cards are a headline and nothing
+ * else, and the model reports that as an empty box rather than guessing. A
+ * sliver or a box swallowing the canvas both mean it did not localise anything.
+ */
+const normalizeCardExtrasBox = (value) => {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const box = value.map(Number);
+  if (box.some((coordinate) => !Number.isFinite(coordinate) || coordinate < 0 || coordinate > 1000)) return null;
+  const [yMin, xMin, yMax, xMax] = box;
+  if (yMax - yMin < CARD_TEXT_BOX_MIN_SPAN || xMax - xMin < CARD_TEXT_BOX_MIN_SPAN) return null;
+  if (((xMax - xMin) / 1000) * ((yMax - yMin) / 1000) > CARD_TEXT_BOX_MAX_AREA) return null;
+  return [yMin, xMin, yMax, xMax];
+};
+
+/**
+ * Cut the card's buttons and marks out of the source at full resolution. The
+ * compositor keys the panel colour out of this crop and scales it into the
+ * card, so what matters here is only that the pixels are the original ones.
+ */
+export const buildCardExtrasCrop = async (sourceImageData, cardExtrasBox) => {
+  const box = normalizeCardExtrasBox(cardExtrasBox);
+  if (!box) return null;
+
+  try {
+    const buffer = Buffer.from(sourceImageData, 'base64');
+    const { width, height } = await sharp(buffer).metadata();
+    if (!width || !height) return null;
+
+    const [yMin, xMin, yMax, xMax] = box;
+    const left = Math.round(clampToRange((xMin / 1000) * width, 0, width - 2));
+    const top = Math.round(clampToRange((yMin / 1000) * height, 0, height - 2));
+    const right = Math.round(clampToRange((xMax / 1000) * width, left + 1, width));
+    const bottom = Math.round(clampToRange((yMax / 1000) * height, top + 1, height));
+    if (right - left < 16 || bottom - top < 16) return null;
+
+    return await sharp(buffer)
+      .extract({ left, top, width: right - left, height: bottom - top })
+      .png()
+      .toBuffer();
+  } catch {
+    // A crop that cannot be taken simply means the card ships copy only.
+    return null;
+  }
+};
+
 const normalizeExtractedCardCopy = (payload) => {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -425,6 +484,7 @@ const normalizeExtractedCardCopy = (payload) => {
     cardTextColor: normalizeHexColour(payload.cardTextColor),
     cardBrandMarks: normalizeCardCopyField(payload.cardBrandMarks),
     cardTextBox: normalizeCardTextBox(payload.cardTextBox),
+    cardExtrasBox: normalizeCardExtrasBox(payload.cardExtrasBox),
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
   };
 };
@@ -445,6 +505,13 @@ const TYPOGRAPHY_REFERENCE_PADDING = 0.06;
 const TYPOGRAPHY_REFERENCE_MIN_CROP = { width: 64, height: 24 };
 
 const clampToRange = (value, min, max) => Math.min(max, Math.max(min, value));
+
+/** "#6034C6" -> [96, 52, 198]; anything else -> null. */
+const parseHexColourChannels = (value) => {
+  const match = typeof value === 'string' && value.trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return null;
+  return [0, 2, 4].map((index) => Number.parseInt(match[1].slice(index, index + 2), 16));
+};
 
 export const buildSourceTypographyReference = async (sourceImageData, cardTextBox) => {
   const box = normalizeCardTextBox(cardTextBox);
@@ -1167,6 +1234,11 @@ export const placeCardOnScene = async (
       throw new Error('The immutable Aspect Ratio template requires non-empty card text.');
     }
 
+    // The source card's buttons and partner marks ride across as pixels, since
+    // no amount of copy describes an icon. The panel colour goes with them so
+    // the compositor can key the old card out from behind them.
+    const cardExtras = await buildCardExtrasCrop(sourceImageData, cardCopy?.cardExtrasBox);
+
     // `templateId` is what distinguishes one variation from the next: the same
     // scene and the same copy, composed through a different approved reference.
     // Omitting it keeps the ratio's canonical template. The face is fixed by
@@ -1176,6 +1248,8 @@ export const placeCardOnScene = async (
       targetRatio,
       templateId,
       text,
+      cardExtras,
+      cardExtrasPanelColour: parseHexColourChannels(cardCopy?.cardBackgroundColor),
     });
   }
 
