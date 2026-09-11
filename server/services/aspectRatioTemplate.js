@@ -130,7 +130,7 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
       id: '1-1-riders-frame-mint',
       ratio: '1:1',
       canvas: { width: 1024, height: 1024 },
-      referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-0- (15).png',
+      referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-2- (3).png',
       frameBackground: FRAME_MINT,
       // A wider notch, a deeper card and the mint ground: the same layout
       // language as the blue frame, measurably not the same template.
