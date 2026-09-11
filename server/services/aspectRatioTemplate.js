@@ -19,9 +19,9 @@ const deepFreeze = (value) => {
  * compression artifact is not.
  */
 const FRAME_BLUE = '#C7E0F8';
-const FRAME_MINT = '#DAFBE8';
-// Measured from aspect-1-1-1_1-2- (3).png. The 1:1 third variant is lavender,
-// not mint: two different campaign grounds, not a rounding difference.
+// The lavender ground, shared by the second variant of each ratio and measured
+// off both their references. It replaced a mint that no approved reference ever
+// used; keep it pinned to what the files say, not to what the name suggests.
 const FRAME_LAVENDER = '#DDDAF9';
 const CARD_PURPLE = '#6034C6';
 const CARD_TEXT_COLOUR = '#FFFFFF';
@@ -195,26 +195,31 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
       },
     }),
     buildTemplate({
-      id: '9-16-riders-frame-mint',
+      id: '9-16-riders-frame-lavender',
       ratio: '9:16',
       canvas: { width: 1080, height: 1920 },
       referenceCanvas: { width: 768, height: 1376 },
-      referenceAsset: '../assets/card-references/9-16/aspect-9-16-9_16-0 (13).png',
-      frameBackground: FRAME_MINT,
+      referenceAsset: '../assets/card-references/9-16/aspect-9-16-9_16-0 (2) (1).png',
+      frameBackground: FRAME_LAVENDER,
+      // Aperture fitted to the reference mask rather than read off by hand:
+      // 0.994 IoU against its flood-filled ground.
       aperture: {
-        panel: { left: 49, top: 56, right: 1031, bottom: 1863 },
-        notch: { right: 411, bottom: 219 },
-        radius: 52,
-        notchRadius: 58,
+        panel: { left: 44, top: 56, right: 1036, bottom: 1889 },
+        notch: { right: 385, bottom: 222 },
+        radius: 63,
+        notchRadius: 65,
       },
-      logoBox: { x: 113, y: 95, width: 252, height: 85 },
+      logoBox: { x: 86, y: 96, width: 253, height: 84 },
       card: {
-        box: { x: 97, y: 1376, width: 886, height: 310 },
-        textBox: { x: 155, y: 1421, width: 770, height: 220 },
-        radius: 24,
-        // This is the tightest text box of the three. `min` drops with it so a
-        // copy length the other two accept cannot fail only here.
-        fontSize: { min: 28, max: 61 },
+        box: { x: 107, y: 1313, width: 865, height: 401 },
+        textBox: { x: 142, y: 1358, width: 795, height: 311 },
+        radius: 39,
+        // The roomiest 9:16 card of the three. `max` is the size whose ink band
+        // matches the reference's own copy (~85px); the reference sets looser
+        // leading than Pango does, so the glyph height is what was matched, not
+        // the line pitch. `min` stays at the ratio floor so copy the siblings
+        // accept cannot fail only here.
+        fontSize: { min: 28, max: 90 },
       },
     }),
     buildTemplate({
