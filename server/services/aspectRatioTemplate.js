@@ -20,6 +20,9 @@ const deepFreeze = (value) => {
  */
 const FRAME_BLUE = '#C7E0F8';
 const FRAME_MINT = '#DAFBE8';
+// Measured from aspect-1-1-1_1-2- (3).png. The 1:1 third variant is lavender,
+// not mint: two different campaign grounds, not a rounding difference.
+const FRAME_LAVENDER = '#DDDAF9';
 const CARD_PURPLE = '#6034C6';
 const CARD_TEXT_COLOUR = '#FFFFFF';
 const LOGO_PURPLE = '#7145CE';
@@ -127,12 +130,12 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
       },
     }),
     buildTemplate({
-      id: '1-1-riders-frame-mint',
+      id: '1-1-riders-frame-lavender',
       ratio: '1:1',
       canvas: { width: 1024, height: 1024 },
       referenceAsset: '../assets/card-references/1-1/aspect-1-1-1_1-2- (3).png',
-      frameBackground: FRAME_MINT,
-      // A wider notch, a deeper card and the mint ground: the same layout
+      frameBackground: FRAME_LAVENDER,
+      // A wider notch, a deeper card and the lavender ground: the same layout
       // language as the blue frame, measurably not the same template.
       aperture: {
         panel: { left: 44, top: 45, right: 979, bottom: 977 },

@@ -79,7 +79,7 @@ test('keeps a ratio that lost a template and only fails one with nothing to revi
       images: [],
       ratio: '1:1',
       rowNumber: 8,
-      errors: ['Text overflow in template 1-1-riders-frame-mint.'],
+      errors: ['Text overflow in template 1-1-riders-frame-lavender.'],
     }),
     /Generated no 1:1 variants for row 8\. Underlying errors: Text overflow/,
   );
