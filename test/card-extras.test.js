@@ -154,3 +154,47 @@ test('an absent or unusable extras box yields no crop', async () => {
   const metadata = await sharp(crop).metadata();
   assert.deepEqual({ width: metadata.width, height: metadata.height }, { width: 280, height: 120 });
 });
+
+test('the marks are scaled to the copy, not to whatever the box still allows', async () => {
+  const sceneDataUrl = await buildScene();
+  // A promo pill: wide, short, on the source card's own purple.
+  const extras = await buildExtras('#6034C6');
+  const copy = 'Movete con 25% OFF en tus primeros 5 viajes';
+
+  const template = ASPECT_RATIO_TEMPLATE_DEFINITIONS['1:1'];
+  const output = await composeAspectRatioTemplate({
+    sceneDataUrl,
+    targetRatio: '1:1',
+    text: copy,
+    cardExtras: extras,
+    cardExtrasPanelColour: [0x60, 0x34, 0xC6],
+  });
+  const image = await readRaw(output);
+
+  // Measure both inside the card: the pill colour gives the marks' height, the
+  // white copy gives the text block's. Taking the largest allowance the copy
+  // merely survived used to put the marks at roughly twice the type size.
+  const { box } = template.card;
+  const extent = (match) => {
+    let top = Infinity;
+    let bottom = -1;
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      for (let x = box.x; x < box.x + box.width; x += 1) {
+        if (!match(pixelAt(image, x, y))) continue;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+        break;
+      }
+    }
+    return bottom < 0 ? 0 : bottom - top + 1;
+  };
+  const pillHeight = extent(([r, g, b]) => Math.abs(r - 0x3E) <= 20 && Math.abs(g - 0xCF) <= 20 && Math.abs(b - 0x8E) <= 20);
+  const copyHeight = extent(([r, g, b]) => r > 220 && g > 220 && b > 220);
+
+  assert.ok(pillHeight > 0, 'the marks should be composited');
+  assert.ok(copyHeight > 0, 'the copy should be composited');
+  assert.ok(
+    pillHeight <= copyHeight * 1.6,
+    `marks (${pillHeight}px) dwarf the copy (${copyHeight}px)`,
+  );
+});

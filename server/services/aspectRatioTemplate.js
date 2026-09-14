@@ -769,6 +769,20 @@ const buildTextLayer = async (template, text, fontId, textBoxOverride) => {
  */
 const EXTRAS_HEIGHT_SHARES = Object.freeze([0.5, 0.4, 0.3, 0.22]);
 const EXTRAS_GAP_SHARE = 0.08;
+/**
+ * How tall the marks should be relative to the copy's own type size.
+ *
+ * Estimated off a source creative, by eye rather than in pixels: a promo pill
+ * sits at roughly the height of one line of the headline. Taking the largest
+ * share the copy merely survives inflates the marks past the type they sit
+ * under — a 69px pill beneath 36px copy — so the share is chosen to land
+ * nearest this ratio instead.
+ *
+ * The exact value matters less than it looks: the candidate shares are coarse,
+ * so anything from about 1.0 to 1.4 selects the same one. Re-measure before
+ * moving it, not after.
+ */
+const EXTRAS_TO_FONT_RATIO = 1.15;
 /** Under this the marks are a smudge; shipping nothing beats shipping mush. */
 const EXTRAS_MIN_HEIGHT = 22;
 /** How close to the source panel colour still counts as its background. */
@@ -891,6 +905,9 @@ export const composeAspectRatioTemplate = async ({
   let textBox = card.textBox;
 
   if (cardExtras) {
+    // Every allowance the copy survives is scored, not just the first: the
+    // largest one usually fits by a hair and leaves the headline half its size.
+    let bestDistance = Infinity;
     for (const share of EXTRAS_HEIGHT_SHARES) {
       const candidate = await buildExtrasLayer(template, cardExtras, cardExtrasPanelColour, share);
       if (!candidate) continue;
@@ -900,14 +917,19 @@ export const composeAspectRatioTemplate = async ({
         height: card.textBox.height - candidate.height - gap,
       };
       if (remaining.height < EXTRAS_MIN_HEIGHT) continue;
+      let fitted;
       try {
-        textLayer = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, remaining);
-        extrasLayer = candidate;
-        textBox = remaining;
-        break;
+        fitted = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, remaining);
       } catch {
         // Copy will not fit beside marks this tall; try a smaller allowance.
+        continue;
       }
+      const distance = Math.abs(candidate.height - fitted.fontSize * EXTRAS_TO_FONT_RATIO);
+      if (distance >= bestDistance) continue;
+      bestDistance = distance;
+      textLayer = fitted;
+      extrasLayer = candidate;
+      textBox = remaining;
     }
   }
 
