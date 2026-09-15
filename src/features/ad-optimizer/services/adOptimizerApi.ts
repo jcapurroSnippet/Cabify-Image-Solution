@@ -1,3 +1,5 @@
+import type { CabifyAccountId } from '../../../../prompts/accounts.js';
+
 interface NanoEditorResponse {
   imageUrl?: string;
   error?: string;
@@ -20,6 +22,7 @@ export interface CreateEditorReviewBatchInput {
   plazas: string[];
   createdBy: string;
   expectedItemCount: number;
+  account: CabifyAccountId;
 }
 
 export interface EditorReviewBatch {
@@ -41,6 +44,7 @@ const parseErrorMessage = async (response: Response): Promise<string> => {
 export const generateVariant = async (
   imageDataUrl: string,
   prompt: string,
+  account: CabifyAccountId,
   reviewContext?: EditorReviewContext,
 ): Promise<string> => {
   const response = await fetch('/api/nano-editor', {
@@ -49,6 +53,7 @@ export const generateVariant = async (
     body: JSON.stringify({
       imageDataUrl,
       prompt,
+      account,
       ...(reviewContext && { reviewContext }),
     }),
   });
@@ -66,7 +71,7 @@ export const generateVariant = async (
 };
 
 export const createEditorReviewBatch = async (
-  input: CreateEditorReviewBatchInput,
+  { account, ...input }: CreateEditorReviewBatchInput,
 ): Promise<EditorReviewBatch> => {
   const response = await fetch('/api/creative-reviews/batches', {
     method: 'POST',
@@ -74,7 +79,7 @@ export const createEditorReviewBatch = async (
     body: JSON.stringify({
       ...input,
       sourceType: 'editor_batch',
-      metadata: { expectedItemCount: input.expectedItemCount },
+      metadata: { expectedItemCount: input.expectedItemCount, account },
     }),
   });
 

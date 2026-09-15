@@ -12,35 +12,16 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import type { CabifyAccountId } from '../../../prompts/accounts.js';
 import type { UploadedImage } from './types';
-import { scenes } from './scenes';
+import { EDITOR_BATCH_PROMPTS, type Scene } from './editorBatchPrompts';
 import { createEditorReviewBatch, generateVariant } from './services/adOptimizerApi';
 
 const MIN_IMAGES = 3;
 const MAX_IMAGES = 20;
 
-const CONSTRAINTS = `Non-negotiable visual constraints — never violate:
-- Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
-- No same gender couples.
-- All people must have security belts on if the body is visible. No exceptions, no creative workarounds.
-- Never include taxis in the image. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
-- People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
-- When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
-- The urban background must occupy no more than 30% of the frame. People and the car are the protagonists — the street is context, not the subject.
-- Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
-- Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
-- People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
-- NOTHING must be orange. No orange clothing, no orange cars, no orange backgrounds.
-- No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.
-- Always use the current Cabify logo — never the old logo.
-- Always include the text box overlay. It must never disappear or be omitted.
-- All text must remain fully contained within the text box. No text may overflow, spill outside, or be cropped by the frame edges.
-- The background must always be slightly blurred.
-- Preserve the exact typography, text color, and font size from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`
-
-const buildPrompt = (sceneId: number): string => {
-  const scene = scenes.find((s) => s.id === sceneId);
-  if (!scene) return CONSTRAINTS;
+const buildPrompt = (scene: Scene | undefined, constraints: string): string => {
+  if (!scene) return constraints;
 
   return `Transform this image to match the following Cabify ad scene.
 
@@ -49,7 +30,7 @@ Subject & action: ${scene.scene}
 Background: ${scene.background}
 Composition guidance: ${scene.designSpace}
 
-${CONSTRAINTS}`;
+${constraints}`;
 };
 
 const readFileAsDataUrl = (file: File): Promise<string> =>
@@ -73,9 +54,13 @@ const STAGE_COLORS: Record<string, string> = {
   Salida: 'bg-amber-500/15 text-amber-300',
 };
 
-export default function AdOptimizerTab() {
+export default function AdOptimizerTab({ account }: { account: CabifyAccountId }) {
+  const { constraints, scenes } = EDITOR_BATCH_PROMPTS[account];
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [selectedSceneId, setSelectedSceneId] = useState<number>(scenes[0].id);
+  // Accounts keep their own scene lists, so a selection may not exist in the
+  // account just switched to.
+  const selectedScene = scenes.find((s) => s.id === selectedSceneId) ?? scenes[0];
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -135,7 +120,7 @@ export default function AdOptimizerTab() {
       }
       return;
     }
-    const prompt = buildPrompt(selectedSceneId);
+    const prompt = buildPrompt(selectedScene, constraints);
     const plazas = reviewForm.plazas
       .split(',')
       .map((plaza) => plaza.trim())
@@ -157,6 +142,7 @@ export default function AdOptimizerTab() {
         plazas,
         createdBy: reviewForm.createdBy.trim(),
         expectedItemCount: images.length,
+        account,
       });
       setReviewBatch({
         batchId: createdBatch.batchId,
@@ -173,7 +159,7 @@ export default function AdOptimizerTab() {
     let processed = 0;
     for (const [sourceIndex, img] of images.entries()) {
       try {
-        const result = await generateVariant(img.previewUrl, prompt, {
+        const result = await generateVariant(img.previewUrl, prompt, account, {
           sheetsUrl: createdBatch.sheetsUrl,
           batchId: createdBatch.batchId,
           sourceAssetName: img.file.name,
@@ -206,7 +192,6 @@ export default function AdOptimizerTab() {
     (value) => value.trim().length > 0,
   );
   const canProcess = images.length >= MIN_IMAGES && isReviewFormComplete && !isProcessing;
-  const selectedScene = scenes.find((s) => s.id === selectedSceneId)!;
 
   const handleDownloadAll = () => {
     processedImages.forEach((img) => {
@@ -297,7 +282,7 @@ export default function AdOptimizerTab() {
           {/* Dropdown */}
           <div className="relative">
             <select
-              value={selectedSceneId}
+              value={selectedScene.id}
               onChange={(e) => setSelectedSceneId(Number(e.target.value))}
               disabled={isProcessing}
               className="w-full appearance-none rounded-xl border border-slate-700/80 bg-slate-900/70 py-2.5 pl-4 pr-9 text-sm text-slate-100 outline-none transition-colors focus:border-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"

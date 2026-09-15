@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { ClipboardCheck, Crop, Library, Sparkles, TrendingDown, Workflow, Wrench } from 'lucide-react';
+import {
+  CABIFY_ACCOUNTS,
+  DEFAULT_CABIFY_ACCOUNT,
+  normalizeCabifyAccount,
+  type CabifyAccountId,
+} from '../prompts/accounts.js';
 import AspectRatioTab from './features/aspect-ratio/AspectRatioTab';
 import NanoEditorTab from './features/nano-editor/NanoEditorTab';
 import AdOptimizerTab from './features/ad-optimizer/AdOptimizerTab';
@@ -68,24 +74,43 @@ const getTabFromLocation = (): TabId => {
   return TOOL_IDS.includes(requestedTab as ToolId) ? requestedTab as ToolId : 'funnel';
 };
 
+const getAccountFromLocation = (): CabifyAccountId =>
+  normalizeCabifyAccount(new URLSearchParams(window.location.search).get('account'))
+  ?? DEFAULT_CABIFY_ACCOUNT;
+
+/** Writes one query param without adding a history entry; `null` removes it. */
+const replaceSearchParam = (name: string, value: string | null) => {
+  const url = new URL(window.location.href);
+  if (value === null) url.searchParams.delete(name);
+  else url.searchParams.set(name, value);
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>(getTabFromLocation);
+  // Every tool generates with the prompts of this account (prompts/<account>/).
+  const [account, setAccount] = useState<CabifyAccountId>(getAccountFromLocation);
   const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/';
   const publicReviewToken = getPublicReviewToken(window.location.pathname, window.location.hash);
   const isPublicReview = normalizedPath === '/review' || normalizedPath === '/r' || normalizedPath.startsWith('/r/');
 
   useEffect(() => {
-    const syncTabFromLocation = () => setActiveTab(getTabFromLocation());
-    window.addEventListener('popstate', syncTabFromLocation);
-    return () => window.removeEventListener('popstate', syncTabFromLocation);
+    const syncFromLocation = () => {
+      setActiveTab(getTabFromLocation());
+      setAccount(getAccountFromLocation());
+    };
+    window.addEventListener('popstate', syncFromLocation);
+    return () => window.removeEventListener('popstate', syncFromLocation);
   }, []);
 
   const selectTab = (tabId: TabId) => {
     setActiveTab(tabId);
-    const url = new URL(window.location.href);
-    if (tabId === 'funnel') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', tabId);
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    replaceSearchParam('tab', tabId === 'funnel' ? null : tabId);
+  };
+
+  const selectAccount = (accountId: CabifyAccountId) => {
+    setAccount(accountId);
+    replaceSearchParam('account', accountId === DEFAULT_CABIFY_ACCOUNT ? null : accountId);
   };
 
   if (isPublicReview) return <CreativeReviewPortal token={publicReviewToken} />;
@@ -128,18 +153,41 @@ export default function App() {
           </div>
 
           {isToolsSection && (
-            <div className="flex flex-wrap gap-2 border-t border-slate-700/60 pt-3">
-              {TOOL_ITEMS.map((tool) => (
-                <button
-                  key={tool.id}
-                  type="button"
-                  onClick={() => selectTab(tool.id)}
-                  data-active={activeTab === tool.id}
-                  className="tab-pill"
-                >
-                  <span className="inline-flex items-center gap-1.5">{tool.icon}{tool.label}</span>
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-700/60 pt-3">
+              <div className="flex flex-wrap gap-2">
+                {TOOL_ITEMS.map((tool) => (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => selectTab(tool.id)}
+                    data-active={activeTab === tool.id}
+                    className="tab-pill"
+                  >
+                    <span className="inline-flex items-center gap-1.5">{tool.icon}{tool.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div
+                role="radiogroup"
+                aria-label="Cuenta de Cabify"
+                className="flex items-center gap-1 rounded-full border border-slate-700/60 p-1"
+              >
+                <span className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cuenta</span>
+                {CABIFY_ACCOUNTS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={account === entry.id}
+                    onClick={() => selectAccount(entry.id)}
+                    data-active={account === entry.id}
+                    className="tab-pill"
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </section>
@@ -149,13 +197,13 @@ export default function App() {
             <RunFunnelTab isActive={activeTab === 'funnel'} />
           </section>
           <section aria-hidden={activeTab !== 'nano'} className={activeTab === 'nano' ? 'block' : 'hidden'}>
-            <NanoEditorTab />
+            <NanoEditorTab account={account} />
           </section>
           <section aria-hidden={activeTab !== 'ratio'} className={activeTab === 'ratio' ? 'block' : 'hidden'}>
-            <AspectRatioTab />
+            <AspectRatioTab account={account} />
           </section>
           <section aria-hidden={activeTab !== 'optimizer'} className={activeTab === 'optimizer' ? 'block' : 'hidden'}>
-            <AdOptimizerTab />
+            <AdOptimizerTab account={account} />
           </section>
           <section aria-hidden={activeTab !== 'library'} className={activeTab === 'library' ? 'block' : 'hidden'}>
             <CreativeLibraryTab />

@@ -1,3 +1,4 @@
+import type { CabifyAccountId } from '../../prompts/accounts.js';
 import { AspectRatio } from '../features/aspect-ratio/types';
 
 type JsonResponse = {
@@ -35,10 +36,15 @@ const postJson = async <TResponse>(url: string, body: unknown): Promise<TRespons
   return (await response.json()) as TResponse;
 };
 
-export const generateNanoImage = async (imageDataUrl: string, prompt: string): Promise<string> => {
+export const generateNanoImage = async (
+  imageDataUrl: string,
+  prompt: string,
+  account: CabifyAccountId,
+): Promise<string> => {
   const data = await postJson<{ imageUrl?: string }>('/api/nano-editor', {
     imageDataUrl,
     prompt,
+    account,
   });
 
   if (!data.imageUrl) {
@@ -51,10 +57,12 @@ export const generateNanoImage = async (imageDataUrl: string, prompt: string): P
 export const generateAspectRatioImages = async (
   imageDataUrl: string,
   targetRatio: AspectRatio,
+  account: CabifyAccountId,
 ): Promise<string[]> => {
   const data = await postJson<{ images?: string[] }>('/api/aspect-ratio', {
     imageDataUrl,
     targetRatio,
+    account,
   });
 
   if (!Array.isArray(data.images) || data.images.length === 0) {

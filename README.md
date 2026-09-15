@@ -11,6 +11,27 @@ one-off work:
 - `Creative Library`: Google Ads + Meta low-performer detection and creative replacement.
 - `Creative Review`: review batches and the tokenized client approval portal.
 
+## Cabify accounts (Riders, Drivers, Corp)
+
+The **Cuenta** selector in the Herramientas bar picks whose prompts the tools
+generate with. It is kept in the URL (`?account=drivers`); without it the tools
+use Riders, the account the prompts were written for. The Ciclo always uses Riders.
+
+Each account owns a complete copy of its prompts, so editing one never affects
+the others:
+
+- `prompts/<account>/nanoEditor.js` — rules appended to every Nano Editor and
+  Editor Batch request.
+- `prompts/<account>/aspectRatio.js` — copy extraction plus the 1:1 and 9:16
+  background prompts used by Single Image and Batch from Sheets.
+- `prompts/<account>/editorBatch.js` — Editor Batch constraints and scenes. This
+  one ships to the browser; the other two stay on the server.
+
+`prompts/accounts.js` lists the accounts. `npm test` checks that every account
+still defines every prompt the tools read. The generation endpoints reject an
+unknown `account` with a 400, and batches record the account in their review
+metadata.
+
 ## The funnel (Ciclo)
 
 A **run** spans all five steps and is what ties the tools together — before it,

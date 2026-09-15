@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
+import { normalizeCabifyAccount } from '../prompts/accounts.js';
+import { getAccountPrompts } from '../prompts/index.js';
 import { processBatch, getBatchStatus, downloadImageAsDataUrl as downloadSheetImageAsDataUrl } from './services/batchProcessor.js';
 import {
   ASPECT_RATIO_PROMPT_PROFILE,
@@ -97,27 +99,13 @@ app.use((request, response, next) => {
   return next();
 });
 
-const PROMPT_LIMITATIONS = `**Role & Mission**
-You are the Cabify Creative Refiner. Your sole task is to generate exactly one modified version of the provided base image, applying only the specific change requested by the user — nothing more.
-
-**What you must do**
-- Apply the user's requested change precisely and literally.
-- Preserve every visual element not mentioned in the request: layout, typography, colors, style, brand elements, proportions.
-- If the request involves repositioning, reordering, or scaling an element, treat all other elements as locked and immovable.
-
-**What you must never do**
-1. Do not add new visual elements that don't exist in the base image.
-2. Do not remove visual elements that exist in the base image (unless explicitly requested).
-3. Do not change colors, fonts, or typographic styling.
-4. Do not change the visual style or aesthetic direction.
-5. Do not mirror, flip, or rotate elements unless explicitly requested.
-6. Do not redraw, replace, or reinterpret any object.
-7. Do not apply any change beyond what the user explicitly requests.
-8. Do not interpret a vague prompt as license to make multiple changes — if the request is ambiguous, apply the most minimal, conservative interpretation.
-
-**Output**
-Generate exactly one image. No explanation, no alternatives, no commentary.`;
-
+const getRequestAccount = (value) => {
+  const account = normalizeCabifyAccount(value);
+  if (!account) {
+    throw new RequestValidationError('account must be "riders", "drivers" or "corp".');
+  }
+  return account;
+};
 
 const getErrorMessage = (error, fallbackMessage) => {
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '';
@@ -318,6 +306,8 @@ app.post('/api/nano-editor', async (request, response) => {
       throw new RequestValidationError('prompt is required.');
     }
 
+    const account = getRequestAccount(request.body?.account);
+    const { NANO_EDITOR_LIMITATIONS } = getAccountPrompts(account).nanoEditor;
     const { imageData, mimeType } = parseDataUrl(imageDataUrl);
     const ai = getGeminiClient();
 
@@ -332,7 +322,7 @@ app.post('/api/nano-editor', async (request, response) => {
             },
           },
           {
-            text: `USER PROMPT: ${prompt.trim()}\n\n${PROMPT_LIMITATIONS}`,
+            text: `USER PROMPT: ${prompt.trim()}\n\n${NANO_EDITOR_LIMITATIONS}`,
           },
         ],
       },
@@ -390,6 +380,7 @@ app.post('/api/nano-editor', async (request, response) => {
           sourceAssetName,
           sourceIndex: reviewContext.sourceIndex || '',
           prompt: prompt.trim(),
+          account,
         },
       }],
     });
@@ -431,6 +422,7 @@ app.post('/api/aspect-ratio', async (request, response) => {
       throw new RequestValidationError('targetRatio must be "1:1" or "9:16".');
     }
 
+    const account = getRequestAccount(request.body?.account);
     let finalImageDataUrl = imageDataUrl;
     if (!imageDataUrl && imageUrl) {
       finalImageDataUrl = await downloadImageAsDataUrl(imageUrl);
@@ -440,6 +432,7 @@ app.post('/api/aspect-ratio', async (request, response) => {
 
     const { images, errors } = await generateAspectRatioImages(finalImageDataUrl, parsedRatio, {
       profile: ASPECT_RATIO_PROMPT_PROFILE,
+      account,
     });
 
     if (images.length === 0) {
@@ -476,6 +469,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     if (typeof sheetsUrl !== 'string' || sheetsUrl.trim().length === 0) {
       throw new RequestValidationError('sheetsUrl is required.');
     }
+    const account = getRequestAccount(request.body?.account);
 
     // Set response headers for streaming progress
     response.setHeader('Content-Type', 'application/x-ndjson');
@@ -531,6 +525,7 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
       category,
       plazas,
       createdBy,
+      account,
       reviewBatchId: reviewBatchId ? String(reviewBatchId).trim() : undefined,
       rowsPerRequest,
       baseUrl: `${protocol}://${host}`,

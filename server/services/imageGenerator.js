@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { getAccountPrompts } from '../../prompts/index.js';
 import {
   ASPECT_RATIO_TEMPLATE_VARIANTS,
   composeAspectRatioTemplate,
@@ -186,30 +187,6 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
   ],
 };
 
-const CARD_COPY_EXTRACTION_PROMPT = `
-The image is the source creative.
-
-Read its promotional card and extract the literal copy.
-
-Return JSON with exactly these fields:
-- "cardText": every non-button word that appears inside the promotional card, in reading order. Preserve punctuation, accents, capitalization, and separators exactly. Join visual line wrapping with a single space: line breaks caused by the source card's narrow width are NOT content. Use "\\n" only for genuinely separate paragraphs or text blocks.
-- "buttonPresent": true if the card includes a CTA/button, otherwise false.
-- "buttonLabel": the CTA/button text exactly as shown. Return an empty string if there is no button.
-- "cardBackgroundColor": the hex colour of the card/panel the copy sits on, sampled from a flat area away from any shadow or gradient.
-- "cardTextColor": the hex colour of that copy.
-- "cardBrandMarks": any partner, product or sub-brand logo shown inside the card - name it and describe its container briefly. Do NOT list the main Cabify wordmark. Empty string if there is none.
-- "cardTextBox": the bounding box that tightly encloses the card's HEADLINE text only, as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card panel's empty margins. Exclude buttons, pills, icons and partner logos.
-- "cardExtrasBox": the bounding box enclosing everything else INSIDE the card - CTA buttons, option pills and their icons, promo codes, partner logos - as [ymin, xmin, ymax, xmax] over the same 0-1000 grid. Include all of them in one box. Return [0, 0, 0, 0] when the card holds nothing but its headline. Never include the headline, the card's empty margins, the Cabify wordmark or anything outside the card.
-- "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
-
-Rules:
-- Extract text only from the card. Ignore the rest of the scene, logo, people, cars, and background.
-- Do NOT translate, rewrite, summarize, normalize, fix spelling, or infer missing words.
-- Do NOT borrow copy from any other image.
-- If a word is partially obscured, return the visible characters only.
-- Return JSON only.
-`.trim();
-
 const SCENE_PROHIBITIONS = `
 ## SCENE-ONLY GENERATION - CRITICAL
 - Do NOT include any UI card, white rounded rectangle, text overlay, CTA button, or promotional panel in the output.
@@ -274,14 +251,6 @@ const DESIGN_SYSTEM_LOCK = `
 - The three variants may change photographic framing only. Card and logo target geometry must remain identical across all variants.
 `.trim();
 
-const TEMPLATE_COMPOSITOR_LOCK = `
-## IMMUTABLE TEMPLATE LAYERS
-- This model call owns ONLY the photograph/background.
-- The server, not the model, adds the reference template's frame, logo and text box at exact pixel coordinates.
-- Do not imitate, reserve space for, redraw or include any of those layers in this output.
-- The server also renders the approved copy with a real Cabify OTF. Return no text of any kind.
-`.trim();
-
 /**
  * Pass 2 receives the original creative as a visual authority. The structured
  * extraction remains authoritative for literal copy, while the source pixels
@@ -301,52 +270,14 @@ ${CABIFY_TYPOGRAPHY_SYSTEM}
 - If Image 2 has no CTA, do not create one. Never borrow a CTA, icon, image, colour or word from another creative.
 `.trim();
 
+/**
+ * The Aspect Ratio profile's 1:1 and 9:16 prompts live per account in
+ * prompts/<account>/aspectRatio.js. This profile wording remains only for the
+ * 1.91:1 prompt, which no tool currently requests.
+ */
 const buildSceneGuards = (profile) => (usesAspectRatioProfile(profile)
   ? `${SCENE_PROHIBITIONS_REFRAME}\n\n${CONTENT_LOCK}`
   : SCENE_PROHIBITIONS);
-
-/**
- * A hard position/size for the logo fights the reframe rules: the source's own
- * lockup is what has to survive. The reframe wording keeps a size anchor but
- * defers the treatment to whatever the source already does.
- */
-/**
- * Styling comes from the source; placement does not always. A ratio can carry a
- * hard placement rule of its own (9:16 must clear the Stories profile overlay),
- * so it is passed separately instead of being folded into "keep it as it is".
- */
-const buildLogoLayoutLine = (profile, legacyLine, widthRange, placement = '') => (usesAspectRatioProfile(profile)
-  ? '- Logo: do NOT render one. The deterministic target template adds the locked logo later at its exact pixel size and position.'
-  : legacyLine);
-
-/**
- * These measurements are taken from the user-supplied example frames. They
- * intentionally describe geometry only; no old-identity pixels are sent to
- * the image model.
- */
-const getTargetFrameGeometry = (targetRatio, profile) => {
-  if (!usesAspectRatioProfile(profile)) return '';
-
-  if (String(targetRatio).trim() === '1:1') {
-    return `## TEMPLATE APERTURE - 1:1
-- Generate a continuous square photograph/background all the way to every canvas edge.
-- Do NOT render the rounded photo aperture, outer frame, local logo notch, logo or text box. The server applies those immutable pixels from the 1:1 reference template afterward.`;
-  }
-
-  if (String(targetRatio).trim() === '9:16') {
-    return `## TEMPLATE APERTURE - 9:16
-- Generate a continuous vertical photograph/background all the way to every canvas edge.
-- Do NOT render a frame, logo, logo tab or text box. The server applies the immutable 9:16 reference template afterward.`;
-  }
-
-  return '';
-};
-
-const NINE_SIXTEEN_SUBJECT_COMPOSITION = `## 9:16 SUBJECT COMPOSITION - NON-NEGOTIABLE
-- Reframe horizontally so the primary person's face and upper torso are centred around x=50% and remain inside the central x=42%-58% band. The person must read as centred, not pressed against either side.
-- When an arm, phone or other held object extends sideways, centre the person's face and torso rather than the combined silhouette. The extended hand or object may remain off-centre.
-- Add or extend the same background on the side that needs room to achieve this balance. Horizontal translation/reframing of the complete unchanged subject is required when needed and is not a subject redesign.
-- Preserve the person's exact identity, pose, anatomy, clothing, scale and photographic detail. Do not mirror, redraw, warp or crop the person.`;
 
 const NINE_SIXTEEN_CARD_SAFE_ZONE = `**9:16 PLATFORM SAFE ZONE - ABSOLUTE:**
 - The copy-card safe region runs vertically from y=15% through y=84% of the canvas. The top 15% and bottom 16% are exclusion bands used by the platform UI.
@@ -955,15 +886,25 @@ ${buttonSpec('centered')}${cardSurfaceSpec}`;
 /**
  * One prompt per model call in pass 1.
  *
- * The ciclo still asks for three differently framed scenes. The Aspect Ratio
- * tool asks for ONE: its variations now differ by template, not by framing.
- * Three reframes of the same source produced outputs an operator could not
- * tell apart, because the deterministic frame, logo and card dominate the
- * composition; swapping the approved reference behind them does not.
+ * The Aspect Ratio profile asks for ONE scene per ratio: its variations differ
+ * by template, not by framing. Three reframes of the same source produced
+ * outputs an operator could not tell apart, because the deterministic frame,
+ * logo and card dominate the composition; swapping the approved reference
+ * behind them does not. Its 1:1 and 9:16 wording belongs to the Cabify account
+ * (prompts/<account>/aspectRatio.js). Without the profile, three differently
+ * framed scenes are still requested.
  */
-export const getVariationPrompts = (targetRatio, profile = '') => {
+export const getVariationPrompts = (targetRatio, profile = '', account) => {
   const ratio = String(targetRatio).trim();
   const isAspectRatioTool = usesAspectRatioProfile(profile);
+
+  if (isAspectRatioTool && ratio !== '1.91:1') {
+    const { SCENE_PROMPTS } = getAccountPrompts(account).aspectRatio;
+    // As in the legacy branches below, a ratio without its own prompt is
+    // treated as vertical.
+    return [Object.hasOwn(SCENE_PROMPTS, ratio) ? SCENE_PROMPTS[ratio] : SCENE_PROMPTS['9:16']];
+  }
+
   const guards = buildSceneGuards(profile);
 
   if (ratio === '1:1') {
@@ -971,16 +912,11 @@ export const getVariationPrompts = (targetRatio, profile = '') => {
 **TASK:** Reframe the source image to a 1:1 square canvas - scene only, no UI card.
 
 ${guards}
-${isAspectRatioTool ? `\n${TEMPLATE_COMPOSITOR_LOCK}\n` : ''}
+
 ## LAYOUT
 - Canvas: 1:1 square.
-${getTargetFrameGeometry(ratio, profile)}
-${buildLogoLayoutLine(
-    profile,
-    '- Logo: top-left. Width about 14-16% of canvas width. Top margin about 6-8%.',
-    '19%',
-    'Place the visible logo lockup inside the local top-left frame notch at approximately x=8.5% and y=8% of the canvas. It must fit completely inside that local notch and never create a full-width header. This position and size are fixed across all three variations.',
-  )}
+
+- Logo: top-left. Width about 14-16% of canvas width. Top margin about 6-8%.
 - Subject: prominent, full face visible.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
@@ -989,13 +925,11 @@ ${buildLogoLayoutLine(
 - Do NOT crop the subject face.
 `.trim();
 
-    return isAspectRatioTool
-      ? [base]
-      : [
-        `${base}\n\n## THIS VARIATION\nTight crop - preserve as much of the original composition as possible.`,
-        `${base}\n\n## THIS VARIATION\nSlightly more headroom above the subject.`,
-        `${base}\n\n## THIS VARIATION\nWider crop to reveal more of the scene around the subject.`,
-      ];
+    return [
+      `${base}\n\n## THIS VARIATION\nTight crop - preserve as much of the original composition as possible.`,
+      `${base}\n\n## THIS VARIATION\nSlightly more headroom above the subject.`,
+      `${base}\n\n## THIS VARIATION\nWider crop to reveal more of the scene around the subject.`,
+    ];
   }
 
   if (ratio === '1.91:1') {
@@ -1044,48 +978,29 @@ ${layout}
       ];
   }
 
-  // Extending the canvas vertically shrinks the subject relative to it, so the
-  // legacy "keep the subject large / do not zoom out" pairing is self-
-  // contradictory. The Aspect Ratio profile states it once, with a measurable
-  // target, instead of leaving the model to pick which half to disobey.
-  const geometry = isAspectRatioTool
-    ? `## GEOMETRY
-- Reach 9:16 by EXTENDING (outpainting) the PHOTOGRAPH itself above and/or below the subject. Return a continuous edge-to-edge background; never grow a source margin, flat ground or split-panel proportion.
-- The photograph continues behind the future template overlays. Do NOT reserve empty ground above or below it and do not draw a frame, logo or card placeholder.
-- Do NOT rescale or re-shoot the subject to make it fit. The subject keeps its original scale and detail; the photograph grows around it, and the subject should still occupy roughly 45-60% of the canvas height.
-- Do NOT crop the subject's face.`
-    : `## GEOMETRY
-- EXTEND (outpaint) background above and/or below as needed.
-- Keep the subject large - do not zoom out.
-- Do NOT crop the subject face or logo.`;
-
   const base = `
 **TASK:** Reframe the source image to a 9:16 vertical canvas - scene only, no UI card.
 
 ${guards}
-${isAspectRatioTool ? `\n${TEMPLATE_COMPOSITOR_LOCK}\n` : ''}
+
 ## LAYOUT
 - Canvas: 9:16 vertical.
-${getTargetFrameGeometry(ratio, profile)}
-${buildLogoLayoutLine(
-    profile,
-    '- Logo: top-left. Width about 12-14% of canvas width. Top margin about 5-7%.',
-    '24%',
-    'Place the visible logo lockup inside the LOCAL TOP-LEFT frame notch, anchored to the left frame edge at x=4.7%, with its top edge at y=5.5% of the canvas. It must fit completely inside the local notch and never create a full-width header. This left tab/notch position and size are fixed across all three variations. The wordmark must be perfectly straight and horizontal: baseline parallel to the top edge, 0-degree rotation, upright, with no tilt, skew, curve or perspective distortion.',
-  )}
-${isAspectRatioTool ? NINE_SIXTEEN_SUBJECT_COMPOSITION : '- Subject: large and prominent, fills most of the canvas height.'}
+
+- Logo: top-left. Width about 12-14% of canvas width. Top margin about 5-7%.
+- Subject: large and prominent, fills most of the canvas height.
 - Bottom portion: clean scene/background only (a UI card will be added later by the system).
 
-${geometry}
+## GEOMETRY
+- EXTEND (outpaint) background above and/or below as needed.
+- Keep the subject large - do not zoom out.
+- Do NOT crop the subject face or logo.
 `.trim();
 
-  return isAspectRatioTool
-    ? [base]
-    : [
-      `${base}\n\n## THIS VARIATION\nMinimal intervention - preserve source background. Only extend background where strictly necessary to fill the canvas.`,
-      `${base}\n\n## THIS VARIATION\nMore headroom above the subject - extend sky/background at the top.`,
-      `${base}\n\n## THIS VARIATION\nKeep the car and its context in frame alongside the subject - the car must remain clearly visible. Extend background on the top or sides if needed but never at the cost of removing or hiding the car.`,
-    ];
+  return [
+    `${base}\n\n## THIS VARIATION\nMinimal intervention - preserve source background. Only extend background where strictly necessary to fill the canvas.`,
+    `${base}\n\n## THIS VARIATION\nMore headroom above the subject - extend sky/background at the top.`,
+    `${base}\n\n## THIS VARIATION\nKeep the car and its context in frame alongside the subject - the car must remain clearly visible. Extend background on the top or sides if needed but never at the cost of removing or hiding the car.`,
+  ];
 };
 
 /**
@@ -1173,13 +1088,13 @@ export const getGeminiClient = () => {
  * fixed at CARD_COPY_FONT_ID, so the rendered OTF catalog that used to ride
  * along as a second image is gone too, and with it its share of every request.
  */
-export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeType) => {
+export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeType, account) => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-image-preview',
     contents: {
       parts: [
         { inlineData: { data: sourceImageData, mimeType: sourceMimeType } },
-        { text: CARD_COPY_EXTRACTION_PROMPT },
+        { text: getAccountPrompts(account).aspectRatio.CARD_COPY_EXTRACTION_PROMPT },
       ],
     },
     config: {
@@ -1198,13 +1113,13 @@ export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeT
  * via `cardCopy`/`cardCopyError`, instead of letting each ratio re-run its
  * own extraction pass against an identical source image.
  */
-export const resolveCardCopyForSource = async (ai, imageDataUrl) => {
+export const resolveCardCopyForSource = async (ai, imageDataUrl, account) => {
   const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error('Invalid imageDataUrl format.');
   const [, mimeType, imageData] = match;
 
   try {
-    const cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType);
+    const cardCopy = await extractCardCopyFromSource(ai, imageData, mimeType, account);
     if (!hasReliableCardCopy(cardCopy)) {
       return { cardCopy, error: 'Card copy extraction was incomplete.' };
     }
@@ -1326,6 +1241,7 @@ const isRetryableGenerationError = (error) => {
 /**
  * `profile` selects the prompt wording. Callers from the Aspect Ratio tool pass
  * ASPECT_RATIO_PROMPT_PROFILE; the ciclo omits it and keeps the legacy prompts.
+ * `account` picks whose copy of the prompts is used; omitted, it is Riders.
  *
  * It also selects how the variations are produced. The Aspect Ratio profile
  * generates ONE photograph and composes it through every template declared for
@@ -1344,6 +1260,7 @@ export const generateAspectRatioImages = async (
   targetRatio,
   {
     profile = '',
+    account,
     maxAttemptsPerVariation = 1,
     ai: providedAi,
     cardCopy: providedCardCopy,
@@ -1356,7 +1273,7 @@ export const generateAspectRatioImages = async (
   const [, mimeType, imageData] = match;
 
   const ai = providedAi || getGeminiClient();
-  const variationPrompts = getVariationPrompts(targetRatio, profile);
+  const variationPrompts = getVariationPrompts(targetRatio, profile, account);
   const errors = [];
 
   let cardCopy;
@@ -1364,7 +1281,7 @@ export const generateAspectRatioImages = async (
     cardCopy = providedCardCopy;
     if (cardCopyError) errors.push(cardCopyError);
   } else {
-    const resolved = await resolveCardCopyForSource(ai, imageDataUrl);
+    const resolved = await resolveCardCopyForSource(ai, imageDataUrl, account);
     cardCopy = resolved.cardCopy;
     if (resolved.error) errors.push(resolved.error);
   }

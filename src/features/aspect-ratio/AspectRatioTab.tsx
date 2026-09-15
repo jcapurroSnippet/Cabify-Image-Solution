@@ -13,6 +13,7 @@ import {
   Copy,
   ExternalLink,
 } from 'lucide-react';
+import type { CabifyAccountId } from '../../../prompts/accounts.js';
 import { generateAspectRatioImages } from '../../lib/api';
 import {
   AspectRatio,
@@ -48,6 +49,7 @@ const INITIAL_BATCH_STATE: BatchState = {
     plazas: '',
     createdBy: '',
   },
+  account: null,
   reviewBatchId: null,
   variationsSheetUrl: null,
   isProcessing: false,
@@ -91,7 +93,7 @@ const getAspectClass = (ratio: AspectRatio): string => {
 
 type Mode = 'single' | 'batch';
 
-export default function AspectRatioTab() {
+export default function AspectRatioTab({ account }: { account: CabifyAccountId }) {
   const [mode, setMode] = useState<Mode>('single');
   const [state, setState] = useState<AspectRatioState>(INITIAL_STATE);
   const [batchState, setBatchState] = useState<BatchState>(INITIAL_BATCH_STATE);
@@ -221,7 +223,7 @@ export default function AspectRatioTab() {
     setActiveRatio(ratio);
 
     try {
-      const urls = await generateAspectRatioImages(state.originalImage, ratio);
+      const urls = await generateAspectRatioImages(state.originalImage, ratio, account);
       const newResults: GeneratedImage[] = urls.map((url, index) => ({
         id: `${ratio}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         url,
@@ -303,8 +305,13 @@ export default function AspectRatioTab() {
     && batchState.progress.totalRows > 0
     && batchState.progress.processedRows >= batchState.progress.totalRows,
   );
+  // A review batch is never continued with another account's prompts: after
+  // switching account, the button starts a fresh batch instead.
   const isResumableBatch = Boolean(
-    batchState.error && batchState.reviewBatchId && !isBatchComplete,
+    batchState.error
+    && batchState.reviewBatchId
+    && !isBatchComplete
+    && batchState.account === account,
   );
 
   const validateBatchInputs = (): boolean => {
@@ -337,6 +344,7 @@ export default function AspectRatioTab() {
     const resumeReviewBatchId = isResumableBatch ? batchState.reviewBatchId : null;
     setBatchState((previous) => ({
       ...previous,
+      account,
       isProcessing: true,
       error: null,
       results: resumeReviewBatchId ? previous.results : {},
@@ -444,6 +452,7 @@ export default function AspectRatioTab() {
           .map((plaza) => plaza.trim())
           .filter(Boolean),
         createdBy: batchState.review.createdBy.trim(),
+        account,
       },
       resumeReviewBatchId,
     );

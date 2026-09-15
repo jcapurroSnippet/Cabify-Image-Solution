@@ -1,13 +1,33 @@
-export interface Scene {
-  id: number;
-  title: string;
-  stage: string;
-  scene: string;
-  background: string;
-  designSpace: string;
-}
+/**
+ * Corp — Editor Batch.
+ *
+ * The constraints close every scene prompt; the Nano Editor limitations for the
+ * same account are appended after them on the server.
+ */
+export const EDITOR_BATCH_CONSTRAINTS = `Non-negotiable visual constraints — never violate:
+- Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
+- No same gender couples.
+- All people must have security belts on if the body is visible. No exceptions, no creative workarounds.
+- Never include taxis in the image. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
+- People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
+- When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
+- The urban background must occupy no more than 30% of the frame. People and the car are the protagonists — the street is context, not the subject.
+- Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
+- Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
+- People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
+- NOTHING must be orange. No orange clothing, no orange cars, no orange backgrounds.
+- No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.
+- Always use the current Cabify logo — never the old logo.
+- Always include the text box overlay. It must never disappear or be omitted.
+- All text must remain fully contained within the text box. No text may overflow, spill outside, or be cropped by the frame edges.
+- The background must always be slightly blurred.
+- Preserve the exact typography, text color, and font size from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`;
 
-export const scenes: Scene[] = [
+/**
+ * Scenes offered in the Editor Batch selector. `stage` also picks the badge
+ * colour in the UI (Entrada, Trayecto, Salida).
+ */
+export const EDITOR_BATCH_SCENES = [
   {
     id: 1,
     title: "El primer sorbo",

@@ -1316,6 +1316,9 @@ export const processBatch = async (options) => {
     driveFolderId,
     reviewBatchId: providedReviewBatchId,
     rowsPerRequest: providedRowsPerRequest,
+    // Whose prompts generate the batch. The browser resends it with every
+    // chunk; omitted, the generator falls back to Riders.
+    account,
     baseUrl = process.env.API_BASE_URL || 'http://localhost:8080',
     onProgress,
   } = options;
@@ -1563,6 +1566,7 @@ export const processBatch = async (options) => {
           expectedSourceRows,
           targetRatios,
           expectedVariantsPerRatio: EXPECTED_VARIATIONS_PER_RATIO,
+          ...(account && { account }),
         },
       });
       reviewBatchId = getCreatedReviewBatchId(reviewBatch);
@@ -1656,7 +1660,7 @@ export const processBatch = async (options) => {
         const ai = getGeminiClient();
         // Resolve both literal copy and the closest bundled Cabify OTF once per
         // source row. Both output ratios then share the exact same detection.
-        const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl);
+        const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl, account);
 
         const ratioEntries = await mapWithBoundedConcurrency(targetRatios, targetRatios.length, async (ratio) => {
           onProgress?.({
@@ -1673,6 +1677,7 @@ export const processBatch = async (options) => {
             ratio,
             {
               profile: ASPECT_RATIO_PROMPT_PROFILE,
+              account,
               maxAttemptsPerVariation: 2,
               ai,
               cardCopy,

@@ -1,3 +1,5 @@
+import type { CabifyAccountId } from '../../../prompts/accounts.js';
+
 export enum AspectRatio {
   RATIO_1_1 = '1:1',
   RATIO_3_4 = '3:4',
@@ -89,6 +91,7 @@ export interface BatchReviewMetadata {
   category: string;
   plazas: string[];
   createdBy: string;
+  account: CabifyAccountId;
 }
 
 export interface BatchReviewForm {
@@ -102,6 +105,8 @@ export interface BatchState {
   sheetsUrl: string;
   driveFolderUrl: string;
   review: BatchReviewForm;
+  /** Account whose prompts generated the current review batch. */
+  account: CabifyAccountId | null;
   reviewBatchId: string | null;
   variationsSheetUrl: string | null;
   isProcessing: boolean;

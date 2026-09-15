@@ -2,9 +2,10 @@ import React, { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
 import { AlertCircle, Download, Image as ImageIcon, Loader2, RefreshCw, Upload, Wand2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import type { CabifyAccountId } from '../../../prompts/accounts.js';
 import { generateNanoImage } from '../../lib/api';
 
-export default function NanoEditorTab() {
+export default function NanoEditorTab({ account }: { account: CabifyAccountId }) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [resultImage, setResultImage] = useState<string | null>(null);
@@ -66,7 +67,7 @@ export default function NanoEditorTab() {
     setError(null);
     const sourceImage = resultImage ?? selectedImage;
     try {
-      const generatedImageUrl = await generateNanoImage(sourceImage, prompt.trim());
+      const generatedImageUrl = await generateNanoImage(sourceImage, prompt.trim(), account);
       setResultImage(generatedImageUrl);
       setPrompt('');
     } catch (generationError) {
