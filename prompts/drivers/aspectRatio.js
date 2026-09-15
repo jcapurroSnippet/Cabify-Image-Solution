@@ -33,6 +33,7 @@ Return JSON with exactly these fields:
 - "cardTextBox": the bounding box that tightly encloses the HEADLINE only, both colours included, as [ymin, xmin, ymax, xmax] normalised to 0-1000 over the whole image. Wrap the text itself, not the card's empty margins. Exclude the wordmark above it and the CTA button below it.
 - "cardExtrasBox": the bounding box enclosing everything else INSIDE the copy card except the wordmark - the CTA button, option pills and their icons, promo codes, partner logos - as [ymin, xmin, ymax, xmax] over the same 0-1000 grid. Include all of them in one box. Return [0, 0, 0, 0] when the card holds nothing but the wordmark and its headline. Never include the headline, the wordmark, the card's empty margins or anything on the image panel, such as the steering-wheel badge.
 - "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
+- "cardTextAccent": the exact words of "cardText" that are set in PURPLE, copied character for character from "cardText" (usually its opening words, e.g. "En Neuquén,"). Empty string if the whole headline is a single colour.
 
 Rules:
 - Extract text only from the copy card. Ignore the image panel and its badge, the people, cars and illustrations, and the purple ground.

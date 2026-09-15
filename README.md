@@ -32,6 +32,18 @@ still defines every prompt the tools read. The generation endpoints reject an
 unknown `account` with a 400, and batches record the account in their review
 metadata.
 
+The account also picks the Aspect Ratio template set
+(`getAspectRatioTemplateVariants` in `server/services/aspectRatioTemplate.js`).
+Riders and Corp use the measured Riders templates. Drivers uses the very same
+templates — geometry, notch, logo and card boxes, variants — and only changes
+their colours, which it reads off each input (`sampleSourceColours` in
+`imageGenerator.js`): the frame ground from the input's corners, the card and
+headline colours from behind the copy. A two-colour headline keeps its split
+through `cardTextAccent`, which the Drivers extraction prompt returns. The logo
+takes whichever of the wordmark purple or the card colour reads better on what
+lies behind it. Unreadable colours fall back to the palette measured off the
+approved Drivers pieces.
+
 ## The funnel (Ciclo)
 
 A **run** spans all five steps and is what ties the tools together — before it,

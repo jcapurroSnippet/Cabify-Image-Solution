@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { DEFAULT_CABIFY_ACCOUNT } from '../../prompts/accounts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..', '..');
@@ -26,6 +27,17 @@ const FRAME_LAVENDER = '#DDDAF9';
 const CARD_PURPLE = '#6034C6';
 const CARD_TEXT_COLOUR = '#FFFFFF';
 const LOGO_PURPLE = '#7145CE';
+
+/**
+ * Drivers fallback palette, used only where a colour cannot be read off the
+ * input. Sampled off the five approved 1200x628 Drivers creatives, which agree
+ * on every value: purple ground, white copy card, and a headline whose purple
+ * lead-in is followed by near-black copy.
+ */
+const DRIVERS_GROUND = LOGO_PURPLE;
+const DRIVERS_CARD = '#FFFFFF';
+const DRIVERS_ACCENT = CARD_PURPLE;
+const DRIVERS_TEXT = '#17171F';
 
 /**
  * Trace the rounded photo aperture: a rounded rectangle with a rounded bite
@@ -251,6 +263,54 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
 });
 
 /**
+ * Drivers composes through the Riders templates unchanged — same variants,
+ * aperture, notch, logo box, card box, type sizes and alignment — and differs
+ * only in colour. The two accounts' 1.91:1 sources share their layout; what
+ * changes is that Drivers sets its copy on a white card over a purple ground,
+ * in two colours.
+ *
+ * So these templates take their colours from each input at compose time
+ * (`colours`, see sampleSourceColours in imageGenerator.js). The DRIVERS_*
+ * values are only the fallback. The logo has no fixed colour: it takes
+ * whichever of the wordmark purple or the card colour reads better on what
+ * sits behind it, which on the Riders pastel frames is the purple they use.
+ */
+const takeColoursFromInput = (template) => ({
+  ...template,
+  id: template.id.replace('-riders-', '-drivers-'),
+  derivedFrom: template.id,
+  colourSource: 'input',
+  ...(template.frame ? { frame: { background: DRIVERS_GROUND } } : {}),
+  logo: { ...template.logo, colour: null },
+  card: {
+    ...template.card,
+    background: DRIVERS_CARD,
+    textColour: DRIVERS_TEXT,
+    accentColour: DRIVERS_ACCENT,
+  },
+});
+
+export const DRIVERS_TEMPLATE_VARIANTS = deepFreeze(Object.fromEntries(
+  Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)
+    .map(([ratio, variants]) => [ratio, variants.map(takeColoursFromInput)]),
+));
+
+/** Template set per Cabify account. Corp still borrows Riders, as its prompts do. */
+const ACCOUNT_TEMPLATE_VARIANTS = Object.freeze({
+  riders: ASPECT_RATIO_TEMPLATE_VARIANTS,
+  drivers: DRIVERS_TEMPLATE_VARIANTS,
+  corp: ASPECT_RATIO_TEMPLATE_VARIANTS,
+});
+
+export const getAspectRatioTemplateVariants = (account) => {
+  const id = account || DEFAULT_CABIFY_ACCOUNT;
+  if (!Object.hasOwn(ACCOUNT_TEMPLATE_VARIANTS, id)) {
+    throw new Error(`Unknown Cabify account for Aspect Ratio templates: ${account}.`);
+  }
+  return ACCOUNT_TEMPLATE_VARIANTS[id];
+};
+
+/**
  * The first variant of each ratio, kept under the original export name for
  * callers and tests that only ever needed the canonical template.
  */
@@ -259,8 +319,8 @@ export const ASPECT_RATIO_TEMPLATE_DEFINITIONS = deepFreeze(Object.fromEntries(
 ));
 
 /** Ordered template ids for a ratio: one generated variation per entry. */
-export const listAspectRatioTemplateIds = (targetRatio) => {
-  const variants = ASPECT_RATIO_TEMPLATE_VARIANTS[String(targetRatio ?? '').trim()];
+export const listAspectRatioTemplateIds = (targetRatio, account) => {
+  const variants = getAspectRatioTemplateVariants(account)[String(targetRatio ?? '').trim()];
   if (!variants) throw new Error(`Unsupported Aspect Ratio template ratio: ${targetRatio}.`);
   return variants.map((variant) => variant.id);
 };
@@ -459,12 +519,12 @@ const readAsset = async (assetPath) => {
   return assetBufferCache.get(assetPath);
 };
 
-const resolveTemplate = (targetRatio, templateId) => {
+const resolveTemplate = (targetRatio, templateId, account) => {
   if (typeof targetRatio !== 'string' || !targetRatio.trim()) {
     throw new Error('targetRatio is required.');
   }
   const ratio = targetRatio.trim();
-  const variants = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio];
+  const variants = getAspectRatioTemplateVariants(account)[ratio];
   if (!variants) throw new Error(`Unsupported Aspect Ratio template ratio: ${targetRatio}.`);
   if (templateId === undefined || templateId === null) return variants[0];
 
@@ -557,7 +617,10 @@ const fixedCardShapeCache = new Map();
  * shows.
  */
 const buildFixedCardShape = async (template) => {
-  if (fixedCardShapeCache.has(template.id)) return fixedCardShapeCache.get(template.id);
+  // Keyed by fill as well: a template that takes its colours from the input
+  // paints the same geometry in whatever the source uses.
+  const key = `${template.id}|${template.card.background}`;
+  if (fixedCardShapeCache.has(key)) return fixedCardShapeCache.get(key);
 
   const { card } = template;
   const loading = sharp(roundedRectangleSvg({
@@ -566,11 +629,11 @@ const buildFixedCardShape = async (template) => {
     radius: card.radius,
     fill: card.background,
   })).png().toBuffer().catch((error) => {
-    fixedCardShapeCache.delete(template.id);
+    fixedCardShapeCache.delete(key);
     throw error;
   });
 
-  fixedCardShapeCache.set(template.id, loading);
+  fixedCardShapeCache.set(key, loading);
   return loading;
 };
 
@@ -664,9 +727,22 @@ const cacheTextLayer = (key, loader) => {
   return loading;
 };
 
-const renderTextAtSize = async ({ text, font, fontPath, card, textBox, fontSize }) => {
-  const escapedText = escapePangoMarkup(text);
-  const markup = `<span foreground="${card.textColour}">${escapedText}</span>`;
+/**
+ * Split the copy into colour runs. Only a template with an accent colour uses
+ * one, and the caller only names WHICH words take it: an accent that is not
+ * literally part of the copy leaves the copy in a single colour.
+ */
+const buildTextMarkup = (text, card, accentText) => {
+  const run = (colour, value) => (value ? `<span foreground="${colour}">${escapePangoMarkup(value)}</span>` : '');
+  const accentIndex = card.accentColour && accentText ? text.indexOf(accentText) : -1;
+  if (accentIndex < 0) return run(card.textColour, text);
+  return run(card.textColour, text.slice(0, accentIndex))
+    + run(card.accentColour, accentText)
+    + run(card.textColour, text.slice(accentIndex + accentText.length));
+};
+
+const renderTextAtSize = async ({ text, accentText, font, fontPath, card, textBox, fontSize }) => {
+  const markup = buildTextMarkup(text, card, accentText);
   const buffer = await sharp({
     text: {
       text: markup,
@@ -687,12 +763,13 @@ const renderTextAtSize = async ({ text, font, fontPath, card, textBox, fontSize 
 const textFits = (rendered, textBox) =>
   rendered.width <= textBox.width && rendered.height <= textBox.height;
 
-const buildTextLayer = async (template, text, fontId, textBoxOverride) => {
+const buildTextLayer = async (template, text, fontId, textBoxOverride, accentText = '') => {
   // The box is a parameter, not a constant: when the source card carries
   // buttons or partner marks they take a share of it and the copy is fitted
   // into what is left. The height goes in the cache key for that reason.
   const textBox = textBoxOverride || template.card.textBox;
-  const key = `${template.id}\u0000${fontId}\u0000${textBox.height}\u0000${text}`;
+  const { textColour, accentColour = '' } = template.card;
+  const key = `${template.id}\u0000${fontId}\u0000${textBox.height}\u0000${textColour}\u0000${accentColour}\u0000${accentText}\u0000${text}`;
   return cacheTextLayer(key, async () => {
     const font = ASPECT_RATIO_FONT_REGISTRY[fontId];
     const fontPath = resolveRuntimeAsset('fonts', font.fileName);
@@ -705,6 +782,7 @@ const buildTextLayer = async (template, text, fontId, textBoxOverride) => {
       if (!renderedBySize.has(fontSize)) {
         renderedBySize.set(fontSize, renderTextAtSize({
           text,
+          accentText,
           font,
           fontPath,
           card,
@@ -838,7 +916,8 @@ const fixedLogoCache = new Map();
 
 const buildFixedLogo = async (template) => {
   if (template.logo.mode !== 'asset') return null;
-  if (fixedLogoCache.has(template.id)) return fixedLogoCache.get(template.id);
+  const key = `${template.id}|${template.logo.colour}`;
+  if (fixedLogoCache.has(key)) return fixedLogoCache.get(key);
 
   const loading = (async () => {
     const assetPath = resolveRuntimeAsset(template.logo.assetFolder, template.logo.assetFile);
@@ -866,17 +945,92 @@ const buildFixedLogo = async (template) => {
       top: template.logo.box.y,
     };
   })().catch((error) => {
-    fixedLogoCache.delete(template.id);
+    fixedLogoCache.delete(key);
     throw error;
   });
 
-  fixedLogoCache.set(template.id, loading);
+  fixedLogoCache.set(key, loading);
   return loading;
+};
+
+const HEX_COLOUR = /^#[0-9A-F]{6}$/;
+
+const hexToChannels = (hex) => [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
+
+/** WCAG relative luminance of an sRGB colour given as channels. */
+const relativeLuminance = (channels) => {
+  const [r, g, b] = channels.map((value) => {
+    const unit = value / 255;
+    return unit <= 0.03928 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+const contrastRatio = (first, second) => {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+/**
+ * Apply the input's colours to a template that takes them from the input; any
+ * other template ignores them, which keeps the measured palettes immutable.
+ * A missing or malformed colour keeps the template's own value.
+ */
+const applyInputColours = (template, colours) => {
+  if (template.colourSource !== 'input') return template;
+  const pick = (value, fallback) => {
+    const hex = typeof value === 'string' ? value.trim().toUpperCase() : '';
+    return HEX_COLOUR.test(hex) ? hex : fallback;
+  };
+  return {
+    ...template,
+    ...(template.frame ? { frame: { background: pick(colours?.ground, template.frame.background) } } : {}),
+    card: {
+      ...template.card,
+      background: pick(colours?.card, template.card.background),
+      textColour: pick(colours?.text, template.card.textColour),
+      accentColour: pick(colours?.accent, template.card.accentColour),
+    },
+  };
+};
+
+/**
+ * A template without a fixed logo colour sets the wordmark in whichever of its
+ * purple or the card colour contrasts more with what lies under the logo box:
+ * white on a purple frame, purple on a pastel one or a light photograph.
+ */
+const resolveLogoColour = async (template, base) => {
+  if (template.logo.colour) return template;
+  const { box } = template.logo;
+  // Read the pixels out rather than calling stats(), which measures the whole
+  // input and ignores the extract.
+  const { data } = await sharp(base)
+    .extract({ left: box.x, top: box.y, width: box.width, height: box.height })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const behind = [0, 0, 0];
+  for (let offset = 0; offset < data.length; offset += 3) {
+    behind[0] += data[offset];
+    behind[1] += data[offset + 1];
+    behind[2] += data[offset + 2];
+  }
+  const pixelCount = data.length / 3;
+  for (let channel = 0; channel < 3; channel += 1) behind[channel] /= pixelCount;
+  const colour = [LOGO_PURPLE, template.card.background]
+    .reduce((best, candidate) => (
+      contrastRatio(hexToChannels(candidate), behind) > contrastRatio(hexToChannels(best), behind) ? candidate : best
+    ));
+  return { ...template, logo: { ...template.logo, colour } };
 };
 
 /**
  * Place a generated scene behind immutable template layers and render the copy
  * locally with the selected OTF. No model call occurs in this function.
+ *
+ * `account` picks the template set. `colours` ({ ground, card, text, accent })
+ * and `accentText` — the words set in the accent colour — only reach templates
+ * that take their colours from the input.
  */
 export const composeAspectRatioTemplate = async ({
   sceneDataUrl,
@@ -885,17 +1039,24 @@ export const composeAspectRatioTemplate = async ({
   text,
   cardExtras,
   cardExtrasPanelColour,
+  account,
+  colours,
+  accentText,
 } = {}) => {
-  const template = resolveTemplate(targetRatio, templateId);
+  const resolvedTemplate = applyInputColours(resolveTemplate(targetRatio, templateId, account), colours);
   const normalizedText = normalizeText(text);
+  const accent = resolvedTemplate.card.accentColour && typeof accentText === 'string'
+    ? accentText.replace(/\s+/g, ' ').trim()
+    : '';
   const sceneBuffer = await parseSceneDataUrl(sceneDataUrl);
-  const { card } = template;
 
-  const [base, cardShape, logoLayer] = await Promise.all([
-    buildTemplateBase(sceneBuffer, template),
-    buildFixedCardShape(template),
-    buildFixedLogo(template),
+  const [base, cardShape] = await Promise.all([
+    buildTemplateBase(sceneBuffer, resolvedTemplate),
+    buildFixedCardShape(resolvedTemplate),
   ]);
+  const template = await resolveLogoColour(resolvedTemplate, base);
+  const logoLayer = await buildFixedLogo(template);
+  const { card } = template;
 
   // Copy and extras share one fixed box. Try the largest allowance for the
   // extras first and step down until the copy also fits: shrinking the marks
@@ -919,7 +1080,7 @@ export const composeAspectRatioTemplate = async ({
       if (remaining.height < EXTRAS_MIN_HEIGHT) continue;
       let fitted;
       try {
-        fitted = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, remaining);
+        fitted = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, remaining, accent);
       } catch {
         // Copy will not fit beside marks this tall; try a smaller allowance.
         continue;
@@ -935,7 +1096,7 @@ export const composeAspectRatioTemplate = async ({
 
   // No extras, or none small enough to leave room: the copy owns the box.
   if (!textLayer) {
-    textLayer = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID);
+    textLayer = await buildTextLayer(template, normalizedText, CARD_COPY_FONT_ID, undefined, accent);
     extrasLayer = null;
   }
 

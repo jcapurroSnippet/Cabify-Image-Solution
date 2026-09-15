@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { getAccountPrompts } from '../../prompts/index.js';
 import {
-  ASPECT_RATIO_TEMPLATE_VARIANTS,
   composeAspectRatioTemplate,
+  getAspectRatioTemplateVariants,
 } from './aspectRatioTemplate.js';
 import { mapWithBoundedConcurrency } from './concurrency.js';
 
@@ -186,6 +186,29 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
     'buttonFontWeight',
   ],
 };
+
+/**
+ * Whether an account's Aspect Ratio templates take their colours from the input
+ * (Drivers) rather than from a measured palette (Riders, Corp). Only those
+ * accounts pay for reading the input's colours or ask for a headline accent,
+ * so the Riders request and render stay exactly as they were.
+ */
+const accountUsesInputColours = (account) => Object.values(getAspectRatioTemplateVariants(account))
+  .some((variants) => variants.some((template) => template.colourSource === 'input'));
+
+const getCardCopyExtractionSchema = (account) => (accountUsesInputColours(account)
+  ? {
+    ...CARD_COPY_EXTRACTION_SCHEMA,
+    properties: {
+      ...CARD_COPY_EXTRACTION_SCHEMA.properties,
+      // Optional: the words a two-colour headline sets in its accent colour.
+      cardTextAccent: {
+        type: 'string',
+        description: 'The exact words of cardText set in the headline\'s accent colour. Empty string if the headline has a single colour.',
+      },
+    },
+  }
+  : CARD_COPY_EXTRACTION_SCHEMA);
 
 const SCENE_PROHIBITIONS = `
 ## SCENE-ONLY GENERATION - CRITICAL
@@ -396,6 +419,121 @@ export const buildCardExtrasCrop = async (sourceImageData, cardExtrasBox) => {
   }
 };
 
+/**
+ * Read the colours of the source creative's own layout, for templates that take
+ * their colours from the input (Drivers): the ground at its corners, the card
+ * behind the headline, and the one or two colours the headline is set in.
+ *
+ * Only what reads reliably is returned; the template keeps its own value for
+ * anything left out. Everything is sampled from pixels, not asked of the model,
+ * whose hex values land several levels off.
+ */
+const SOURCE_CORNER_PATCH = 12;
+const SOURCE_CORNER_INSET = 4;
+// Corners further apart than this are a picture, not a flat ground.
+const SOURCE_GROUND_TOLERANCE = 12;
+// Above this saturation an ink colour is the accent; below it, the body copy.
+const ACCENT_MIN_SATURATION = 0.4;
+
+const medianChannels = (pixels) => [0, 1, 2].map((channel) => {
+  const values = pixels.map((pixel) => pixel[channel]).sort((left, right) => left - right);
+  return values[Math.floor(values.length / 2)];
+});
+
+const channelsToHex = (channels) =>
+  `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+
+const channelDistance = (first, second) => Math.max(
+  Math.abs(first[0] - second[0]),
+  Math.abs(first[1] - second[1]),
+  Math.abs(first[2] - second[2]),
+);
+
+export const sampleSourceColours = async (sourceImageData, cardCopy) => {
+  const colours = {};
+  let raw;
+  try {
+    raw = await sharp(Buffer.from(sourceImageData, 'base64'))
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+  } catch {
+    return colours;
+  }
+
+  const { data, info: { width, height } } = raw;
+  const pixelAt = (x, y) => {
+    const offset = (y * width + x) * 3;
+    return [data[offset], data[offset + 1], data[offset + 2]];
+  };
+
+  const reach = SOURCE_CORNER_PATCH + SOURCE_CORNER_INSET;
+  if (width > reach * 2 && height > reach * 2) {
+    const corners = [
+      [SOURCE_CORNER_INSET, SOURCE_CORNER_INSET],
+      [width - reach, SOURCE_CORNER_INSET],
+      [SOURCE_CORNER_INSET, height - reach],
+      [width - reach, height - reach],
+    ].map(([left, top]) => {
+      const pixels = [];
+      for (let y = top; y < top + SOURCE_CORNER_PATCH; y += 1) {
+        for (let x = left; x < left + SOURCE_CORNER_PATCH; x += 1) pixels.push(pixelAt(x, y));
+      }
+      return medianChannels(pixels);
+    });
+    if (corners.every((corner) => channelDistance(corner, corners[0]) <= SOURCE_GROUND_TOLERANCE)) {
+      colours.ground = channelsToHex(medianChannels(corners));
+    }
+  }
+
+  const box = normalizeCardTextBox(cardCopy?.cardTextBox);
+  if (!box) return colours;
+  const [yMin, xMin, yMax, xMax] = box;
+  const left = Math.floor((xMin / 1000) * width);
+  const right = Math.min(width, Math.ceil((xMax / 1000) * width));
+  const top = Math.floor((yMin / 1000) * height);
+  const bottom = Math.min(height, Math.ceil((yMax / 1000) * height));
+
+  // The card is the most common colour behind the copy.
+  const pixels = [];
+  const buckets = new Map();
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const pixel = pixelAt(x, y);
+      const bucket = (pixel[0] >> 4) * 256 + (pixel[1] >> 4) * 16 + (pixel[2] >> 4);
+      pixels.push(pixel);
+      buckets.set(bucket, (buckets.get(bucket) || 0) + 1);
+    }
+  }
+  if (!pixels.length) return colours;
+  const [cardBucket, cardCount] = [...buckets].reduce((best, entry) => (entry[1] > best[1] ? entry : best));
+  // Copy set straight on a photograph has no flat card to read.
+  if (cardCount < pixels.length * 0.3) return colours;
+  const card = medianChannels(pixels.filter((pixel) =>
+    (pixel[0] >> 4) * 256 + (pixel[1] >> 4) * 16 + (pixel[2] >> 4) === cardBucket));
+  colours.card = channelsToHex(card);
+
+  // Ink is what stands furthest from the card; antialiased edges are skipped.
+  const distances = pixels.map((pixel) => channelDistance(pixel, card));
+  const strongest = distances.reduce((max, distance) => Math.max(max, distance), 0);
+  if (strongest < 80) return colours;
+  const ink = pixels.filter((_, index) => distances[index] >= strongest * 0.6);
+  const saturation = (pixel) => {
+    const max = Math.max(...pixel);
+    return max ? (max - Math.min(...pixel)) / max : 0;
+  };
+  const vivid = ink.filter((pixel) => saturation(pixel) >= ACCENT_MIN_SATURATION);
+  const neutral = ink.filter((pixel) => saturation(pixel) < ACCENT_MIN_SATURATION);
+  const minimumGroup = ink.length * 0.05;
+  if (vivid.length >= minimumGroup && neutral.length >= minimumGroup) {
+    colours.text = channelsToHex(medianChannels(neutral));
+    colours.accent = channelsToHex(medianChannels(vivid));
+  } else {
+    colours.text = channelsToHex(medianChannels(vivid.length > neutral.length ? vivid : neutral));
+  }
+  return colours;
+};
+
 const normalizeExtractedCardCopy = (payload) => {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -404,6 +542,8 @@ const normalizeExtractedCardCopy = (payload) => {
   const cardText = normalizeCardTextForResponsiveLayout(payload.cardText);
   const buttonLabel = normalizeCardCopyField(payload.buttonLabel);
   const buttonPresent = payload.buttonPresent === true;
+  // An accent that is not literally part of the copy cannot be coloured.
+  const cardTextAccent = normalizeCardTextForResponsiveLayout(payload.cardTextAccent);
   // No card face is carried any more: the Aspect Ratio compositor sets every
   // card in CARD_COPY_FONT_ID. `buttonFontWeight` stays for the legacy
   // model-backed profiles, which still redraw a CTA rather than compositing it.
@@ -417,6 +557,7 @@ const normalizeExtractedCardCopy = (payload) => {
     cardTextBox: normalizeCardTextBox(payload.cardTextBox),
     cardExtrasBox: normalizeCardExtrasBox(payload.cardExtrasBox),
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
+    cardTextAccent: cardTextAccent && cardText.includes(cardTextAccent) ? cardTextAccent : '',
   };
 };
 
@@ -1099,7 +1240,7 @@ export const extractCardCopyFromSource = async (ai, sourceImageData, sourceMimeT
     },
     config: {
       responseMimeType: 'application/json',
-      responseJsonSchema: CARD_COPY_EXTRACTION_SCHEMA,
+      responseJsonSchema: getCardCopyExtractionSchema(account),
       responseModalities: ['TEXT'],
     },
   });
@@ -1138,6 +1279,7 @@ export const placeCardOnScene = async (
   cardCopy,
   profile = '',
   templateId,
+  account,
 ) => {
   const sceneMatch = sceneDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!sceneMatch) throw new Error('Invalid scene data URL');
@@ -1152,7 +1294,12 @@ export const placeCardOnScene = async (
     // The source card's buttons and partner marks ride across as pixels, since
     // no amount of copy describes an icon. The panel colour goes with them so
     // the compositor can key the old card out from behind them.
-    const cardExtras = await buildCardExtrasCrop(sourceImageData, cardCopy?.cardExtrasBox);
+    const [cardExtras, colours] = await Promise.all([
+      buildCardExtrasCrop(sourceImageData, cardCopy?.cardExtrasBox),
+      // Read off the input only for templates that take their colours from it;
+      // the Riders templates keep their measured palette and never read it.
+      accountUsesInputColours(account) ? sampleSourceColours(sourceImageData, cardCopy) : undefined,
+    ]);
 
     // `templateId` is what distinguishes one variation from the next: the same
     // scene and the same copy, composed through a different approved reference.
@@ -1162,7 +1309,10 @@ export const placeCardOnScene = async (
       sceneDataUrl,
       targetRatio,
       templateId,
+      account,
       text,
+      accentText: cardCopy?.cardTextAccent,
+      colours,
       cardExtras,
       cardExtrasPanelColour: parseHexColourChannels(cardCopy?.cardBackgroundColor),
     });
@@ -1335,10 +1485,11 @@ export const generateAspectRatioImages = async (
     cardCopy,
     profile,
     templateId,
+    account,
   ));
 
   const templateVariants = usesAspectRatioProfile(profile)
-    ? ASPECT_RATIO_TEMPLATE_VARIANTS[String(targetRatio).trim()]
+    ? getAspectRatioTemplateVariants(account)[String(targetRatio).trim()]
     : null;
 
   // Aspect Ratio varies the template, not the framing: one photograph, one
