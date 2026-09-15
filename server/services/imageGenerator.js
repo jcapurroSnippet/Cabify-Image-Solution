@@ -188,27 +188,43 @@ const CARD_COPY_EXTRACTION_SCHEMA = {
 };
 
 /**
- * Whether an account's Aspect Ratio templates take their colours from the input
- * (Drivers) rather than from a measured palette (Riders, Corp). Only those
- * accounts pay for reading the input's colours or ask for a headline accent,
- * so the Riders request and render stay exactly as they were.
+ * What an account's Aspect Ratio templates consume beyond the Riders set: input
+ * colours and a two-colour headline (Drivers), a badge slot (Drivers). Only
+ * those accounts ask Gemini for the extra fields or pay for reading them, so
+ * the Riders request and render stay exactly as they were.
  */
-const accountUsesInputColours = (account) => Object.values(getAspectRatioTemplateVariants(account))
-  .some((variants) => variants.some((template) => template.colourSource === 'input'));
+const someAccountTemplate = (account, predicate) => Object.values(getAspectRatioTemplateVariants(account))
+  .some((variants) => variants.some(predicate));
 
-const getCardCopyExtractionSchema = (account) => (accountUsesInputColours(account)
-  ? {
-    ...CARD_COPY_EXTRACTION_SCHEMA,
-    properties: {
-      ...CARD_COPY_EXTRACTION_SCHEMA.properties,
+const accountUsesInputColours = (account) =>
+  someAccountTemplate(account, (template) => template.colourSource === 'input');
+
+const accountHasBadgeSlot = (account) => someAccountTemplate(account, (template) => Boolean(template.badge));
+
+const getCardCopyExtractionSchema = (account) => {
+  const extraProperties = {
+    ...(accountUsesInputColours(account) && {
       // Optional: the words a two-colour headline sets in its accent colour.
       cardTextAccent: {
         type: 'string',
         description: 'The exact words of cardText set in the headline\'s accent colour. Empty string if the headline has a single colour.',
       },
-    },
-  }
-  : CARD_COPY_EXTRACTION_SCHEMA);
+    }),
+    ...(accountHasBadgeSlot(account) && {
+      // Optional: where the input's badge icon sits, to lift it into the template.
+      imageBadgeBox: {
+        type: 'array',
+        items: { type: 'integer' },
+        minItems: 4,
+        maxItems: 4,
+        description: 'Bounding box of the small badge icon on the image panel as [ymin, xmin, ymax, xmax] normalised to 0-1000. [0, 0, 0, 0] if there is none.',
+      },
+    }),
+  };
+  return Object.keys(extraProperties).length
+    ? { ...CARD_COPY_EXTRACTION_SCHEMA, properties: { ...CARD_COPY_EXTRACTION_SCHEMA.properties, ...extraProperties } }
+    : CARD_COPY_EXTRACTION_SCHEMA;
+};
 
 const SCENE_PROHIBITIONS = `
 ## SCENE-ONLY GENERATION - CRITICAL
@@ -534,6 +550,108 @@ export const sampleSourceColours = async (sourceImageData, cardCopy) => {
   return colours;
 };
 
+/**
+ * Cut the input's badge out at its exact bounds. Gemini's box lands a few
+ * pixels off, and at badge size that is a visible strip of photograph. The
+ * badge is a pure-white rounded square, so its bounds are the white component
+ * covering most of the model's box. Falls back to the model's box when that
+ * component leaks into the picture, and to nothing when even the box is
+ * unusable.
+ */
+// Tight on purpose: the badge is #FFFFFF, and a looser match walks out into a
+// bright sky or a glass facade behind it.
+const BADGE_WHITE_TOLERANCE = 10;
+
+export const buildImageBadgeCrop = async (sourceImageData, imageBadgeBox) => {
+  const box = normalizeCardExtrasBox(imageBadgeBox);
+  if (!box) return null;
+
+  try {
+    const buffer = Buffer.from(sourceImageData, 'base64');
+    const { data, info } = await sharp(buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const { width, height } = info;
+    const [yMin, xMin, yMax, xMax] = box;
+    const modelLeft = Math.round((xMin / 1000) * width);
+    const modelTop = Math.round((yMin / 1000) * height);
+    const modelRight = Math.round((xMax / 1000) * width);
+    const modelBottom = Math.round((yMax / 1000) * height);
+    const modelWidth = modelRight - modelLeft;
+    const modelHeight = modelBottom - modelTop;
+    const region = {
+      left: clampToRange(modelLeft - Math.round(modelWidth * 0.3), 0, width - 1),
+      top: clampToRange(modelTop - Math.round(modelHeight * 0.3), 0, height - 1),
+      right: clampToRange(modelRight + Math.round(modelWidth * 0.3), 1, width),
+      bottom: clampToRange(modelBottom + Math.round(modelHeight * 0.3), 1, height),
+    };
+    const regionWidth = region.right - region.left;
+    const regionHeight = region.bottom - region.top;
+    const isWhite = (x, y) => {
+      const offset = (y * width + x) * 3;
+      return 255 - Math.min(data[offset], data[offset + 1], data[offset + 2]) <= BADGE_WHITE_TOLERANCE;
+    };
+
+    // Flood-fill the white components of the region; keep the one with the
+    // most pixels inside the model's own box.
+    const visited = new Uint8Array(regionWidth * regionHeight);
+    let best = null;
+    for (let startY = 0; startY < regionHeight; startY += 1) {
+      for (let startX = 0; startX < regionWidth; startX += 1) {
+        const startIndex = startY * regionWidth + startX;
+        if (visited[startIndex]) continue;
+        visited[startIndex] = 1;
+        if (!isWhite(region.left + startX, region.top + startY)) continue;
+
+        const component = { minX: startX, maxX: startX, minY: startY, maxY: startY, inside: 0 };
+        const stack = [startIndex];
+        while (stack.length) {
+          const index = stack.pop();
+          const x = index % regionWidth;
+          const y = (index - x) / regionWidth;
+          const absoluteX = region.left + x;
+          const absoluteY = region.top + y;
+          if (absoluteX >= modelLeft && absoluteX < modelRight && absoluteY >= modelTop && absoluteY < modelBottom) {
+            component.inside += 1;
+          }
+          component.minX = Math.min(component.minX, x);
+          component.maxX = Math.max(component.maxX, x);
+          component.minY = Math.min(component.minY, y);
+          component.maxY = Math.max(component.maxY, y);
+          for (const [nextX, nextY] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+            if (nextX < 0 || nextY < 0 || nextX >= regionWidth || nextY >= regionHeight) continue;
+            const nextIndex = nextY * regionWidth + nextX;
+            if (visited[nextIndex]) continue;
+            visited[nextIndex] = 1;
+            if (isWhite(region.left + nextX, region.top + nextY)) stack.push(nextIndex);
+          }
+        }
+        if (!best || component.inside > best.inside) best = component;
+      }
+    }
+
+    let crop = { left: modelLeft, top: modelTop, width: modelWidth, height: modelHeight };
+    if (best && best.inside > modelWidth * modelHeight * 0.25) {
+      const componentWidth = best.maxX - best.minX + 1;
+      const componentHeight = best.maxY - best.minY + 1;
+      const aspect = componentWidth / componentHeight;
+      // A badge is square and about the size the model saw. Anything longer or
+      // larger leaked into the picture (a white car, a white shirt).
+      if (aspect > 0.8 && aspect < 1.25 && componentWidth <= modelWidth * 1.3 && componentHeight <= modelHeight * 1.3) {
+        crop = {
+          left: region.left + best.minX,
+          top: region.top + best.minY,
+          width: componentWidth,
+          height: componentHeight,
+        };
+      }
+    }
+    if (crop.width < 16 || crop.height < 16) return null;
+
+    return await sharp(buffer).extract(crop).png().toBuffer();
+  } catch {
+    return null;
+  }
+};
+
 const normalizeExtractedCardCopy = (payload) => {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -558,6 +676,7 @@ const normalizeExtractedCardCopy = (payload) => {
     cardExtrasBox: normalizeCardExtrasBox(payload.cardExtrasBox),
     buttonFontWeight: normalizeFromVocabulary(payload.buttonFontWeight, CABIFY_FONT_WEIGHTS),
     cardTextAccent: cardTextAccent && cardText.includes(cardTextAccent) ? cardTextAccent : '',
+    imageBadgeBox: normalizeCardExtrasBox(payload.imageBadgeBox),
   };
 };
 
@@ -1294,11 +1413,13 @@ export const placeCardOnScene = async (
     // The source card's buttons and partner marks ride across as pixels, since
     // no amount of copy describes an icon. The panel colour goes with them so
     // the compositor can key the old card out from behind them.
-    const [cardExtras, colours] = await Promise.all([
+    const [cardExtras, colours, badge] = await Promise.all([
       buildCardExtrasCrop(sourceImageData, cardCopy?.cardExtrasBox),
       // Read off the input only for templates that take their colours from it;
       // the Riders templates keep their measured palette and never read it.
       accountUsesInputColours(account) ? sampleSourceColours(sourceImageData, cardCopy) : undefined,
+      // Likewise the badge: lifted only for templates with a slot for it.
+      accountHasBadgeSlot(account) ? buildImageBadgeCrop(sourceImageData, cardCopy?.imageBadgeBox) : null,
     ]);
 
     // `templateId` is what distinguishes one variation from the next: the same
@@ -1313,6 +1434,7 @@ export const placeCardOnScene = async (
       text,
       accentText: cardCopy?.cardTextAccent,
       colours,
+      badge,
       cardExtras,
       cardExtrasPanelColour: parseHexColourChannels(cardCopy?.cardBackgroundColor),
     });

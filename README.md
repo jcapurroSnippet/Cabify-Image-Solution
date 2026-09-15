@@ -44,6 +44,13 @@ takes whichever of the wordmark purple or the card colour reads better on what
 lies behind it. Unreadable colours fall back to the palette measured off the
 approved Drivers pieces.
 
+Drivers adds one element: the steering-wheel badge. When the input has one, the
+extraction locates it (`imageBadgeBox`), `buildImageBadgeCrop` cuts it out at its
+exact bounds, and the template places it top-right, mirroring the logo. Inputs
+without a badge (the illustrations) get none. The extra extraction fields, the
+colour reading and the badge crop only run for accounts whose templates use
+them, so the Riders request and render are unchanged.
+
 ## The funnel (Ciclo)
 
 A **run** spans all five steps and is what ties the tools together — before it,

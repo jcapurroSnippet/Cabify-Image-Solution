@@ -9,7 +9,11 @@ import {
   getAspectRatioTemplateVariants,
   listAspectRatioTemplateIds,
 } from '../server/services/aspectRatioTemplate.js';
-import { extractCardCopyFromSource, sampleSourceColours } from '../server/services/imageGenerator.js';
+import {
+  buildImageBadgeCrop,
+  extractCardCopyFromSource,
+  sampleSourceColours,
+} from '../server/services/imageGenerator.js';
 
 const hexToRgb = (hex) => hex.slice(1).match(/../g).map((part) => Number.parseInt(part, 16));
 
@@ -166,6 +170,83 @@ test('Riders renders ignore input colours and accents entirely', async () => {
   );
 });
 
+test('the badge slot mirrors the logo: top-right, on the picture, clear of the card', () => {
+  for (const variants of Object.values(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
+    for (const template of variants) assert.equal(template.badge, undefined, `${template.id} must not gain a badge`);
+  }
+  for (const variants of Object.values(DRIVERS_TEMPLATE_VARIANTS)) {
+    for (const template of variants) {
+      const { badge, logo, canvas, card } = template;
+      assert.equal(badge.box.width, badge.box.height, `${template.id} badge must be square`);
+      assert.equal(canvas.width - (badge.box.x + badge.box.width), logo.box.x, `${template.id} badge must mirror the logo margin`);
+      assert.equal(badge.box.y, logo.box.y, `${template.id} badge must top-align with the logo`);
+      assert.ok(badge.box.x > logo.box.x + logo.box.width, `${template.id} badge overlaps the logo`);
+      assert.ok(badge.box.y + badge.box.height < card.box.y, `${template.id} badge reaches the card`);
+    }
+  }
+});
+
+test('the input badge is placed in its slot, and only when the input has one', async () => {
+  const template = DRIVERS_TEMPLATE_VARIANTS['1:1'][0];
+  const badge = await sharp({ create: { width: 93, height: 93, channels: 3, background: '#FFFFFF' } }).png().toBuffer();
+  const common = {
+    sceneDataUrl: await solidDataUrl('#203040'),
+    targetRatio: '1:1',
+    templateId: template.id,
+    account: 'drivers',
+    colours: DRIVERS_INPUT,
+    text: 'Tu comodidad es nuestra prioridad.',
+  };
+  const core = {
+    x: template.badge.box.x + 25,
+    y: template.badge.box.y + 25,
+    width: template.badge.box.width - 50,
+    height: template.badge.box.height - 50,
+  };
+
+  const withBadge = await readRaw(await composeAspectRatioTemplate({ ...common, badge }));
+  assert.equal(countNear(withBadge, core, [255, 255, 255], 2), core.width * core.height);
+  const withoutBadge = await readRaw(await composeAspectRatioTemplate(common));
+  assert.equal(countNear(withoutBadge, core, [255, 255, 255], 2), 0);
+
+  // The mask rounds the corners off: the slot's corner pixel shows the picture.
+  assert.deepEqual(pixelAt(withBadge, template.badge.box.x, template.badge.box.y), [0x20, 0x30, 0x40]);
+});
+
+test('Riders renders ignore a badge', async () => {
+  const badge = await sharp({ create: { width: 93, height: 93, channels: 3, background: '#FFFFFF' } }).png().toBuffer();
+  const common = { sceneDataUrl: await solidDataUrl('#2E6F9E'), targetRatio: '9:16', text: 'Movete con Cabify' };
+  assert.equal(await composeAspectRatioTemplate({ ...common, badge }), await composeAspectRatioTemplate(common));
+});
+
+/** A 1200x628 stand-in: bright sky and a pure-white badge with a purple wheel. */
+const buildBadgeSource = async ({ leakingBar = false } = {}) => {
+  const wheel = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="93" height="93"><rect width="93" height="93" rx="18" fill="#FFFFFF"/><circle cx="46" cy="46" r="24" fill="none" stroke="#6034C6" stroke-width="8"/></svg>');
+  const layers = [{ input: wheel, left: 75, top: 83 }];
+  if (leakingBar) {
+    layers.push({ input: await sharp({ create: { width: 400, height: 40, channels: 3, background: '#FFFFFF' } }).png().toBuffer(), left: 150, top: 110 });
+  }
+  const buffer = await sharp({ create: { width: 1200, height: 628, channels: 3, background: '#E9EEF2' } })
+    .composite(layers)
+    .png()
+    .toBuffer();
+  return buffer.toString('base64');
+};
+
+test('the badge crop snaps to the white square instead of the model\'s rough box', async () => {
+  // A few pixels off on every side, as Gemini returns them.
+  const roughBox = [120, 55, 290, 150];
+  const { width, height } = await sharp(await buildImageBadgeCrop(await buildBadgeSource(), roughBox)).metadata();
+  assert.ok(Math.abs(width - 93) <= 2 && Math.abs(height - 93) <= 2, `expected ~93x93, got ${width}x${height}`);
+
+  // White that runs into the picture is not the badge: keep the model's box.
+  const leaked = await sharp(await buildImageBadgeCrop(await buildBadgeSource({ leakingBar: true }), roughBox)).metadata();
+  assert.equal(leaked.width, Math.round(0.150 * 1200) - Math.round(0.055 * 1200));
+
+  assert.equal(await buildImageBadgeCrop(await buildBadgeSource(), [0, 0, 0, 0]), null);
+  assert.equal(await buildImageBadgeCrop(await buildBadgeSource(), undefined), null);
+});
+
 test('a Drivers template cannot be reached without the Drivers account', async () => {
   const sceneDataUrl = await solidDataUrl('#123456');
   await assert.rejects(
@@ -233,7 +314,7 @@ test('extraction keeps an accent only when it is literally part of the copy', as
   assert.equal((await extract(base)).cardTextAccent, '');
 });
 
-test('only an account whose templates take input colours asks Gemini for an accent', async () => {
+test('only an account whose templates use them asks Gemini for an accent and a badge', async () => {
   const schemaFor = async (account) => {
     let schema;
     await extractCardCopyFromSource({
@@ -243,13 +324,28 @@ test('only an account whose templates take input colours asks Gemini for an acce
   };
   // The Riders request must stay byte-for-byte what it was before Drivers existed.
   for (const account of [undefined, 'riders', 'corp']) {
-    assert.equal('cardTextAccent' in (await schemaFor(account)).properties, false, `${account} schema changed`);
+    const { properties } = await schemaFor(account);
+    assert.equal('cardTextAccent' in properties, false, `${account} schema changed`);
+    assert.equal('imageBadgeBox' in properties, false, `${account} schema changed`);
   }
   const drivers = await schemaFor('drivers');
   assert.equal(drivers.properties.cardTextAccent.type, 'string');
+  assert.equal(drivers.properties.imageBadgeBox.type, 'array');
   assert.equal(drivers.required.includes('cardTextAccent'), false);
+  assert.equal(drivers.required.includes('imageBadgeBox'), false);
 });
 
-test('the Drivers extraction prompt asks which words are set in purple', () => {
-  assert.match(getAccountPrompts('drivers').aspectRatio.CARD_COPY_EXTRACTION_PROMPT, /"cardTextAccent"/);
+test('extraction keeps a usable badge box and drops an empty one', async () => {
+  const extract = async (imageBadgeBox) => (await extractCardCopyFromSource({
+    models: { generateContent: async () => ({ text: JSON.stringify({ cardText: 'Hola', imageBadgeBox }) }) },
+  }, 'AAAA', 'image/png', 'drivers')).imageBadgeBox;
+  assert.deepEqual(await extract([728, 855, 870, 932]), [728, 855, 870, 932]);
+  assert.equal(await extract([0, 0, 0, 0]), null);
+  assert.equal(await extract(undefined), null);
+});
+
+test('the Drivers extraction prompt asks for the purple words and the badge', () => {
+  const prompt = getAccountPrompts('drivers').aspectRatio.CARD_COPY_EXTRACTION_PROMPT;
+  assert.match(prompt, /"cardTextAccent"/);
+  assert.match(prompt, /"imageBadgeBox"/);
 });

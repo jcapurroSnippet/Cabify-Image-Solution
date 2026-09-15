@@ -275,6 +275,24 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
  * whichever of the wordmark purple or the card colour reads better on what
  * sits behind it, which on the Riders pastel frames is the purple they use.
  */
+/**
+ * The Drivers steering-wheel badge, lifted from the input, needs a slot the
+ * Riders layout does not have. It mirrors the logo across the canvas: top-right,
+ * as far from the right edge as the logo is from the left, top-aligned with it,
+ * which keeps it on the picture and clear of the card on every variant. It is
+ * square, 1.6 times the logo's height (the badge-to-wordmark proportion of the
+ * Drivers 1.91:1 sources), with corners a fifth of its side.
+ */
+const BADGE_TO_LOGO_HEIGHT = 1.6;
+
+const buildBadgeSlot = ({ canvas, logo }) => {
+  const size = Math.round(logo.box.height * BADGE_TO_LOGO_HEIGHT);
+  return {
+    box: { x: canvas.width - logo.box.x - size, y: logo.box.y, width: size, height: size },
+    radius: Math.round(size * 0.2),
+  };
+};
+
 const takeColoursFromInput = (template) => ({
   ...template,
   id: template.id.replace('-riders-', '-drivers-'),
@@ -282,6 +300,7 @@ const takeColoursFromInput = (template) => ({
   colourSource: 'input',
   ...(template.frame ? { frame: { background: DRIVERS_GROUND } } : {}),
   logo: { ...template.logo, colour: null },
+  badge: buildBadgeSlot(template),
   card: {
     ...template.card,
     background: DRIVERS_CARD,
@@ -1025,12 +1044,39 @@ const resolveLogoColour = async (template, base) => {
 };
 
 /**
+ * The input's badge re-cut into the template's rounded square. The crop
+ * carries a sliver of the source photograph at its corners, which the mask
+ * removes. A template without a badge slot, or an input without a badge,
+ * yields nothing.
+ */
+const buildBadgeLayer = async (template, badgeBuffer) => {
+  if (!template.badge || !badgeBuffer) return null;
+  const { box, radius } = template.badge;
+  try {
+    const input = await sharp(badgeBuffer, { failOn: 'error' })
+      .resize(box.width, box.height, { fit: 'cover', kernel: 'lanczos3' })
+      .ensureAlpha()
+      .composite([{
+        input: roundedRectangleSvg({ width: box.width, height: box.height, radius, fill: '#FFFFFF' }),
+        blend: 'dest-in',
+      }])
+      .png()
+      .toBuffer();
+    return { input, left: box.x, top: box.y };
+  } catch {
+    // The badge is an enhancement; an unreadable crop must not cost the variation.
+    return null;
+  }
+};
+
+/**
  * Place a generated scene behind immutable template layers and render the copy
  * locally with the selected OTF. No model call occurs in this function.
  *
  * `account` picks the template set. `colours` ({ ground, card, text, accent })
  * and `accentText` — the words set in the accent colour — only reach templates
- * that take their colours from the input.
+ * that take their colours from the input, and `badge` (the input's badge crop)
+ * only templates with a badge slot.
  */
 export const composeAspectRatioTemplate = async ({
   sceneDataUrl,
@@ -1042,6 +1088,7 @@ export const composeAspectRatioTemplate = async ({
   account,
   colours,
   accentText,
+  badge,
 } = {}) => {
   const resolvedTemplate = applyInputColours(resolveTemplate(targetRatio, templateId, account), colours);
   const normalizedText = normalizeText(text);
@@ -1050,9 +1097,10 @@ export const composeAspectRatioTemplate = async ({
     : '';
   const sceneBuffer = await parseSceneDataUrl(sceneDataUrl);
 
-  const [base, cardShape] = await Promise.all([
+  const [base, cardShape, badgeLayer] = await Promise.all([
     buildTemplateBase(sceneBuffer, resolvedTemplate),
     buildFixedCardShape(resolvedTemplate),
+    buildBadgeLayer(resolvedTemplate, badge),
   ]);
   const template = await resolveLogoColour(resolvedTemplate, base);
   const logoLayer = await buildFixedLogo(template);
@@ -1101,6 +1149,7 @@ export const composeAspectRatioTemplate = async ({
   }
 
   const composites = [
+    ...(badgeLayer ? [badgeLayer] : []),
     { input: cardShape, left: card.box.x, top: card.box.y },
     ...(logoLayer ? [logoLayer] : []),
   ];

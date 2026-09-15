@@ -34,9 +34,10 @@ Return JSON with exactly these fields:
 - "cardExtrasBox": the bounding box enclosing everything else INSIDE the copy card except the wordmark - the CTA button, option pills and their icons, promo codes, partner logos - as [ymin, xmin, ymax, xmax] over the same 0-1000 grid. Include all of them in one box. Return [0, 0, 0, 0] when the card holds nothing but the wordmark and its headline. Never include the headline, the wordmark, the card's empty margins or anything on the image panel, such as the steering-wheel badge.
 - "buttonFontWeight": the CTA label's weight: "Light", "Book", "SemiBold", "Bold", "ExtraBold" or "Black". Empty string if there is no button or you cannot tell.
 - "cardTextAccent": the exact words of "cardText" that are set in PURPLE, copied character for character from "cardText" (usually its opening words, e.g. "En Neuquén,"). Empty string if the whole headline is a single colour.
+- "imageBadgeBox": the bounding box of the small white rounded square with a purple steering-wheel icon on the image panel, as [ymin, xmin, ymax, xmax] over the same 0-1000 grid. Wrap the white square itself. Return [0, 0, 0, 0] when there is no such badge.
 
 Rules:
-- Extract text only from the copy card. Ignore the image panel and its badge, the people, cars and illustrations, and the purple ground.
+- Extract text only from the copy card. Ignore the people, cars and illustrations on the image panel, and the purple ground; the image panel is read only for "imageBadgeBox".
 - Do NOT translate, rewrite, summarize, normalize, fix spelling, or infer missing words.
 - Do NOT borrow copy from any other image.
 - If a word is partially obscured, return the visible characters only.
