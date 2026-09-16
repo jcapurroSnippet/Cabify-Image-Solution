@@ -303,7 +303,13 @@ const buildBadgeSlot = ({ canvas, logo }) => {
   };
 };
 
-const takeColoursFromInput = (template, { account, palette, badge = false, logoDescriptor = null }) => ({
+const takeColoursFromInput = (template, {
+  account,
+  palette,
+  badge = false,
+  logoDescriptor = null,
+  extras = null,
+}) => ({
   ...template,
   id: template.id.replace('-riders-', `-${account}-`),
   derivedFrom: template.id,
@@ -316,6 +322,7 @@ const takeColoursFromInput = (template, { account, palette, badge = false, logoD
     background: palette.card,
     textColour: palette.text,
     accentColour: palette.accent,
+    ...(extras || {}),
   },
 });
 
@@ -339,6 +346,11 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
   account: 'corp',
   palette: { ground: CORP_GROUND, card: CORP_CARD, text: CORP_TEXT, accent: CORP_ACCENT },
   logoDescriptor: { text: 'para empresas', fontId: 'cabify-ciudad-light' },
+  // Corp's CTA reads as a button, not as a promo pill beside the copy, so it
+  // is asked to sit taller against the type than the default marks are. Its
+  // sources ship it at about 311x75, too small for the 9:16 card, so a little
+  // enlargement is allowed; the copy gives up a few points to make room.
+  extras: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3, extrasGapShare: 0.05 },
 });
 
 /** Template set per Cabify account. */
@@ -907,6 +919,13 @@ const EXTRAS_GAP_SHARE = 0.08;
  * moving it, not after.
  */
 const EXTRAS_TO_FONT_RATIO = 1.15;
+/**
+ * How far past its own pixels a crop may be stretched. The default never
+ * enlarges: a promo pill lifted from a source creative is only as sharp as the
+ * pixels it came with. A template whose sources ship a CTA too small for the
+ * target card raises this (see the Corp set), at the cost of a soft edge.
+ */
+const EXTRAS_MAX_SCALE = 1;
 /** Under this the marks are a smudge; shipping nothing beats shipping mush. */
 const EXTRAS_MIN_HEIGHT = 22;
 /** How close to the source panel colour still counts as its background. */
@@ -939,7 +958,12 @@ const keyOutPanel = async (buffer, panelColour) => {
 
 const buildExtrasLayer = async (template, extrasBuffer, panelColour, heightShare) => {
   const { card } = template;
-  const maxHeight = Math.floor(card.textBox.height * heightShare);
+  const maxScale = card.extrasMaxScale ?? EXTRAS_MAX_SCALE;
+  const source = await sharp(extrasBuffer).metadata();
+  const maxHeight = Math.min(
+    Math.floor(card.textBox.height * heightShare),
+    Math.floor((source.height || 0) * maxScale),
+  );
   if (maxHeight < EXTRAS_MIN_HEIGHT) return null;
 
   const keyed = await keyOutPanel(extrasBuffer, panelColour);
@@ -948,7 +972,7 @@ const buildExtrasLayer = async (template, extrasBuffer, panelColour, heightShare
       width: card.textBox.width,
       height: maxHeight,
       fit: 'inside',
-      withoutEnlargement: true,
+      withoutEnlargement: maxScale <= 1,
     })
     .png()
     .toBuffer();
@@ -1237,7 +1261,7 @@ export const composeAspectRatioTemplate = async ({
     for (const share of EXTRAS_HEIGHT_SHARES) {
       const candidate = await buildExtrasLayer(template, cardExtras, cardExtrasPanelColour, share);
       if (!candidate) continue;
-      const gap = Math.round(card.textBox.height * EXTRAS_GAP_SHARE);
+      const gap = Math.round(card.textBox.height * (card.extrasGapShare ?? EXTRAS_GAP_SHARE));
       const remaining = {
         ...card.textBox,
         height: card.textBox.height - candidate.height - gap,
@@ -1250,7 +1274,8 @@ export const composeAspectRatioTemplate = async ({
         // Copy will not fit beside marks this tall; try a smaller allowance.
         continue;
       }
-      const distance = Math.abs(candidate.height - fitted.fontSize * EXTRAS_TO_FONT_RATIO);
+      const targetRatio = card.extrasToFontRatio ?? EXTRAS_TO_FONT_RATIO;
+      const distance = Math.abs(candidate.height - fitted.fontSize * targetRatio);
       if (distance >= bestDistance) continue;
       bestDistance = distance;
       textLayer = fitted;
@@ -1274,7 +1299,7 @@ export const composeAspectRatioTemplate = async ({
   if (extrasLayer) {
     // Centre the copy-plus-marks stack in the box, then place the marks under
     // the copy on the card's own alignment.
-    const gap = Math.round(card.textBox.height * EXTRAS_GAP_SHARE);
+    const gap = Math.round(card.textBox.height * (card.extrasGapShare ?? EXTRAS_GAP_SHARE));
     const stackHeight = textLayer.input ? textBox.height + gap + extrasLayer.height : extrasLayer.height;
     const stackTop = card.textBox.y + Math.floor((card.textBox.height - stackHeight) / 2);
     const textShift = stackTop - textBox.y;

@@ -99,6 +99,55 @@ test('only Corp signs "para empresas", and only Drivers carries a badge', () => 
   }
 });
 
+test('only Corp asks for a taller CTA, and only Corp may stretch it', async () => {
+  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.card.extrasToFontRatio, 1.5);
+    assert.equal(template.card.extrasMaxScale, 1.3);
+  }
+  for (const variants of [ASPECT_RATIO_TEMPLATE_VARIANTS, DRIVERS_TEMPLATE_VARIANTS]) {
+    for (const template of variants['1:1'].concat(variants['9:16'])) {
+      assert.equal(template.card.extrasToFontRatio, undefined, `${template.id} must keep the default CTA sizing`);
+      assert.equal(template.card.extrasMaxScale, undefined, `${template.id} must not enlarge its marks`);
+    }
+  }
+
+  // A Corp CTA lands taller than the same crop on the same geometry in Riders,
+  // and the copy gives up only a little for it.
+  // Not the card purple: on a Riders card that colour IS the card.
+  const CTA_COLOUR = '#00A3FF';
+  const cta = await sharp({ create: { width: 311, height: 75, channels: 3, background: CTA_COLOUR } }).png().toBuffer();
+  const common = {
+    sceneDataUrl: await solidDataUrl('#2E6F9E'),
+    targetRatio: '9:16',
+    text: 'Tu empresa ahorra, tus empleados viajan mejor.',
+    cardExtras: cta,
+    cardExtrasPanelColour: [255, 255, 255],
+  };
+  const ctaHeight = async (options) => {
+    const image = await readRaw(await composeAspectRatioTemplate({ ...common, ...options }));
+    const box = (options.account === 'corp' ? CORP_TEMPLATE_VARIANTS : ASPECT_RATIO_TEMPLATE_VARIANTS)['9:16'][0].card.textBox;
+    let rows = 0;
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      let run = 0;
+      let longest = 0;
+      for (let x = box.x; x < box.x + box.width; x += 1) {
+        if (countNear(image, { x, y, width: 1, height: 1 }, hexToRgb(CTA_COLOUR), 8)) {
+          run += 1;
+          if (run > longest) longest = run;
+        } else run = 0;
+      }
+      if (longest > 100) rows += 1;
+    }
+    return rows;
+  };
+
+  const corp = await ctaHeight({ account: 'corp', colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' } });
+  const riders = await ctaHeight({});
+  assert.ok(corp > riders * 1.2, `Corp CTA (${corp}px) should stand clearly taller than the default (${riders}px)`);
+  // Its own source pixels are 75 tall: Corp is allowed past them, but not far.
+  assert.ok(corp <= Math.round(75 * 1.3), `Corp CTA (${corp}px) stretched past its allowance`);
+});
+
 test('the Corp signature stacks the wordmark over its descriptor inside the logo box', async () => {
   const template = CORP_TEMPLATE_VARIANTS['1:1'][0];
   const image = await readRaw(await composeAspectRatioTemplate({
