@@ -40,6 +40,16 @@ const DRIVERS_ACCENT = CARD_PURPLE;
 const DRIVERS_TEXT = '#17171F';
 
 /**
+ * Corp fallback palette, sampled off its five approved 1200x628 creatives:
+ * the same white card and two-colour headline as Drivers, on a dark navy
+ * ground instead of purple.
+ */
+const CORP_GROUND = '#1A1A38';
+const CORP_CARD = '#FFFFFF';
+const CORP_ACCENT = CARD_PURPLE;
+const CORP_TEXT = DRIVERS_TEXT;
+
+/**
  * Trace the rounded photo aperture: a rounded rectangle with a rounded bite
  * removed from its top-left corner for the local Cabify-logo notch. Deriving
  * the path from the measured rectangle keeps adding a reference a matter of
@@ -293,32 +303,49 @@ const buildBadgeSlot = ({ canvas, logo }) => {
   };
 };
 
-const takeColoursFromInput = (template) => ({
+const takeColoursFromInput = (template, { account, palette, badge = false, logoDescriptor = null }) => ({
   ...template,
-  id: template.id.replace('-riders-', '-drivers-'),
+  id: template.id.replace('-riders-', `-${account}-`),
   derivedFrom: template.id,
   colourSource: 'input',
-  ...(template.frame ? { frame: { background: DRIVERS_GROUND } } : {}),
-  logo: { ...template.logo, colour: null },
-  badge: buildBadgeSlot(template),
+  ...(template.frame ? { frame: { background: palette.ground } } : {}),
+  logo: { ...template.logo, colour: null, ...(logoDescriptor ? { descriptor: logoDescriptor } : {}) },
+  ...(badge ? { badge: buildBadgeSlot(template) } : {}),
   card: {
     ...template.card,
-    background: DRIVERS_CARD,
-    textColour: DRIVERS_TEXT,
-    accentColour: DRIVERS_ACCENT,
+    background: palette.card,
+    textColour: palette.text,
+    accentColour: palette.accent,
   },
 });
 
-export const DRIVERS_TEMPLATE_VARIANTS = deepFreeze(Object.fromEntries(
+const buildAccountVariants = (options) => deepFreeze(Object.fromEntries(
   Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)
-    .map(([ratio, variants]) => [ratio, variants.map(takeColoursFromInput)]),
+    .map(([ratio, variants]) => [ratio, variants.map((template) => takeColoursFromInput(template, options))]),
 ));
 
-/** Template set per Cabify account. Corp still borrows Riders, as its prompts do. */
+export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
+  account: 'drivers',
+  palette: { ground: DRIVERS_GROUND, card: DRIVERS_CARD, text: DRIVERS_TEXT, accent: DRIVERS_ACCENT },
+  badge: true,
+});
+
+/**
+ * Corp signs its creatives "cabify para empresas". The sources set the two
+ * side by side; stacked here, the wordmark sits above the descriptor inside
+ * the very same logo box, so the Riders notch it lives in does not move.
+ */
+export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
+  account: 'corp',
+  palette: { ground: CORP_GROUND, card: CORP_CARD, text: CORP_TEXT, accent: CORP_ACCENT },
+  logoDescriptor: { text: 'para empresas', fontId: 'cabify-ciudad-light' },
+});
+
+/** Template set per Cabify account. */
 const ACCOUNT_TEMPLATE_VARIANTS = Object.freeze({
   riders: ASPECT_RATIO_TEMPLATE_VARIANTS,
   drivers: DRIVERS_TEMPLATE_VARIANTS,
-  corp: ASPECT_RATIO_TEMPLATE_VARIANTS,
+  corp: CORP_TEMPLATE_VARIANTS,
 });
 
 export const getAspectRatioTemplateVariants = (account) => {
@@ -933,36 +960,126 @@ const buildExtrasLayer = async (template, extrasBuffer, panelColour, heightShare
 
 const fixedLogoCache = new Map();
 
+/** Paint the wordmark's own alpha in a flat colour. */
+const tintAlpha = async (alphaSource, { width, height, colour }) => {
+  const alpha = await sharp(alphaSource).extractChannel('alpha').png().toBuffer();
+  return sharp({ create: { width, height, channels: 3, background: colour } })
+    .joinChannel(alpha)
+    .png()
+    .toBuffer();
+};
+
+/**
+ * Measured off the approved Corp lockup: "cabify" is 183x59 and "para
+ * empresas" 288x30, both from the same baseline. Stacking the two keeps those
+ * proportions, so the wordmark is about two thirds of the block's height and
+ * the descriptor about half again as wide as the wordmark.
+ */
+const DESCRIPTOR_TO_WORDMARK_WIDTH = 288 / 183;
+const DESCRIPTOR_HEIGHT_SHARE = 30 / 288;
+const LOCKUP_GAP_SHARE = 0.1;
+
+const buildLockupParts = (box, wordmarkAspect) => {
+  const gap = Math.round(box.height * LOCKUP_GAP_SHARE);
+  const available = box.height - gap;
+  // Split the height the way the two parts' own proportions do.
+  const wordmarkShare = (1 / wordmarkAspect)
+    / ((1 / wordmarkAspect) + DESCRIPTOR_TO_WORDMARK_WIDTH * DESCRIPTOR_HEIGHT_SHARE);
+  const wordmarkHeight = Math.max(1, Math.round(available * wordmarkShare));
+  const descriptorHeight = Math.max(1, available - wordmarkHeight);
+  const wordmarkWidth = Math.min(box.width, Math.round(wordmarkHeight * wordmarkAspect));
+  const descriptorWidth = Math.min(box.width, Math.round(wordmarkWidth * DESCRIPTOR_TO_WORDMARK_WIDTH));
+  return { gap, wordmarkWidth, wordmarkHeight, descriptorWidth, descriptorHeight };
+};
+
+/** The descriptor, set in its own face and trimmed to its ink. */
+const renderDescriptor = async ({ descriptor, colour, width, height }) => {
+  const font = ASPECT_RATIO_FONT_REGISTRY[descriptor.fontId];
+  if (!font) throw new Error(`Unknown Aspect Ratio fontId: ${descriptor.fontId}.`);
+  // The source lockup sets 30px-tall ink at 41px; start there and let the
+  // resize below land it exactly on the box.
+  const fontSize = Math.max(6, Math.round(height * (41 / 30)));
+  const rendered = await sharp({
+    text: {
+      text: `<span foreground="${colour}">${escapePangoMarkup(descriptor.text)}</span>`,
+      font: `${font.pangoName} ${fontSize}`,
+      fontfile: resolveRuntimeAsset('fonts', font.fileName),
+      rgba: true,
+      dpi: 72,
+    },
+  }).png().toBuffer();
+
+  const { data, info } = await sharp(rendered).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let left = info.width;
+  let right = -1;
+  let top = info.height;
+  let bottom = -1;
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      if (data[(y * info.width + x) * 4 + 3] <= 40) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < left || bottom < top) throw new Error('The logo descriptor rendered empty.');
+
+  return sharp(rendered)
+    .extract({ left, top, width: right - left + 1, height: bottom - top + 1 })
+    .resize(width, height, { fit: 'fill' })
+    .png()
+    .toBuffer();
+};
+
 const buildFixedLogo = async (template) => {
   if (template.logo.mode !== 'asset') return null;
-  const key = `${template.id}|${template.logo.colour}`;
+  const { box, colour, descriptor } = template.logo;
+  const key = `${template.id}|${colour}|${descriptor ? `${descriptor.fontId}:${descriptor.text}` : ''}`;
   if (fixedLogoCache.has(key)) return fixedLogoCache.get(key);
 
   const loading = (async () => {
     const assetPath = resolveRuntimeAsset(template.logo.assetFolder, template.logo.assetFile);
     const source = await readAsset(assetPath);
-    const resized = await sharp(source, { failOn: 'error' })
-      .resize(template.logo.box.width, template.logo.box.height, { fit: 'fill' })
-      .ensureAlpha()
-      .png()
-      .toBuffer();
-    const alpha = await sharp(resized).extractChannel('alpha').png().toBuffer();
+
+    if (!descriptor) {
+      const resized = await sharp(source, { failOn: 'error' })
+        .resize(box.width, box.height, { fit: 'fill' })
+        .ensureAlpha()
+        .png()
+        .toBuffer();
+      const input = await tintAlpha(resized, { width: box.width, height: box.height, colour });
+      return { input, left: box.x, top: box.y };
+    }
+
+    // Stacked lockup: the wordmark above its descriptor, both left-aligned,
+    // filling the very same box the horizontal wordmark would.
+    const { width: assetWidth, height: assetHeight } = await sharp(source).metadata();
+    const parts = buildLockupParts(box, assetWidth / assetHeight);
+    const wordmark = await tintAlpha(
+      await sharp(source, { failOn: 'error' })
+        .resize(parts.wordmarkWidth, parts.wordmarkHeight, { fit: 'fill' })
+        .ensureAlpha()
+        .png()
+        .toBuffer(),
+      { width: parts.wordmarkWidth, height: parts.wordmarkHeight, colour },
+    );
+    const descriptorLayer = await renderDescriptor({
+      descriptor,
+      colour,
+      width: parts.descriptorWidth,
+      height: parts.descriptorHeight,
+    });
     const input = await sharp({
-      create: {
-        width: template.logo.box.width,
-        height: template.logo.box.height,
-        channels: 3,
-        background: template.logo.colour,
-      },
+      create: { width: box.width, height: box.height, channels: 4, background: '#00000000' },
     })
-      .joinChannel(alpha)
+      .composite([
+        { input: wordmark, left: 0, top: 0 },
+        { input: descriptorLayer, left: 0, top: parts.wordmarkHeight + parts.gap },
+      ])
       .png()
       .toBuffer();
-    return {
-      input,
-      left: template.logo.box.x,
-      top: template.logo.box.y,
-    };
+    return { input, left: box.x, top: box.y };
   })().catch((error) => {
     fixedLogoCache.delete(key);
     throw error;

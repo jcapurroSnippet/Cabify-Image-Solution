@@ -34,22 +34,30 @@ metadata.
 
 The account also picks the Aspect Ratio template set
 (`getAspectRatioTemplateVariants` in `server/services/aspectRatioTemplate.js`).
-Riders and Corp use the measured Riders templates. Drivers uses the very same
-templates — geometry, notch, logo and card boxes, variants — and only changes
-their colours, which it reads off each input (`sampleSourceColours` in
-`imageGenerator.js`): the frame ground from the input's corners, the card and
-headline colours from behind the copy. A two-colour headline keeps its split
-through `cardTextAccent`, which the Drivers extraction prompt returns. The logo
-takes whichever of the wordmark purple or the card colour reads better on what
-lies behind it. Unreadable colours fall back to the palette measured off the
-approved Drivers pieces.
+Every account composes through the **same** Riders templates — geometry, notch,
+logo and card boxes, variants. Drivers and Corp only change their colours, which
+they read off each input (`sampleSourceColours` in `imageGenerator.js`): the
+frame ground from the input's corners, the card and headline colours from behind
+the copy. A two-colour headline keeps its split through `cardTextAccent`, which
+their extraction prompts return. The logo takes whichever of the wordmark purple
+or the card colour reads better on what lies behind it. Unreadable colours fall
+back to the palette measured off each account's approved pieces — purple ground
+for Drivers, dark navy for Corp.
 
-Drivers adds one element: the steering-wheel badge. When the input has one, the
-extraction locates it (`imageBadgeBox`), `buildImageBadgeCrop` cuts it out at its
-exact bounds, and the template places it top-right, mirroring the logo. Inputs
-without a badge (the illustrations) get none. The extra extraction fields, the
-colour reading and the badge crop only run for accounts whose templates use
-them, so the Riders request and render are unchanged.
+Each of the two adds one element of its own:
+
+- **Drivers**: the steering-wheel badge. When the input has one, the extraction
+  locates it (`imageBadgeBox`), `buildImageBadgeCrop` cuts it out at its exact
+  bounds, and the template places it top-right, mirroring the logo. Inputs
+  without a badge (the illustrations) get none.
+- **Corp**: the "cabify para empresas" signature. The sources set the two side by
+  side; the template stacks them, wordmark over descriptor, inside the same logo
+  box, so the notch it sits in does not move. The descriptor is set in Cabify
+  Ciudad Light, the face that reproduces the approved lockup's width and stroke.
+
+The extra extraction fields, the colour reading and the badge crop only run for
+accounts whose templates use them, so the Riders request and render are
+unchanged.
 
 ## The funnel (Ciclo)
 

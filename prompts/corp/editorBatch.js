@@ -5,187 +5,126 @@
  * same account are appended after them on the server.
  */
 export const EDITOR_BATCH_CONSTRAINTS = `Non-negotiable visual constraints — never violate:
-- Argentinians only. Subjects must look like real, diverse people from Buenos Aires or Córdoba. No foreigners, no models, no overly styled individuals.
-- No same gender couples.
-- All people must have security belts on if the body is visible. No exceptions, no creative workarounds.
-- Never include taxis in the image. The vehicle must always be a private ride-hailing car (Cabify). No yellow cabs, no taxi signage.
-- People must appear warm, joyful, and energetic. No serious expressions, no sadness, no melancholy, no neutral blank stares.
-- When multiple people are present, they must be interacting — looking at each other, laughing together, sharing a moment. No disconnected individuals ignoring each other.
-- The urban background must occupy no more than 30% of the frame. People and the car are the protagonists — the street is context, not the subject.
-- Subjects must always be in or around the back seat of the car. Never in the front seat, never driving.
+- This is a Cabify para empresas creative: a white rounded copy card and a rounded photo panel side by side on a flat dark navy ground. Only the photo panel changes. The navy ground, both panels' sizes, positions and rounded corners, the "cabify para empresas" signature on the ground and the copy card with its headline and CTA stay exactly as in the source.
+- The headline keeps its two colours: the purple part and the near-black part. Never merge them into one colour and never move the colour change to another word.
+- All text stays inside the white copy card, except the "cabify para empresas" signature, which stays on the navy ground exactly where it is. Never place text or logos on the photo panel.
+- The subject is a business traveller: an Argentinian adult, roughly 28 to 55 years old, who looks like a real, diverse professional from Buenos Aires, Córdoba or another Argentine city. No foreigners, no models, no overly styled individuals.
+- Women and men travel for work alike. Never cast a woman as the assistant of a man.
+- The traveller rides in the BACK seat. Never in the driver's seat, never driving.
+- The seatbelt is always fastened across the traveller's chest. No exceptions, no creative workarounds.
+- Work in transit reads as work: a laptop, a phone, a tablet or printed documents, handled naturally. Screens stay unreadable — no legible interfaces, logos or data.
+- Dress is business or business casual: blazers, shirts, knitwear, neat tailoring. No ties required, no formalwear, no uniforms, no gym or beach clothes.
+- Expressions are calm, focused and confident, with an easy smile where it fits. No exaggerated laughter, no stress, no sadness, no neutral blank stares.
+- One traveller is the protagonist. A colleague may share the back seat when the scene is about a team, interacting naturally. The driver is never the subject and appears only from behind, out of focus.
+- Never include taxis in the image. The car is a clean, modern private sedan with a premium, uncluttered interior in black, grey or beige. No yellow cabs, no taxi signage, no roof lights, no livery.
 - Car doors must open like standard sedan doors (hinged at the front, swinging outward). No sliding doors, no van-style doors, no bus doors.
-- People must look natural and authentic — not professional models, not overly styled or posed. Candid, real, relatable.
-- NOTHING must be orange. No orange clothing, no orange cars, no orange backgrounds.
+- The traveller is the protagonist. Outside the car, corporate buildings, glass facades or the street are context and occupy no more than 30% of the photo panel.
+- The background must always be slightly blurred.
+- NOTHING must be orange. No orange clothing, no orange cars, no orange backgrounds, no orange sunset light.
 - No photo filters, no color grading effects, no vignettes, no Instagram-style treatments. Raw, natural photographic look only.
 - Always use the current Cabify logo — never the old logo.
-- Always include the text box overlay. It must never disappear or be omitted.
-- All text must remain fully contained within the text box. No text may overflow, spill outside, or be cropped by the frame edges.
-- The background must always be slightly blurred.
-- Preserve the exact typography, text color, and font size from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`;
+- Preserve the exact typography, text colors, and font sizes from the reference. Do not alter typeface, weight, color values, or sizing under any circumstances.`;
 
 /**
  * Scenes offered in the Editor Batch selector. `stage` also picks the badge
- * colour in the UI (Entrada, Trayecto, Salida).
+ * colour in the UI (Entrada, Trayecto, Salida). For Corp they read as the
+ * corporate trip: boarding, travelling and arriving.
  */
 export const EDITOR_BATCH_SCENES = [
   {
     id: 1,
-    title: "El primer sorbo",
-    stage: "Entrada",
-    scene: "Una mujer de 30 años entra en el asiento trasero. Con una mano sujeta la puerta y en la otra lleva un vaso de café de especialidad. Mira hacia el interior del coche con una sonrisa suave de satisfacción.",
-    background: "Una calle de barrio con casas bajas y árboles. La luz es de media mañana, muy limpia.",
-    designSpace: "Plano medio-largo lateral. El cuerpo del coche y el asfalto ofrecen un espacio amplio y limpio en la parte inferior y derecha para texto.",
+    title: "Camino a la reunión",
+    stage: "Trayecto",
+    scene: "Una ejecutiva de 36 años viaja en el asiento trasero con el cinturón puesto y una notebook abierta sobre las piernas. Revisa la pantalla con expresión concentrada y tranquila. Lleva un blazer claro sobre una camisa blanca.",
+    background: "Interior premium del auto con tapizado oscuro. Por la ventanilla se ven edificios de oficinas desenfocados bajo luz de mañana.",
+    designSpace: "Plano medio desde el asiento del acompañante. Encuadre centrado para el panel de imagen casi cuadrado; el texto va en la tarjeta blanca, así que no hace falta dejar aire para titulares.",
   },
   {
     id: 2,
-    title: "Mi momento, mi música",
+    title: "Llamada en viaje",
     stage: "Trayecto",
-    scene: "Un hombre de 28 años sentado cómodamente junto a la ventana. Lleva puestos unos headphones de diadema y tiene los ojos ligeramente entornados con una media sonrisa, disfrutando del paisaje urbano que pasa.",
-    background: "Edificios de ladrillo visto con plantas en los balcones, desenfocados a través del cristal.",
-    designSpace: "Primer plano lateral con mucho aire sobre la cabeza y en la zona del respaldo del asiento para titulares.",
+    scene: "Un hombre de 44 años, con saco azul y camisa sin corbata, habla por teléfono mientras viaja en el asiento trasero con el cinturón puesto. Mira hacia la ventanilla con gesto atento y una sonrisa leve.",
+    background: "Interior del auto con luz natural lateral. Afuera, una avenida con edificios corporativos desenfocados.",
+    designSpace: "Plano medio lateral. Rostro y teléfono centrados en el panel.",
   },
   {
     id: 3,
-    title: "Risas compartidas",
-    stage: "Trayecto",
-    scene: "Dos amigas (aprox. 32 años) comparten el asiento trasero. Una le enseña algo en su smartphone a la otra. Ambas sonríen de forma natural y relajada, sin exagerar. Una lleva una cartera de cuero cruzada.",
-    background: "Luz cenital natural que entra por las ventanas laterales, iluminando el interior impecable del vehículo.",
-    designSpace: "Toma desde el ángulo del copiloto hacia atrás. El centro de la imagen es humano, dejando los laterales libres para maquetación.",
+    title: "Rumbo al aeropuerto",
+    stage: "Entrada",
+    scene: "Una mujer de 40 años sube al asiento trasero con un bolso de mano y una valija de cabina que el conductor ya guardó. Se acomoda con una sonrisa serena, lista para salir.",
+    background: "La puerta abierta del auto y, detrás, la entrada de un edificio corporativo desenfocada. Luz de mañana temprana, limpia.",
+    designSpace: "Plano medio corto desde afuera del auto. La puerta enmarca a la protagonista en el centro del panel.",
   },
   {
     id: 4,
-    title: "La mochila de las aventuras",
-    stage: "Entrada",
-    scene: "Un hombre de 35 años termina de acomodarse en el asiento de atrás. Está dejando su mochila en el espacio libre a su lado. Se le ve con energía, mirando hacia adelante con optimismo.",
-    background: "Un barrio con tiendas locales y fachadas de colores suaves. Luz de mediodía, muy blanca y vibrante.",
-    designSpace: "Plano amplio que muestra la amplitud del asiento. Mucho espacio en la zona de la tapicería para colocar iconos o beneficios del servicio.",
+    title: "Equipo en movimiento",
+    stage: "Trayecto",
+    scene: "Dos colegas de unos 34 años comparten el asiento trasero, ambos con el cinturón puesto. Uno sostiene una tablet y le muestra algo al otro; conversan con naturalidad, enfocados en el trabajo.",
+    background: "Interior amplio y prolijo del auto, con la ciudad desenfocada a través de las ventanillas.",
+    designSpace: "Plano medio desde el ángulo del acompañante. Los dos rostros quedan dentro del centro del panel.",
   },
   {
     id: 5,
-    title: "Ya llego",
-    stage: "Trayecto",
-    scene: "Una mujer de 27 años enviando un mensaje de voz con su smartphone mientras viaja. Su expresión es activa y vital. Al lado, sobre el asiento, se ve su cartera y un vaso de café en el posavasos o sujeto por ella.",
-    background: "Una calle residencial tranquila con luz natural filtrada entre las hojas de los árboles.",
-    designSpace: "Plano medio. La composición deja libre la zona de la ventanilla y el techo del coche para integrar la tipografía de campaña.",
+    title: "Llegada a la oficina",
+    stage: "Salida",
+    scene: "Un hombre de 47 años baja del auto frente a un edificio corporativo, con un portafolios en la mano. Se gira apenas hacia la cámara con expresión decidida y cordial.",
+    background: "Fachada vidriada de oficinas, desenfocada. Luz de media mañana, blanca y pareja.",
+    designSpace: "Plano medio-largo. El protagonista y la puerta del auto ocupan el centro del panel.",
   },
   {
     id: 6,
-    title: "Destino: El barrio",
-    stage: "Salida",
-    scene: "Un hombre de 38 años está saliendo del coche. Tiene un pie en la acera y la mano en el marco de la puerta trasera. Se gira con una sonrisa genuina para despedirse amablemente del conductor. Lleva una mochila al hombro.",
-    background: "Una plaza de barrio con bancos y gente paseando de forma relajada al fondo.",
-    designSpace: "Plano general. El coche enmarca al protagonista, dejando la parte superior (cielo/edificios bajos) totalmente despejada para el mensaje de marca.",
+    title: "Últimos apuntes",
+    stage: "Trayecto",
+    scene: "Una mujer de 43 años repasa notas en una libreta apoyada sobre su cartera mientras viaja en el asiento trasero con el cinturón puesto. Gesto concentrado, sin apuro.",
+    background: "Interior del auto en penumbra suave, con luz natural entrando por la ventanilla y la calle desenfocada.",
+    designSpace: "Primer plano medio lateral. Rostro y libreta centrados en el panel.",
   },
   {
     id: 7,
-    title: "Orden y calma",
+    title: "Traslado nocturno",
     stage: "Trayecto",
-    scene: "Una mujer de 34 años busca algo en su cartera abierta sobre su regazo. Tiene una expresión de tranquilidad, disfrutando del espacio y la limpieza del coche. No hay rastro de prisa.",
-    background: "El interior del coche, destacando la calidad de los materiales bajo una luz natural muy suave que entra por el lateral.",
-    designSpace: "Encuadre lateral. El respaldo del asiento delantero desenfocado y el lateral de la puerta ofrecen texturas limpias para poner texto encima.",
+    scene: "Un ejecutivo de 50 años viaja de noche en el asiento trasero con el cinturón puesto, el saco apoyado al lado y el teléfono en la mano. Expresión relajada después de una jornada larga.",
+    background: "Luces blancas y frías de la ciudad desenfocadas a través de la ventanilla. Nada de tonos anaranjados.",
+    designSpace: "Plano medio. El rostro, iluminado por la luz de la calle, queda en el centro del panel.",
   },
   {
     id: 8,
-    title: "El refugio tras la lluvia",
-    stage: "Entrada",
-    scene: "Un hombre de 30 años entra al asiento trasero cerrando un paraguas. Su cara refleja alivio y bienestar al entrar en un espacio seco y luminoso. Lleva headphones al cuello.",
-    background: "Una calle de barrio con el suelo mojado que brilla con la luz del día, transmitiendo una atmósfera fresca y renovada.",
-    designSpace: "Plano medio corto. La puerta abierta y el interior del coche crean líneas que guían la vista hacia el centro, dejando las esquinas libres para CTAs.",
+    title: "Café y agenda",
+    stage: "Trayecto",
+    scene: "Un hombre de 37 años con sweater fino sostiene un vaso de café reutilizable y revisa su agenda en el celular, en el asiento trasero y con el cinturón puesto. Se lo ve cómodo y de buen humor.",
+    background: "Interior claro del auto con la ciudad desenfocada por la ventanilla. Luz de mañana.",
+    designSpace: "Plano medio corto. Rostro, café y teléfono dentro del centro del panel.",
   },
   {
     id: 9,
-    title: "Viaje pet-friendly",
-    stage: "Trayecto",
-    scene: "Una mujer de 31 años sentada con su perro de tamaño pequeño o mediano en el asiento de atrás. Ella mira por la ventana con una sonrisa suave mientras acaricia a su mascota. La escena respira una normalidad absoluta y vitalidad.",
-    background: "Un parque urbano de barrio con luz de mañana clara y sombras muy suaves.",
-    designSpace: "Plano amplio lateral. Mucho espacio compositivo en la parte superior y en el frontal del asiento para añadir información sobre el servicio Pet.",
+    title: "Salida del hotel",
+    stage: "Entrada",
+    scene: "Una mujer de 39 años sale de un hotel con su valija de cabina y sube al auto que la espera. Mira hacia adelante con seguridad y una sonrisa breve.",
+    background: "Entrada de un hotel corporativo con columnas y vidrio, desenfocada. Luz de mañana.",
+    designSpace: "Plano general corto. La protagonista en el centro y el lateral del auto abajo.",
   },
   {
     id: 10,
-    title: "La última mirada al plan",
+    title: "Reunión resuelta",
     stage: "Salida",
-    scene: "Una pareja de unos 29 años bajando del asiento trasero frente a un restaurante o café de barrio. Él ayuda a ella a salir o simplemente intercambian una mirada cómplice y alegre antes de cerrar la puerta. Él lleva una mochila ligera.",
-    background: "Una fachada de un comercio local con encanto, con luz natural de tarde temprana viva, no anaranjada.",
-    designSpace: "Plano general abierto. El asfalto y la parte superior de la fachada son lienzos perfectos para colocar logotipos y botones de descarga de la App.",
+    scene: "Un hombre de 41 años baja del auto con la notebook bajo el brazo y saluda al conductor con un gesto breve de agradecimiento. Expresión satisfecha.",
+    background: "Vereda de un distrito de oficinas con árboles bajos, desenfocada. Luz de tarde temprana, blanca.",
+    designSpace: "Plano medio-largo. El protagonista y la puerta abierta ocupan el centro del panel.",
   },
   {
     id: 11,
-    title: "El inicio del día en el barrio",
-    stage: "Entrada",
-    scene: "Un hombre de 32 años espera en una esquina arbolada de un barrio residencial. Tiene un vaso de café de especialidad en una mano y una mochila de cuero minimalista al hombro. Mira hacia la calle con una sonrisa ligera y expectante al ver que su Cabify está doblando la esquina.",
-    background: "Fachadas de edificios antiguos con balcones, una pequeña librería de fondo y luz de mañana limpia.",
-    designSpace: "Plano medio-largo. El sujeto a un lado, dejando dos tercios de imagen de calle despejada para texto.",
+    title: "Trabajo en el asiento trasero",
+    stage: "Trayecto",
+    scene: "Una mujer de 33 años trabaja con la notebook apoyada sobre las piernas en el asiento trasero, con el cinturón puesto y auriculares pequeños. Escribe concentrada, cómoda.",
+    background: "Interior del auto con tapizado claro y la calle desenfocada por la ventanilla lateral.",
+    designSpace: "Plano medio desde el asiento del acompañante. Rostro y notebook centrados en el panel.",
   },
   {
     id: 12,
-    title: "Conexión y música",
+    title: "Entre dos reuniones",
     stage: "Trayecto",
-    scene: "Una mujer de 28 años en el asiento trasero. Lleva sus headphones puestos y sostiene su smartphone con naturalidad. No ríe a carcajadas; tiene una expresión de calma y disfrute mientras mira por la ventana la vida del barrio.",
-    background: "Se ven pasar fruterías y portales de colores a través del cristal, con un desenfoque suave que no distrae.",
-    designSpace: "Primer plano de ella, con mucho espacio superior para el logotipo y mensajes de marca.",
-  },
-  {
-    id: 13,
-    title: "La llegada al destino favorito",
-    stage: "Salida",
-    scene: "Una mujer de 35 años bajando del coche frente a una floristería de barrio. Lleva una cartera tote bag de tela orgánica. Se gira para decir gracias con un gesto de mano y una sonrisa amable, proyectando mucha vitalidad.",
-    background: "Una calle peatonal con árboles y fachadas de colores claros. Sin edificios altos a la vista.",
-    designSpace: "Plano general. El coche ocupa el tercio inferior y el fondo del barrio ofrece aire para colocar botones de descarga.",
-  },
-  {
-    id: 14,
-    title: "Compañerismo espontáneo",
-    stage: "Trayecto",
-    scene: "Una pareja de unos 30 años en el asiento de atrás. Él le muestra algo en el móvil y ella sonríe de forma cómplice, apoyando su cabeza ligeramente hacia él. Ella lleva una mochila pequeña a sus pies y un vaso de café.",
-    background: "Luz natural de mediodía que entra por la ventanilla. A través del cristal se ven casas bajas de estilo tradicional.",
-    designSpace: "Plano medio desde el interior. Espacio limpio en la tapicería del asiento de al lado para gráficos.",
-  },
-  {
-    id: 15,
-    title: "El momento del check-in",
-    stage: "Entrada",
-    scene: "Un hombre de 27 años, con headphones alrededor del cuello, subiendo al coche. Está mirando su teléfono por última vez con una expresión de satisfacción antes de guardarlo en el bolsillo. Lleva una mochila técnica moderna.",
-    background: "Una calle luminosa con pequeñas tiendas y vecinos paseando al fondo, transmitiendo seguridad y cercanía.",
-    designSpace: "El personaje está en movimiento, capturado en un momento dinámico. Espacio amplio a la izquierda sobre la carrocería del coche.",
-  },
-  {
-    id: 16,
-    title: "Calma urbana (The Me-Time)",
-    stage: "Trayecto",
-    scene: "Una mujer de 33 años sentada cómodamente, con las manos rodeando su vaso de café. Mira hacia adelante con una expresión pensativa y optimista. Su cartera está abierta a su lado, mostrando un libro o una revista.",
-    background: "El interior del coche se ve impecable y espacioso. Por la ventana se filtra la luz del sol reflejada en edificios de piedra blanca.",
-    designSpace: "Plano medio lateral. Mucho aire en el lateral derecho para un titular potente.",
-  },
-  {
-    id: 17,
-    title: "El reencuentro en la puerta",
-    stage: "Entrada",
-    scene: "Un hombre de 38 años sale de un portal típico de barrio y se dirige al Cabify que lo espera. Tiene una postura enérgica y vital. Lleva una bolsa de deporte o mochila de fin de semana.",
-    background: "Una calle estrecha con encanto, adoquines y luz natural que resalta las texturas sin crear sombras fuertes.",
-    designSpace: "Plano general. El usuario es el punto focal, pero el entorno de barrio envuelve la escena. Espacio para texto en el cielo o fachadas superiores.",
-  },
-  {
-    id: 18,
-    title: "El alivio bajo la lluvia suave",
-    stage: "Entrada",
-    scene: "Una mujer de 31 años cerrando un paraguas de color vibrante mientras entra al coche. Su expresión es de alivio y una sonrisa suave, agradecida por el confort inmediato. Lleva una cartera de hombro.",
-    background: "Una calle de barrio mojada que refleja la luz del día, dándole un brillo especial pero natural a la imagen.",
-    designSpace: "Plano medio corto enfocado en el rostro y la puerta del coche. Espacio a la derecha en el interior del vehículo para UI de la app.",
-  },
-  {
-    id: 19,
-    title: "Viaje con mascota en el barrio",
-    stage: "Trayecto",
-    scene: "Un hombre de 34 años con su perro pequeño sentado tranquilamente a su lado sobre una manta en el asiento. El hombre acaricia al perro mientras mira por la ventana con una sonrisa relajada.",
-    background: "Un parque de barrio o una plaza con bancos y árboles que se ve a través de la ventanilla.",
-    designSpace: "Plano amplio que muestra la relación entre el usuario, su mascota y el espacio cómodo de Cabify. Espacio para texto en la parte superior.",
-  },
-  {
-    id: 20,
-    title: "Listos para el plan",
-    stage: "Entrada",
-    scene: "Dos amigas de unos 29 años se despiden antes de que una de ellas entre en el Cabify. Una está fuera y la otra ya se está acomodando dentro. Hay una mirada de luego nos vemos y una sonrisa natural, sin exageraciones. Una lleva headphones y la otra una cartera llamativa.",
-    background: "La acera de un barrio con una cafetería con mesas fuera en el fondo desenfocado.",
-    designSpace: "Encuadre que integra el exterior y el interior. Espacio para elementos gráficos en la zona de la acera.",
+    scene: "Un hombre de 45 años mira por la ventanilla con el teléfono apoyado en la pierna, tomándose un respiro entre reuniones. Cinturón puesto, postura relajada.",
+    background: "Avenida con edificios corporativos desenfocados bajo un cielo despejado.",
+    designSpace: "Plano medio lateral. El rostro queda en el centro del panel, con aire sobre la cabeza.",
   },
 ];

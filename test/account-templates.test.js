@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { getAccountPrompts } from '../prompts/index.js';
 import {
   ASPECT_RATIO_TEMPLATE_VARIANTS,
+  CORP_TEMPLATE_VARIANTS,
   DRIVERS_TEMPLATE_VARIANTS,
   composeAspectRatioTemplate,
   getAspectRatioTemplateVariants,
@@ -46,7 +47,7 @@ const DRIVERS_INPUT = { ground: '#7145CE', card: '#FFFFFF', text: '#17171F', acc
 
 test('each account resolves its own template set, Riders by default', () => {
   assert.equal(getAspectRatioTemplateVariants(), ASPECT_RATIO_TEMPLATE_VARIANTS);
-  assert.equal(getAspectRatioTemplateVariants('corp'), ASPECT_RATIO_TEMPLATE_VARIANTS);
+  assert.equal(getAspectRatioTemplateVariants('corp'), CORP_TEMPLATE_VARIANTS);
   assert.equal(getAspectRatioTemplateVariants('drivers'), DRIVERS_TEMPLATE_VARIANTS);
   assert.throws(() => getAspectRatioTemplateVariants('taxi'), /Unknown Cabify account/);
   assert.deepEqual(listAspectRatioTemplateIds('9:16', 'drivers'), [
@@ -54,26 +55,94 @@ test('each account resolves its own template set, Riders by default', () => {
     '9-16-drivers-frame-lavender',
     '9-16-drivers-frame-tall',
   ]);
+  assert.deepEqual(listAspectRatioTemplateIds('1:1', 'corp'), [
+    '1-1-corp-frame',
+    '1-1-corp-frame-lavender',
+    '1-1-corp-fullbleed',
+  ]);
 });
 
-test('Drivers is the Riders template set, identical in everything but colour', () => {
-  for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
-    const drivers = DRIVERS_TEMPLATE_VARIANTS[ratio];
-    assert.equal(drivers.length, riders.length);
-    drivers.forEach((template, index) => {
-      const source = riders[index];
-      assert.equal(template.derivedFrom, source.id);
-      assert.equal(template.colourSource, 'input');
-      assert.deepEqual(template.canvas, source.canvas);
-      assert.deepEqual(template.scene, source.scene);
-      assert.equal(template.referenceAsset, source.referenceAsset);
-      assert.deepEqual(template.logo.box, source.logo.box);
-      assert.equal(Boolean(template.frame), Boolean(source.frame));
-      for (const key of ['box', 'textBox', 'radius', 'align', 'fontSize']) {
-        assert.deepEqual(template.card[key], source.card[key], `${template.id} card.${key} must match ${source.id}`);
-      }
-    });
+test('Drivers and Corp are the Riders template set, identical in everything but colour', () => {
+  for (const variants of [DRIVERS_TEMPLATE_VARIANTS, CORP_TEMPLATE_VARIANTS]) {
+    for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
+      const account = variants[ratio];
+      assert.equal(account.length, riders.length);
+      account.forEach((template, index) => {
+        const source = riders[index];
+        assert.equal(template.derivedFrom, source.id);
+        assert.equal(template.colourSource, 'input');
+        assert.deepEqual(template.canvas, source.canvas);
+        assert.deepEqual(template.scene, source.scene);
+        assert.equal(template.referenceAsset, source.referenceAsset);
+        assert.deepEqual(template.logo.box, source.logo.box);
+        assert.equal(Boolean(template.frame), Boolean(source.frame));
+        for (const key of ['box', 'textBox', 'radius', 'align', 'fontSize']) {
+          assert.deepEqual(template.card[key], source.card[key], `${template.id} card.${key} must match ${source.id}`);
+        }
+      });
+    }
   }
+});
+
+test('only Corp signs "para empresas", and only Drivers carries a badge', () => {
+  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
+    assert.deepEqual(template.logo.descriptor, { text: 'para empresas', fontId: 'cabify-ciudad-light' });
+    assert.equal(template.badge, undefined);
+  }
+  for (const template of Object.values(DRIVERS_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.logo.descriptor, undefined);
+    assert.ok(template.badge);
+  }
+  for (const template of Object.values(ASPECT_RATIO_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.logo.descriptor, undefined);
+    assert.equal(template.badge, undefined);
+  }
+});
+
+test('the Corp signature stacks the wordmark over its descriptor inside the logo box', async () => {
+  const template = CORP_TEMPLATE_VARIANTS['1:1'][0];
+  const image = await readRaw(await composeAspectRatioTemplate({
+    sceneDataUrl: await solidDataUrl('#203040'),
+    targetRatio: '1:1',
+    templateId: template.id,
+    account: 'corp',
+    colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' },
+    text: 'Movilidad cómoda y segura para tus clientes',
+  }));
+
+  const { box } = template.logo;
+  const inkRows = [];
+  for (let y = box.y; y < box.y + box.height; y += 1) {
+    const row = countNear(image, { x: box.x, y, width: box.width, height: 1 }, [255, 255, 255], 40);
+    inkRows.push(row > 0);
+  }
+  // Two bands of ink — wordmark, then descriptor — with a clear gap between.
+  const bands = inkRows.reduce((list, inked, index) => {
+    if (inked && (index === 0 || !inkRows[index - 1])) list.push({ start: index, end: index });
+    else if (inked) list[list.length - 1].end = index;
+    return list;
+  }, []);
+  assert.equal(bands.length, 2, `expected a wordmark and a descriptor, got ${bands.length} bands`);
+  const [wordmark, descriptor] = bands;
+  assert.ok(wordmark.end - wordmark.start > descriptor.end - descriptor.start, 'the wordmark must be the taller band');
+  assert.ok(descriptor.start - wordmark.end >= 2, 'the two must not touch');
+  assert.ok(descriptor.end <= box.height, 'the lockup must stay inside the logo box');
+
+  // The descriptor is wider than the wordmark, as in the approved lockup.
+  const bandWidth = (band) => {
+    let left = box.x + box.width;
+    let right = box.x;
+    for (let y = box.y + band.start; y <= box.y + band.end; y += 1) {
+      for (let x = box.x; x < box.x + box.width; x += 1) {
+        if (countNear(image, { x, y, width: 1, height: 1 }, [255, 255, 255], 40)) {
+          if (x < left) left = x;
+          if (x > right) right = x;
+        }
+      }
+    }
+    return right - left + 1;
+  };
+  assert.ok(bandWidth(descriptor) > bandWidth(wordmark), 'the descriptor should run wider than the wordmark');
 });
 
 test('a Drivers render takes the ground, card and headline colours from the input', async () => {
@@ -322,17 +391,24 @@ test('only an account whose templates use them asks Gemini for an accent and a b
     }, 'AAAA', 'image/png', account);
     return schema;
   };
-  // The Riders request must stay byte-for-byte what it was before Drivers existed.
-  for (const account of [undefined, 'riders', 'corp']) {
+  // The Riders request must stay byte-for-byte what it was before the other
+  // accounts existed.
+  for (const account of [undefined, 'riders']) {
     const { properties } = await schemaFor(account);
     assert.equal('cardTextAccent' in properties, false, `${account} schema changed`);
     assert.equal('imageBadgeBox' in properties, false, `${account} schema changed`);
   }
+  // Corp has a two-colour headline but no badge; Drivers has both.
+  const corp = await schemaFor('corp');
+  assert.equal(corp.properties.cardTextAccent.type, 'string');
+  assert.equal('imageBadgeBox' in corp.properties, false);
+
   const drivers = await schemaFor('drivers');
   assert.equal(drivers.properties.cardTextAccent.type, 'string');
   assert.equal(drivers.properties.imageBadgeBox.type, 'array');
-  assert.equal(drivers.required.includes('cardTextAccent'), false);
-  assert.equal(drivers.required.includes('imageBadgeBox'), false);
+  for (const field of ['cardTextAccent', 'imageBadgeBox']) {
+    assert.equal(drivers.required.includes(field), false, `${field} must stay optional`);
+  }
 });
 
 test('extraction keeps a usable badge box and drops an empty one', async () => {
@@ -344,8 +420,16 @@ test('extraction keeps a usable badge box and drops an empty one', async () => {
   assert.equal(await extract(undefined), null);
 });
 
-test('the Drivers extraction prompt asks for the purple words and the badge', () => {
-  const prompt = getAccountPrompts('drivers').aspectRatio.CARD_COPY_EXTRACTION_PROMPT;
-  assert.match(prompt, /"cardTextAccent"/);
-  assert.match(prompt, /"imageBadgeBox"/);
+test('each extraction prompt asks for exactly what its templates consume', () => {
+  const drivers = getAccountPrompts('drivers').aspectRatio.CARD_COPY_EXTRACTION_PROMPT;
+  assert.match(drivers, /"cardTextAccent"/);
+  assert.match(drivers, /"imageBadgeBox"/);
+
+  const corp = getAccountPrompts('corp').aspectRatio.CARD_COPY_EXTRACTION_PROMPT;
+  assert.match(corp, /"cardTextAccent"/);
+  assert.doesNotMatch(corp, /"imageBadgeBox"/);
+
+  const riders = getAccountPrompts('riders').aspectRatio.CARD_COPY_EXTRACTION_PROMPT;
+  assert.doesNotMatch(riders, /"cardTextAccent"/);
+  assert.doesNotMatch(riders, /"imageBadgeBox"/);
 });
