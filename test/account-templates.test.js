@@ -74,7 +74,12 @@ test('Drivers and Corp are the Riders template set, identical in everything but 
         assert.deepEqual(template.canvas, source.canvas);
         assert.deepEqual(template.scene, source.scene);
         assert.equal(template.referenceAsset, source.referenceAsset);
-        assert.deepEqual(template.logo.box, source.logo.box);
+        // Corp's 9:16 signature is deliberately larger than the box measured for
+        // a single-line wordmark; its own test pins the growth. Everything else
+        // keeps the reference box to the pixel.
+        if (!template.id.startsWith('9-16-corp-')) {
+          assert.deepEqual(template.logo.box, source.logo.box);
+        }
         assert.equal(Boolean(template.frame), Boolean(source.frame));
         for (const key of ['box', 'textBox', 'radius', 'align', 'fontSize']) {
           assert.deepEqual(template.card[key], source.card[key], `${template.id} card.${key} must match ${source.id}`);
@@ -97,6 +102,127 @@ test('only Corp signs "para empresas", and only Drivers carries a badge', () => 
     assert.equal(template.logo.descriptor, undefined);
     assert.equal(template.badge, undefined);
   }
+});
+
+test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photograph', async () => {
+  for (const [ratio, variants] of Object.entries(CORP_TEMPLATE_VARIANTS)) {
+    variants.forEach((template, index) => {
+      const reference = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio][index].logo.box;
+      const { box } = template.logo;
+      if (ratio !== '9:16') {
+        assert.deepEqual(box, reference, `${template.id} must keep the reference logo box`);
+        return;
+      }
+      assert.ok(
+        box.width > reference.width && box.height > reference.height,
+        `${template.id} should read larger than the wordmark-only box (${box.width}x${box.height})`,
+      );
+      // Grown around its own centre, so it keeps the position it was measured
+      // into, and in the same proportions.
+      for (const axis of [['x', 'width'], ['y', 'height']]) {
+        const [origin, size] = axis;
+        const moved = Math.abs((box[origin] + box[size] / 2) - (reference[origin] + reference[size] / 2));
+        assert.ok(moved <= 1, `${template.id} logo drifted ${moved}px off centre on ${origin}`);
+      }
+      const skew = Math.abs((box.width / box.height) - (reference.width / reference.height));
+      assert.ok(skew < 0.05, `${template.id} logo box changed shape (${skew})`);
+    });
+  }
+
+  // The notch is the ceiling: whatever the box says, the ink it holds must keep
+  // a band of flat ground between itself and the photograph.
+  const SCENE = '#2E6F9E';
+  const MARGIN = 12;
+  for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
+    if (!template.frame) continue;
+    const image = await readRaw(await composeAspectRatioTemplate({
+      sceneDataUrl: await solidDataUrl(SCENE),
+      targetRatio: '9:16',
+      templateId: template.id,
+      account: 'corp',
+      text: 'Tu empresa ahorra, tus empleados viajan mejor.',
+      colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' },
+    }));
+    // The signature is white on navy, so its own ink is what has to stay clear.
+    const { box } = template.logo;
+    const isInk = (x, y) => countNear(image, { x, y, width: 1, height: 1 }, [255, 255, 255], 60) === 1;
+    const isPhoto = (x, y) => countNear(image, { x, y, width: 1, height: 1 }, hexToRgb(SCENE), 20) === 1;
+    let measured = 0;
+
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      let ink = -1;
+      for (let x = box.x; x < box.x + box.width; x += 1) if (isInk(x, y)) ink = x;
+      if (ink < 0) continue;
+      let gap = 0;
+      while (ink + 1 + gap < image.info.width && !isPhoto(ink + 1 + gap, y)) gap += 1;
+      assert.ok(gap >= MARGIN, `${template.id}: only ${gap}px of ground right of the signature on row ${y}`);
+      measured += 1;
+    }
+    for (let x = box.x; x < box.x + box.width; x += 1) {
+      let ink = -1;
+      for (let y = box.y; y < box.y + box.height; y += 1) if (isInk(x, y)) ink = y;
+      if (ink < 0) continue;
+      let gap = 0;
+      while (ink + 1 + gap < image.info.height && !isPhoto(x, ink + 1 + gap)) gap += 1;
+      assert.ok(gap >= MARGIN, `${template.id}: only ${gap}px of ground below the signature on column ${x}`);
+    }
+    assert.ok(measured > 0, `${template.id} rendered no signature to measure`);
+  }
+});
+
+test('the 1:1 Corp card gives its copy leading and its button room, and only there', () => {
+  for (const template of CORP_TEMPLATE_VARIANTS['1:1']) {
+    assert.ok(template.card.lineSpacingShare > 0, `${template.id} should set extra leading`);
+    assert.ok(
+      template.card.extrasGapShare > CORP_TEMPLATE_VARIANTS['9:16'][0].card.extrasGapShare,
+      `${template.id} should stand its button further off the copy than 9:16 does`,
+    );
+  }
+  for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
+    assert.equal(template.card.lineSpacingShare, undefined, `${template.id} keeps the reference leading`);
+  }
+  for (const variants of [ASPECT_RATIO_TEMPLATE_VARIANTS, DRIVERS_TEMPLATE_VARIANTS]) {
+    for (const template of variants['1:1'].concat(variants['9:16'])) {
+      assert.equal(template.card.lineSpacingShare, undefined, `${template.id} must keep the reference leading`);
+      assert.equal(template.card.extrasGapShare, undefined, `${template.id} must keep the reference gap`);
+    }
+  }
+});
+
+test('the leading knob reaches the renderer: 1:1 copy breathes more than 9:16 copy', async () => {
+  const common = {
+    sceneDataUrl: await solidDataUrl('#2E6F9E'),
+    account: 'corp',
+    text: 'Tu empresa ahorra, tus empleados viajan mejor.',
+    accentText: 'Tu empresa ahorra,',
+    colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' },
+  };
+  // Both cards are white and both hold the same two lines in the same face, so
+  // the trough between the lines, measured against the height of the line
+  // itself, compares across the two ratios whatever type size each settles on.
+  const airPerLine = async (targetRatio) => {
+    const template = CORP_TEMPLATE_VARIANTS[targetRatio][0];
+    const image = await readRaw(await composeAspectRatioTemplate({
+      ...common, targetRatio, templateId: template.id,
+    }));
+    const box = template.card.textBox;
+    const inked = [];
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      inked.push(countNear(image, { x: box.x, y, width: box.width, height: 1 }, [255, 255, 255], 40) < box.width);
+    }
+    const first = inked.indexOf(true);
+    const troughStart = inked.indexOf(false, first);
+    const troughEnd = inked.indexOf(true, troughStart);
+    assert.ok(first >= 0 && troughStart > first && troughEnd > troughStart, `${template.id}: expected two lines of copy`);
+    return (troughEnd - troughStart) / (troughStart - first);
+  };
+
+  const square = await airPerLine('1:1');
+  const tall = await airPerLine('9:16');
+  assert.ok(
+    square > tall * 1.5,
+    `1:1 leading (${square.toFixed(2)} of a line) should stand clear of the untouched 9:16 one (${tall.toFixed(2)})`,
+  );
 });
 
 test('only Corp asks for a taller CTA, and only Corp may stretch it', async () => {

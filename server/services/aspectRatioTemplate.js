@@ -326,9 +326,44 @@ const takeColoursFromInput = (template, {
   },
 });
 
-const buildAccountVariants = (options) => deepFreeze(Object.fromEntries(
+/**
+ * Grow (or shrink) a box around its own centre, so the element keeps the
+ * optical position it was measured into instead of drifting towards one corner.
+ */
+const scaleBoxAboutCentre = (box, scale) => {
+  const width = Math.round(box.width * scale);
+  const height = Math.round(box.height * scale);
+  return {
+    x: box.x - Math.round((width - box.width) / 2),
+    y: box.y - Math.round((height - box.height) / 2),
+    width,
+    height,
+  };
+};
+
+/**
+ * Corrections that apply to one ratio only, on top of the recolouring. They
+ * exist because a layout measured for a single wordmark and a promo pill does
+ * not carry every account's signature and CTA equally well at every ratio.
+ * A ratio that names no tuning keeps the Riders geometry exactly.
+ */
+const applyRatioTuning = (template, tuning) => {
+  if (!tuning) return template;
+  const { logoScale = 1, card } = tuning;
+  return {
+    ...template,
+    ...(logoScale === 1
+      ? {}
+      : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, logoScale) } }),
+    ...(card ? { card: { ...template.card, ...card } } : {}),
+  };
+};
+
+const buildAccountVariants = ({ perRatio = {}, ...options }) => deepFreeze(Object.fromEntries(
   Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)
-    .map(([ratio, variants]) => [ratio, variants.map((template) => takeColoursFromInput(template, options))]),
+    .map(([ratio, variants]) => [ratio, variants.map((template) => (
+      applyRatioTuning(takeColoursFromInput(template, options), perRatio[ratio])
+    ))]),
 ));
 
 export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
@@ -351,6 +386,18 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
   // sources ship it at about 311x75, too small for the 9:16 card, so a little
   // enlargement is allowed; the copy gives up a few points to make room.
   extras: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3, extrasGapShare: 0.05 },
+  perRatio: {
+    // The 1:1 card is the shallowest of the three, so Corp's longer copy lands
+    // as two tight lines with the button pressed against them. Leading and a
+    // wider gap buy back the air; both are paid for out of the type size, which
+    // the fitter drops by a few points.
+    '1:1': { card: { lineSpacingShare: 0.10, extrasGapShare: 0.08 } },
+    // The stacked signature spends about a third of the logo box on "para
+    // empresas", so its wordmark reads smaller than the single-line Riders one
+    // the box was measured for. 9:16 is where that shows. The notch is the
+    // ceiling: at this scale the tightest variant still clears the photograph.
+    '9:16': { logoScale: 1.15 },
+  },
 });
 
 /** Template set per Cabify account. */
@@ -801,6 +848,11 @@ const buildTextMarkup = (text, card, accentText) => {
 
 const renderTextAtSize = async ({ text, accentText, font, fontPath, card, textBox, fontSize }) => {
   const markup = buildTextMarkup(text, card, accentText);
+  // Extra leading, as a share of the fitted type size so it tracks the copy
+  // instead of the box. Sharp adds it between lines and nowhere else, and zero
+  // is its own default, so a template that does not ask for it renders exactly
+  // as it did before this knob existed.
+  const spacing = Math.round(fontSize * (card.lineSpacingShare ?? 0));
   const buffer = await sharp({
     text: {
       text: markup,
@@ -811,6 +863,7 @@ const renderTextAtSize = async ({ text, accentText, font, fontPath, card, textBo
       rgba: true,
       dpi: 72,
       wrap: 'word-char',
+      ...(spacing > 0 ? { spacing } : {}),
     },
   }).png().toBuffer();
   const metadata = await sharp(buffer).metadata();

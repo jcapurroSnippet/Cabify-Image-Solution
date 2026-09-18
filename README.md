@@ -35,7 +35,7 @@ metadata.
 The account also picks the Aspect Ratio template set
 (`getAspectRatioTemplateVariants` in `server/services/aspectRatioTemplate.js`).
 Every account composes through the **same** Riders templates — geometry, notch,
-logo and card boxes, variants. Drivers and Corp only change their colours, which
+logo and card boxes, variants. Drivers and Corp change their colours, which
 they read off each input (`sampleSourceColours` in `imageGenerator.js`): the
 frame ground from the input's corners, the card and headline colours from behind
 the copy. A two-colour headline keeps its split through `cardTextAccent`, which
@@ -51,13 +51,25 @@ Each of the two adds one element of its own:
   bounds, and the template places it top-right, mirroring the logo. Inputs
   without a badge (the illustrations) get none.
 - **Corp**: the "cabify para empresas" signature. The sources set the two side by
-  side; the template stacks them, wordmark over descriptor, inside the same logo
-  box, so the notch it sits in does not move. The descriptor is set in Cabify
-  Ciudad Light, the face that reproduces the approved lockup's width and stroke.
+  side; the template stacks them, wordmark over descriptor, inside the logo box,
+  so the notch it sits in does not move. The descriptor is set in Cabify Ciudad
+  Light, the face that reproduces the approved lockup's width and stroke.
 
-The extra extraction fields, the colour reading and the badge crop only run for
-accounts whose templates use them, so the Riders request and render are
-unchanged.
+Corp also tunes two ratios, through `perRatio` on its template set:
+
+- **1:1** is the shallowest card, and Corp's copy plus its button crowd it. The
+  card asks for extra leading (`lineSpacingShare`, passed to Sharp as line
+  spacing) and stands the button further off the copy (`extrasGapShare`). Both
+  are paid for out of the type size, which the fitter drops by a few points.
+- **9:16** grows the logo box around its own centre (`logoScale`). Stacking the
+  signature spends about a third of that box on "para empresas", so its wordmark
+  reads smaller than the single-line one the box was measured for. The notch is
+  the ceiling: a test renders each variant and asserts a band of flat ground
+  between the signature's ink and the photograph.
+
+The extra extraction fields, the colour reading, the badge crop and every
+`perRatio` knob only apply to accounts whose templates carry them, so the Riders
+request and render are unchanged.
 
 ## The funnel (Ciclo)
 
