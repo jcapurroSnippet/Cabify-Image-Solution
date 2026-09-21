@@ -1161,14 +1161,16 @@ const buildFixedLogo = async (template) => {
       return { input, left: box.x, top: box.y };
     }
 
-    // Stacked lockup: the wordmark above its descriptor, both centred on the
-    // box the horizontal wordmark would have filled.
+    // Stacked lockup: the wordmark above its descriptor, sharing a left edge,
+    // and the pair centred on the box the horizontal wordmark would have filled.
     //
-    // Centred, not flush left, and the two are not the same picture here: the
-    // descriptor is half again as wide as the wordmark, so left-aligning them
-    // hung "cabify" off the left end of "para empresas" and pushed the whole
-    // signature to the left of the notch it sits in. The box is centred in that
-    // notch, so centring the lockup in the box centres it in the notch too.
+    // The two alignments are separate questions. Inside the lockup "cabify"
+    // stays flush with the start of "para empresas", which is how the signature
+    // is set. Where the lockup lands is the other one: left-aligning it in the
+    // box too pushed the whole signature against the left of the notch, because
+    // the descriptor is half again as wide as the wordmark and the box was
+    // measured for neither. The box is centred in the notch, so centring the
+    // lockup in the box centres the signature in the notch.
     const { width: assetWidth, height: assetHeight } = await sharp(source).metadata();
     const parts = buildLockupParts(box, assetWidth / assetHeight);
     const wordmark = await tintAlpha(
@@ -1185,16 +1187,15 @@ const buildFixedLogo = async (template) => {
       width: parts.descriptorWidth,
       height: parts.descriptorHeight,
     });
+    // The descriptor is the wider of the two, so it is what the lockup's own
+    // edges are, and centring it centres the block.
+    const lockupLeft = Math.round((box.width - parts.descriptorWidth) / 2);
     const input = await sharp({
       create: { width: box.width, height: box.height, channels: 4, background: '#00000000' },
     })
       .composite([
-        { input: wordmark, left: Math.round((box.width - parts.wordmarkWidth) / 2), top: 0 },
-        {
-          input: descriptorLayer,
-          left: Math.round((box.width - parts.descriptorWidth) / 2),
-          top: parts.wordmarkHeight + parts.gap,
-        },
+        { input: wordmark, left: lockupLeft, top: 0 },
+        { input: descriptorLayer, left: lockupLeft, top: parts.wordmarkHeight + parts.gap },
       ])
       .png()
       .toBuffer();

@@ -426,12 +426,10 @@ test('the Corp signature stacks the wordmark over its descriptor inside the logo
   const descriptorBounds = bandBounds(descriptor);
   assert.ok(descriptorBounds.width > wordmarkBounds.width, 'the descriptor should run wider than the wordmark');
 
-  // Centred on it, not hung off its left end: the two are set half again apart
-  // in width, so left-aligning them reads as a mistake.
-  const drift = Math.abs(
-    ((wordmarkBounds.left + wordmarkBounds.right) / 2) - ((descriptorBounds.left + descriptorBounds.right) / 2),
-  );
-  assert.ok(drift <= 3, `the wordmark sits ${drift}px off the centre of its descriptor`);
+  // Sharing its left edge: inside the lockup the signature is flush left, and
+  // it is the block as a whole that gets centred, on the notch rather than here.
+  const drift = Math.abs(wordmarkBounds.left - descriptorBounds.left);
+  assert.ok(drift <= 3, `the wordmark sits ${drift}px off the left edge of its descriptor`);
 });
 
 test('a Drivers render takes the ground, card and headline colours from the input', async () => {
