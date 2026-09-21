@@ -346,15 +346,21 @@ const scaleBoxAboutCentre = (box, scale) => {
  * exist because a layout measured for a single wordmark and a promo pill does
  * not carry every account's signature and CTA equally well at every ratio.
  * A ratio that names no tuning keeps the Riders geometry exactly.
+ *
+ * `logoScale` is one factor for the whole ratio, or one per template id: a
+ * notch is measured for the reference that owns it, so how far a signature can
+ * grow before it crowds the photograph is a property of the variant, not of
+ * the ratio.
  */
-const applyRatioTuning = (template, tuning) => {
+const applyRatioTuning = (template, tuning, sourceId) => {
   if (!tuning) return template;
   const { logoScale = 1, card } = tuning;
+  const scale = typeof logoScale === 'number' ? logoScale : (logoScale[sourceId] ?? 1);
   return {
     ...template,
-    ...(logoScale === 1
+    ...(scale === 1
       ? {}
-      : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, logoScale) } }),
+      : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, scale) } }),
     ...(card ? { card: { ...template.card, ...card } } : {}),
   };
 };
@@ -362,7 +368,7 @@ const applyRatioTuning = (template, tuning) => {
 const buildAccountVariants = ({ perRatio = {}, ...options }) => deepFreeze(Object.fromEntries(
   Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)
     .map(([ratio, variants]) => [ratio, variants.map((template) => (
-      applyRatioTuning(takeColoursFromInput(template, options), perRatio[ratio])
+      applyRatioTuning(takeColoursFromInput(template, options), perRatio[ratio], template.id)
     ))]),
 ));
 
@@ -381,22 +387,42 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
   account: 'corp',
   palette: { ground: CORP_GROUND, card: CORP_CARD, text: CORP_TEXT, accent: CORP_ACCENT },
   logoDescriptor: { text: 'para empresas', fontId: 'cabify-ciudad-light' },
-  // Corp's CTA reads as a button, not as a promo pill beside the copy, so it
-  // is asked to sit taller against the type than the default marks are. Its
-  // sources ship it at about 311x75, too small for the 9:16 card, so a little
-  // enlargement is allowed; the copy gives up a few points to make room.
-  extras: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3, extrasGapShare: 0.05 },
+  // Corp's CTA reads as a button under the copy, not as a promo pill beside
+  // it, so it is set closer to the type than the default marks are.
+  extras: { extrasGapShare: 0.05 },
   perRatio: {
     // The 1:1 card is the shallowest of the three, so Corp's longer copy lands
     // as two tight lines with the button pressed against them. Leading and a
     // wider gap buy back the air; both are paid for out of the type size, which
     // the fitter drops by a few points.
+    //
+    // The button takes the default proportion and the default refusal to
+    // enlarge (see EXTRAS_TO_FONT_RATIO, EXTRAS_MAX_SCALE): asking for the
+    // taller 9:16 button here spent a whole step of the extras ladder on it —
+    // a 55px button under 33px copy — and the copy paid for it. At the default
+    // the ladder drops a step, the button comes back to the height of about one
+    // line, and the height it gives up goes into the type.
     '1:1': { card: { lineSpacingShare: 0.10, extrasGapShare: 0.08 } },
     // The stacked signature spends about a third of the logo box on "para
     // empresas", so its wordmark reads smaller than the single-line Riders one
-    // the box was measured for. 9:16 is where that shows. The notch is the
-    // ceiling: at this scale the tightest variant still clears the photograph.
-    '9:16': { logoScale: 1.15 },
+    // the box was measured for. 9:16 is where that shows.
+    //
+    // The notch is the ceiling, and each reference drew its own: growing all
+    // three by the factor the tightest tolerates left the other two short. Per
+    // variant they reach the same signature — about 300px of ink across, the
+    // widest the tall frame's notch takes — so the set still reads as one.
+    //
+    // Corp's own sources ship the button at about 311x75, too small for this
+    // card, so here alone a little enlargement is allowed and the button is
+    // asked to sit taller against the type; the copy gives up a few points.
+    '9:16': {
+      logoScale: {
+        '9-16-riders-frame': 1.29,
+        '9-16-riders-frame-lavender': 1.24,
+        '9-16-riders-frame-tall': 1.17,
+      },
+      card: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3 },
+    },
   },
 });
 

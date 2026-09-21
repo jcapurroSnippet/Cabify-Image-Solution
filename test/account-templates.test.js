@@ -129,6 +129,15 @@ test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photo
     });
   }
 
+  // Each 9:16 notch was drawn for its own reference, so the three variants grow
+  // by different factors. What has to agree is the signature they arrive at,
+  // or the set stops reading as one campaign.
+  const widths = CORP_TEMPLATE_VARIANTS['9:16'].map((template) => template.logo.box.width);
+  assert.ok(
+    Math.max(...widths) - Math.min(...widths) <= Math.min(...widths) * 0.05,
+    `the 9:16 Corp signatures should land the same size, got ${widths.join(', ')}`,
+  );
+
   // The notch is the ceiling: whatever the box says, the ink it holds must keep
   // a band of flat ground between itself and the photograph.
   const SCENE = '#2E6F9E';
@@ -225,10 +234,17 @@ test('the leading knob reaches the renderer: 1:1 copy breathes more than 9:16 co
   );
 });
 
-test('only Corp asks for a taller CTA, and only Corp may stretch it', async () => {
-  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
+test('only Corp asks for a taller CTA, and only on the card with room for one', async () => {
+  for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
     assert.equal(template.card.extrasToFontRatio, 1.5);
     assert.equal(template.card.extrasMaxScale, 1.3);
+  }
+  // The 1:1 card is the shallowest of the three: a button sized for 9:16 costs
+  // it a whole step of the extras ladder, and the copy pays. It takes the
+  // default proportion instead, and may not be stretched past its own pixels.
+  for (const template of CORP_TEMPLATE_VARIANTS['1:1']) {
+    assert.equal(template.card.extrasToFontRatio, undefined, `${template.id} must keep the default CTA sizing`);
+    assert.equal(template.card.extrasMaxScale, undefined, `${template.id} must not enlarge its marks`);
   }
   for (const variants of [ASPECT_RATIO_TEMPLATE_VARIANTS, DRIVERS_TEMPLATE_VARIANTS]) {
     for (const template of variants['1:1'].concat(variants['9:16'])) {
@@ -272,6 +288,51 @@ test('only Corp asks for a taller CTA, and only Corp may stretch it', async () =
   assert.ok(corp > riders * 1.2, `Corp CTA (${corp}px) should stand clearly taller than the default (${riders}px)`);
   // Its own source pixels are 75 tall: Corp is allowed past them, but not far.
   assert.ok(corp <= Math.round(75 * 1.3), `Corp CTA (${corp}px) stretched past its allowance`);
+});
+
+test('the 1:1 Corp button reads as a button under the copy, not beside it in size', async () => {
+  // Not the card purple: keyed against the white card, that colour is the ink.
+  const CTA_COLOUR = '#00A3FF';
+  const cta = await sharp({ create: { width: 311, height: 75, channels: 3, background: CTA_COLOUR } }).png().toBuffer();
+  const ACCENT = '#6034C6';
+  const TEXT = '#17171F';
+
+  for (const template of CORP_TEMPLATE_VARIANTS['1:1']) {
+    const image = await readRaw(await composeAspectRatioTemplate({
+      sceneDataUrl: await solidDataUrl('#2E6F9E'),
+      targetRatio: '1:1',
+      templateId: template.id,
+      account: 'corp',
+      text: 'Tu empresa ahorra, tus empleados viajan mejor.',
+      accentText: 'Tu empresa ahorra,',
+      colours: { ground: '#1A1A38', card: '#FFFFFF', text: TEXT, accent: ACCENT },
+      cardExtras: cta,
+      cardExtrasPanelColour: [255, 255, 255],
+    }));
+
+    // Both live in the same box and each has its own colour, so the button can
+    // be measured against the copy whatever type size the fitter settled on.
+    const box = template.card.textBox;
+    const button = [];
+    const copy = [];
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      const row = { x: box.x, y, width: box.width, height: 1 };
+      button.push(countNear(image, row, hexToRgb(CTA_COLOUR), 8) > 0);
+      copy.push(countNear(image, row, hexToRgb(TEXT), 60) + countNear(image, row, hexToRgb(ACCENT), 60) > 0);
+    }
+    const bands = (rows) => rows.reduce((list, inked, index) => {
+      if (inked && (index === 0 || !rows[index - 1])) list.push(1);
+      else if (inked) list[list.length - 1] += 1;
+      return list;
+    }, []);
+    const buttonHeight = bands(button).reduce((total, height) => total + height, 0);
+    const lineHeight = Math.max(...bands(copy));
+    assert.ok(buttonHeight > 0 && lineHeight > 0, `${template.id} rendered no button or no copy to measure`);
+    assert.ok(
+      buttonHeight <= lineHeight * 1.35,
+      `${template.id}: the button (${buttonHeight}px) towers over a line of copy (${lineHeight}px)`,
+    );
+  }
 });
 
 test('the Corp signature stacks the wordmark over its descriptor inside the logo box', async () => {
