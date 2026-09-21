@@ -129,15 +129,6 @@ test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photo
     });
   }
 
-  // Each 9:16 notch was drawn for its own reference, so the three variants grow
-  // by different factors. What has to agree is the signature they arrive at,
-  // or the set stops reading as one campaign.
-  const widths = CORP_TEMPLATE_VARIANTS['9:16'].map((template) => template.logo.box.width);
-  assert.ok(
-    Math.max(...widths) - Math.min(...widths) <= Math.min(...widths) * 0.05,
-    `the 9:16 Corp signatures should land the same size, got ${widths.join(', ')}`,
-  );
-
   // The notch is the ceiling: whatever the box says, the ink it holds must keep
   // a band of flat ground between itself and the photograph.
   const SCENE = '#2E6F9E';
@@ -176,6 +167,59 @@ test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photo
       assert.ok(gap >= MARGIN, `${template.id}: only ${gap}px of ground below the signature on column ${x}`);
     }
     assert.ok(measured > 0, `${template.id} rendered no signature to measure`);
+  }
+
+  // Each 9:16 notch was drawn for its own reference, so the three variants grow
+  // by different factors and do not converge on one size. What they share is
+  // where the signature sits: centred in the block of flat ground the notch
+  // cuts, which is where each reference sets its own wordmark.
+  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
+    if (!template.frame) continue;
+    const image = await readRaw(await composeAspectRatioTemplate({
+      sceneDataUrl: await solidDataUrl(SCENE),
+      targetRatio: template.ratio,
+      templateId: template.id,
+      account: 'corp',
+      text: 'Tu empresa ahorra, tus empleados viajan mejor.',
+      colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' },
+    }));
+    const isPhoto = (x, y) => countNear(image, { x, y, width: 1, height: 1 }, hexToRgb(SCENE), 20) === 1;
+    const scan = (from, limit, hit) => {
+      for (let value = from; value < limit; value += 1) if (hit(value)) return value;
+      return -1;
+    };
+    const { box } = template.logo;
+    // The block's own edges, read along the rows and columns the signature
+    // occupies so the reading lands on the straight runs, not on the rounded
+    // corners that bracket them.
+    const midY = Math.round(box.y + box.height / 2);
+    const midX = Math.round(box.x + box.width / 2);
+    // Read the frame band itself well clear of the notch and of the card.
+    const blockLeft = scan(0, image.info.width, (x) => isPhoto(x, Math.round(image.info.height * 0.6)));
+    const blockTop = scan(0, image.info.height, (y) => isPhoto(Math.round(image.info.width * 0.8), y));
+    const blockRight = scan(box.x, image.info.width, (x) => isPhoto(x, midY));
+    const blockBottom = scan(box.y, image.info.height, (y) => isPhoto(midX, y));
+
+    let left = image.info.width;
+    let top = image.info.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      for (let x = box.x; x < box.x + box.width; x += 1) {
+        if (!countNear(image, { x, y, width: 1, height: 1 }, [255, 255, 255], 60)) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    for (const [axis, ink, blockStart, blockEnd] of [
+      ['x', [left, right], blockLeft, blockRight],
+      ['y', [top, bottom], blockTop, blockBottom],
+    ]) {
+      const off = Math.abs(((ink[0] + ink[1]) / 2) - ((blockStart + blockEnd) / 2));
+      assert.ok(off <= 8, `${template.id}: the signature sits ${off}px off the notch centre on ${axis}`);
+    }
   }
 });
 
@@ -365,7 +409,7 @@ test('the Corp signature stacks the wordmark over its descriptor inside the logo
   assert.ok(descriptor.end <= box.height, 'the lockup must stay inside the logo box');
 
   // The descriptor is wider than the wordmark, as in the approved lockup.
-  const bandWidth = (band) => {
+  const bandBounds = (band) => {
     let left = box.x + box.width;
     let right = box.x;
     for (let y = box.y + band.start; y <= box.y + band.end; y += 1) {
@@ -376,9 +420,18 @@ test('the Corp signature stacks the wordmark over its descriptor inside the logo
         }
       }
     }
-    return right - left + 1;
+    return { left, right, width: right - left + 1 };
   };
-  assert.ok(bandWidth(descriptor) > bandWidth(wordmark), 'the descriptor should run wider than the wordmark');
+  const wordmarkBounds = bandBounds(wordmark);
+  const descriptorBounds = bandBounds(descriptor);
+  assert.ok(descriptorBounds.width > wordmarkBounds.width, 'the descriptor should run wider than the wordmark');
+
+  // Centred on it, not hung off its left end: the two are set half again apart
+  // in width, so left-aligning them reads as a mistake.
+  const drift = Math.abs(
+    ((wordmarkBounds.left + wordmarkBounds.right) / 2) - ((descriptorBounds.left + descriptorBounds.right) / 2),
+  );
+  assert.ok(drift <= 3, `the wordmark sits ${drift}px off the centre of its descriptor`);
 });
 
 test('a Drivers render takes the ground, card and headline colours from the input', async () => {

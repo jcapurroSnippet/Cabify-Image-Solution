@@ -407,19 +407,25 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
     // empresas", so its wordmark reads smaller than the single-line Riders one
     // the box was measured for. 9:16 is where that shows.
     //
-    // The notch is the ceiling, and each reference drew its own: growing all
-    // three by the factor the tightest tolerates left the other two short. Per
-    // variant they reach the same signature — about 300px of ink across, the
-    // widest the tall frame's notch takes — so the set still reads as one.
+    // The notch is the ceiling, and each reference drew its own, so the factor
+    // is per variant: growing all three by what the tightest tolerates left the
+    // other two short of their own ground. Each value below is the largest that
+    // still leaves the signature about 16px of flat ground before the
+    // photograph, measured on the ink rather than on the box.
+    //
+    // They do not converge, and should not: the three notches are 347, 341 and
+    // 314px wide, and the references' own wordmarks track that spread. The tall
+    // frame is the narrow one, and its signature already runs wider across its
+    // notch than the approved wordmark does, so it has nothing left to give.
     //
     // Corp's own sources ship the button at about 311x75, too small for this
     // card, so here alone a little enlargement is allowed and the button is
     // asked to sit taller against the type; the copy gives up a few points.
     '9:16': {
       logoScale: {
-        '9-16-riders-frame': 1.29,
-        '9-16-riders-frame-lavender': 1.24,
-        '9-16-riders-frame-tall': 1.17,
+        '9-16-riders-frame': 1.34,
+        '9-16-riders-frame-lavender': 1.26,
+        '9-16-riders-frame-tall': 1.14,
       },
       card: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3 },
     },
@@ -1155,8 +1161,14 @@ const buildFixedLogo = async (template) => {
       return { input, left: box.x, top: box.y };
     }
 
-    // Stacked lockup: the wordmark above its descriptor, both left-aligned,
-    // filling the very same box the horizontal wordmark would.
+    // Stacked lockup: the wordmark above its descriptor, both centred on the
+    // box the horizontal wordmark would have filled.
+    //
+    // Centred, not flush left, and the two are not the same picture here: the
+    // descriptor is half again as wide as the wordmark, so left-aligning them
+    // hung "cabify" off the left end of "para empresas" and pushed the whole
+    // signature to the left of the notch it sits in. The box is centred in that
+    // notch, so centring the lockup in the box centres it in the notch too.
     const { width: assetWidth, height: assetHeight } = await sharp(source).metadata();
     const parts = buildLockupParts(box, assetWidth / assetHeight);
     const wordmark = await tintAlpha(
@@ -1177,8 +1189,12 @@ const buildFixedLogo = async (template) => {
       create: { width: box.width, height: box.height, channels: 4, background: '#00000000' },
     })
       .composite([
-        { input: wordmark, left: 0, top: 0 },
-        { input: descriptorLayer, left: 0, top: parts.wordmarkHeight + parts.gap },
+        { input: wordmark, left: Math.round((box.width - parts.wordmarkWidth) / 2), top: 0 },
+        {
+          input: descriptorLayer,
+          left: Math.round((box.width - parts.descriptorWidth) / 2),
+          top: parts.wordmarkHeight + parts.gap,
+        },
       ])
       .png()
       .toBuffer();
