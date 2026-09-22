@@ -364,12 +364,13 @@ const scaleBoxAboutCentre = (box, scale) => {
  */
 const applyRatioTuning = (template, tuning, sourceId) => {
   if (!tuning) return template;
-  const { logoScale = 1, logoBox, aperture, card } = tuning;
+  const { logoScale = 1, logoBox, aperture, card, cardByTemplate } = tuning;
   const scale = typeof logoScale === 'number' ? logoScale : (logoScale[sourceId] ?? 1);
   const resolvedLogoBox = logoBox
     ? (Object.hasOwn(logoBox, 'x') ? logoBox : logoBox[sourceId])
     : null;
   const resolvedAperture = aperture?.[sourceId];
+  const resolvedCard = { ...(card || {}), ...(cardByTemplate?.[sourceId] || {}) };
   return {
     ...template,
     ...(resolvedAperture
@@ -383,7 +384,7 @@ const applyRatioTuning = (template, tuning, sourceId) => {
       : scale === 1
         ? {}
         : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, scale) } }),
-    ...(card ? { card: { ...template.card, ...card } } : {}),
+    ...(Object.keys(resolvedCard).length ? { card: { ...template.card, ...resolvedCard } } : {}),
   };
 };
 
@@ -450,6 +451,30 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
           notchRadius: 39,
         },
       },
+      // The supplied square references use a substantially taller card than
+      // Riders (about 28% of the canvas, not 19–21%). The larger measured text
+      // region lets the fitter retain the reference headline scale even when a
+      // CTA is present below it.
+      cardByTemplate: {
+        '1-1-riders-frame': {
+          box: { x: 60, y: 680, width: 828, height: 283 },
+          textBox: { x: 108, y: 713, width: 732, height: 225 },
+          radius: 40,
+          fontSize: { min: 30, max: 58 },
+        },
+        '1-1-riders-frame-lavender': {
+          box: { x: 50, y: 692, width: 850, height: 282 },
+          textBox: { x: 99, y: 725, width: 752, height: 224 },
+          radius: 40,
+          fontSize: { min: 30, max: 60 },
+        },
+        '1-1-riders-fullbleed': {
+          box: { x: 55, y: 686, width: 840, height: 284 },
+          textBox: { x: 103, y: 719, width: 744, height: 226 },
+          radius: 40,
+          fontSize: { min: 30, max: 59 },
+        },
+      },
       card: { lineSpacingShare: 0.10, extrasGapShare: 0.08 },
     },
     // The vertical references agree on a wider, deeper notch and place the
@@ -484,6 +509,11 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
           radius: 46,
           notchRadius: 46,
         },
+      },
+      cardByTemplate: {
+        '9-16-riders-frame': { fontSize: { min: 32, max: 80 } },
+        '9-16-riders-frame-lavender': { fontSize: { min: 28, max: 96 } },
+        '9-16-riders-frame-tall': { fontSize: { min: 28, max: 84 } },
       },
       card: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3 },
     },

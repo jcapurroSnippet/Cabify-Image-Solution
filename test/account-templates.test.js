@@ -176,6 +176,22 @@ test('the 1:1 Corp card gives its copy leading and its button room, and only the
   }
 });
 
+test('Corp square cards and type use the larger geometry measured from its references', () => {
+  const [costs, savings, fullbleed] = CORP_TEMPLATE_VARIANTS['1:1'];
+  assert.deepEqual(costs.card.box, { x: 60, y: 680, width: 828, height: 283 });
+  assert.deepEqual(costs.card.textBox, { x: 108, y: 713, width: 732, height: 225 });
+  assert.deepEqual(savings.card.box, { x: 50, y: 692, width: 850, height: 282 });
+  assert.deepEqual(savings.card.textBox, { x: 99, y: 725, width: 752, height: 224 });
+  assert.deepEqual(fullbleed.card.box, { x: 55, y: 686, width: 840, height: 284 });
+  assert.deepEqual(fullbleed.card.textBox, { x: 103, y: 719, width: 744, height: 226 });
+
+  for (const template of [costs, savings, fullbleed]) {
+    assert.ok(template.card.box.height >= 282);
+    assert.ok(template.card.textBox.height >= 224);
+    assert.ok(template.card.fontSize.min >= 30);
+  }
+});
+
 test('the leading knob reaches the renderer: 1:1 copy breathes more than 9:16 copy', async () => {
   const common = {
     sceneDataUrl: await solidDataUrl('#2E6F9E'),
