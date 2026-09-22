@@ -88,6 +88,9 @@ const buildTemplate = ({
   canvas,
   ...(referenceCanvas ? { referenceCanvas } : {}),
   referenceAsset,
+  // Keep the measured primitive as data as well as its rendered SVG path so
+  // account-specific references can tune the notch without parsing SVG.
+  ...(aperture ? { aperture } : {}),
   // A full-bleed reference has no aperture to cut, so it also has no visible
   // frame ground to declare.
   ...(aperture ? { frame: { background: frameBackground } } : {}),
@@ -308,14 +311,22 @@ const takeColoursFromInput = (template, {
   palette,
   badge = false,
   logoDescriptor = null,
+  logoAssetFile = null,
+  referenceAssets = {},
   extras = null,
 }) => ({
   ...template,
   id: template.id.replace('-riders-', `-${account}-`),
   derivedFrom: template.id,
+  referenceAsset: referenceAssets[template.id] || template.referenceAsset,
   colourSource: 'input',
   ...(template.frame ? { frame: { background: palette.ground } } : {}),
-  logo: { ...template.logo, colour: null, ...(logoDescriptor ? { descriptor: logoDescriptor } : {}) },
+  logo: {
+    ...template.logo,
+    colour: null,
+    ...(logoAssetFile ? { assetFile: logoAssetFile } : {}),
+    ...(logoDescriptor ? { descriptor: logoDescriptor } : {}),
+  },
   ...(badge ? { badge: buildBadgeSlot(template) } : {}),
   card: {
     ...template.card,
@@ -347,20 +358,31 @@ const scaleBoxAboutCentre = (box, scale) => {
  * not carry every account's signature and CTA equally well at every ratio.
  * A ratio that names no tuning keeps the Riders geometry exactly.
  *
- * `logoScale` is one factor for the whole ratio, or one per template id: a
- * notch is measured for the reference that owns it, so how far a signature can
- * grow before it crowds the photograph is a property of the variant, not of
- * the ratio.
+ * `logoScale` is one factor for the whole ratio, or one per template id.
+ * `logoBox` and `aperture` accept measured per-template overrides when an
+ * account has its own approved references instead of inheriting Riders.
  */
 const applyRatioTuning = (template, tuning, sourceId) => {
   if (!tuning) return template;
-  const { logoScale = 1, card } = tuning;
+  const { logoScale = 1, logoBox, aperture, card } = tuning;
   const scale = typeof logoScale === 'number' ? logoScale : (logoScale[sourceId] ?? 1);
+  const resolvedLogoBox = logoBox
+    ? (Object.hasOwn(logoBox, 'x') ? logoBox : logoBox[sourceId])
+    : null;
+  const resolvedAperture = aperture?.[sourceId];
   return {
     ...template,
-    ...(scale === 1
-      ? {}
-      : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, scale) } }),
+    ...(resolvedAperture
+      ? {
+        aperture: resolvedAperture,
+        scene: { mode: 'reference-panel', path: buildAperturePath(resolvedAperture) },
+      }
+      : {}),
+    ...(resolvedLogoBox
+      ? { logo: { ...template.logo, box: resolvedLogoBox } }
+      : scale === 1
+        ? {}
+        : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, scale) } }),
     ...(card ? { card: { ...template.card, ...card } } : {}),
   };
 };
@@ -379,14 +401,20 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
 });
 
 /**
- * Corp signs its creatives "cabify para empresas". The sources set the two
- * side by side; stacked here, the wordmark sits above the descriptor inside
- * the very same logo box, so the Riders notch it lives in does not move.
+ * Corp signs its creatives with the approved "cabify para empresas" lockup.
+ * It is a single artwork asset extracted from the supplied brand references;
+ * neither wordmark nor descriptor is re-typeset by the compositor.
  */
 export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
   account: 'corp',
   palette: { ground: CORP_GROUND, card: CORP_CARD, text: CORP_TEXT, accent: CORP_ACCENT },
-  logoDescriptor: { text: 'para empresas', fontId: 'cabify-ciudad-light' },
+  logoAssetFile: 'cabify-para-empresas-white.png',
+  referenceAssets: {
+    '1-1-riders-frame': '../assets/card-references/corp/1-1/corp-costos-1-1.png',
+    '1-1-riders-frame-lavender': '../assets/card-references/corp/1-1/corp-ahorro-1-1.png',
+    '9-16-riders-frame': '../assets/card-references/corp/9-16/corp-costos-9-16.png',
+    '9-16-riders-frame-lavender': '../assets/card-references/corp/9-16/corp-ahorro-9-16.png',
+  },
   // Corp's CTA reads as a button under the copy, not as a promo pill beside
   // it, so it is set closer to the type than the default marks are.
   extras: { extrasGapShare: 0.05 },
@@ -402,30 +430,60 @@ export const CORP_TEMPLATE_VARIANTS = buildAccountVariants({
     // a 55px button under 33px copy — and the copy paid for it. At the default
     // the ladder drops a step, the button comes back to the height of about one
     // line, and the height it gives up goes into the type.
-    '1:1': { card: { lineSpacingShare: 0.10, extrasGapShare: 0.08 } },
-    // The stacked signature spends about a third of the logo box on "para
-    // empresas", so its wordmark reads smaller than the single-line Riders one
-    // the box was measured for. 9:16 is where that shows.
-    //
-    // The notch is the ceiling, and each reference drew its own, so the factor
-    // is per variant: growing all three by what the tightest tolerates left the
-    // other two short of their own ground. Each value below is the largest that
-    // still leaves the signature about 16px of flat ground before the
-    // photograph, measured on the ink rather than on the box.
-    //
-    // They do not converge, and should not: the three notches are 347, 341 and
-    // 314px wide, and the references' own wordmarks track that spread. The tall
-    // frame is the narrow one, and its signature already runs wider across its
-    // notch than the approved wordmark does, so it has nothing left to give.
+    '1:1': {
+      logoBox: {
+        '1-1-riders-frame': { x: 76, y: 48, width: 294, height: 107 },
+        '1-1-riders-frame-lavender': { x: 68, y: 76, width: 302, height: 101 },
+        '1-1-riders-fullbleed': { x: 72, y: 62, width: 298, height: 107 },
+      },
+      aperture: {
+        '1-1-riders-frame': {
+          panel: { left: 24, top: 25, right: 994, bottom: 997 },
+          notch: { right: 410, bottom: 184 },
+          radius: 35,
+          notchRadius: 35,
+        },
+        '1-1-riders-frame-lavender': {
+          panel: { left: 15, top: 40, right: 1008, bottom: 1008 },
+          notch: { right: 411, bottom: 200 },
+          radius: 39,
+          notchRadius: 39,
+        },
+      },
+      card: { lineSpacingShare: 0.10, extrasGapShare: 0.08 },
+    },
+    // The vertical references agree on a wider, deeper notch and place the
+    // complete signature around 8.5% down the canvas. Those measurements
+    // replace the inherited Riders logo position for every Corp variant.
     //
     // Corp's own sources ship the button at about 311x75, too small for this
     // card, so here alone a little enlargement is allowed and the button is
     // asked to sit taller against the type; the copy gives up a few points.
     '9:16': {
-      logoScale: {
-        '9-16-riders-frame': 1.34,
-        '9-16-riders-frame-lavender': 1.26,
-        '9-16-riders-frame-tall': 1.14,
+      logoBox: {
+        '9-16-riders-frame': { x: 60, y: 163, width: 335, height: 116 },
+        '9-16-riders-frame-lavender': { x: 65, y: 168, width: 329, height: 117 },
+        '9-16-riders-frame-tall': { x: 62, y: 165, width: 332, height: 117 },
+      },
+      aperture: {
+        '9-16-riders-frame': {
+          panel: { left: 24, top: 136, right: 1053, bottom: 1858 },
+          notch: { right: 431, bottom: 308 },
+          radius: 45,
+          notchRadius: 45,
+        },
+        '9-16-riders-frame-lavender': {
+          panel: { left: 32, top: 141, right: 1042, bottom: 1890 },
+          notch: { right: 431, bottom: 313 },
+          radius: 47,
+          notchRadius: 47,
+        },
+        '9-16-riders-frame-tall': {
+          panel: { left: 28, top: 139, right: 1047, bottom: 1874 },
+          notch: { right: 431, bottom: 311 },
+          radius: 46,
+          notchRadius: 46,
+        },
       },
       card: { extrasToFontRatio: 1.5, extrasMaxScale: 1.3 },
     },

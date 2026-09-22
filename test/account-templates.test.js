@@ -11,8 +11,10 @@ import {
   listAspectRatioTemplateIds,
 } from '../server/services/aspectRatioTemplate.js';
 import {
+  ASPECT_RATIO_PROMPT_PROFILE,
   buildImageBadgeCrop,
   extractCardCopyFromSource,
+  loadCardReferences,
   sampleSourceColours,
 } from '../server/services/imageGenerator.js';
 
@@ -62,36 +64,42 @@ test('each account resolves its own template set, Riders by default', () => {
   ]);
 });
 
-test('Drivers and Corp are the Riders template set, identical in everything but colour', () => {
-  for (const variants of [DRIVERS_TEMPLATE_VARIANTS, CORP_TEMPLATE_VARIANTS]) {
-    for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
-      const account = variants[ratio];
-      assert.equal(account.length, riders.length);
-      account.forEach((template, index) => {
-        const source = riders[index];
-        assert.equal(template.derivedFrom, source.id);
-        assert.equal(template.colourSource, 'input');
-        assert.deepEqual(template.canvas, source.canvas);
-        assert.deepEqual(template.scene, source.scene);
-        assert.equal(template.referenceAsset, source.referenceAsset);
-        // Corp's 9:16 signature is deliberately larger than the box measured for
-        // a single-line wordmark; its own test pins the growth. Everything else
-        // keeps the reference box to the pixel.
-        if (!template.id.startsWith('9-16-corp-')) {
-          assert.deepEqual(template.logo.box, source.logo.box);
-        }
-        assert.equal(Boolean(template.frame), Boolean(source.frame));
-        for (const key of ['box', 'textBox', 'radius', 'align', 'fontSize']) {
-          assert.deepEqual(template.card[key], source.card[key], `${template.id} card.${key} must match ${source.id}`);
-        }
-      });
-    }
+test('Drivers inherits Riders geometry while Corp uses its supplied references', () => {
+  for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
+    const drivers = DRIVERS_TEMPLATE_VARIANTS[ratio];
+    assert.equal(drivers.length, riders.length);
+    drivers.forEach((template, index) => {
+      const source = riders[index];
+      assert.equal(template.derivedFrom, source.id);
+      assert.equal(template.colourSource, 'input');
+      assert.deepEqual(template.canvas, source.canvas);
+      assert.deepEqual(template.scene, source.scene);
+      assert.equal(template.referenceAsset, source.referenceAsset);
+      assert.deepEqual(template.logo.box, source.logo.box);
+    });
+  }
+
+  assert.match(CORP_TEMPLATE_VARIANTS['1:1'][0].referenceAsset, /corp\/1-1\/corp-costos-1-1\.png$/);
+  assert.match(CORP_TEMPLATE_VARIANTS['1:1'][1].referenceAsset, /corp\/1-1\/corp-ahorro-1-1\.png$/);
+  assert.match(CORP_TEMPLATE_VARIANTS['9:16'][0].referenceAsset, /corp\/9-16\/corp-costos-9-16\.png$/);
+  assert.match(CORP_TEMPLATE_VARIANTS['9:16'][1].referenceAsset, /corp\/9-16\/corp-ahorro-9-16\.png$/);
+});
+
+test('Corp reference loading is account-scoped and ratio-aware', async () => {
+  const square = await loadCardReferences('1:1', ASPECT_RATIO_PROMPT_PROFILE, 'corp');
+  const vertical = await loadCardReferences('9:16', ASPECT_RATIO_PROMPT_PROFILE, 'corp');
+  assert.equal(square.length, 2);
+  assert.equal(vertical.length, 2);
+  for (const reference of [...square, ...vertical]) {
+    assert.equal(reference.mimeType, 'image/jpeg');
+    assert.ok(reference.data.length > 1000);
   }
 });
 
-test('only Corp signs "para empresas", and only Drivers carries a badge', () => {
+test('only Corp uses the approved para-empresas artwork, and only Drivers carries a badge', () => {
   for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
-    assert.deepEqual(template.logo.descriptor, { text: 'para empresas', fontId: 'cabify-ciudad-light' });
+    assert.equal(template.logo.assetFile, 'cabify-para-empresas-white.png');
+    assert.equal(template.logo.descriptor, undefined);
     assert.equal(template.badge, undefined);
   }
   for (const template of Object.values(DRIVERS_TEMPLATE_VARIANTS).flat()) {
@@ -104,40 +112,19 @@ test('only Corp signs "para empresas", and only Drivers carries a badge', () => 
   }
 });
 
-test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photograph', async () => {
-  for (const [ratio, variants] of Object.entries(CORP_TEMPLATE_VARIANTS)) {
-    variants.forEach((template, index) => {
-      const reference = ASPECT_RATIO_TEMPLATE_VARIANTS[ratio][index].logo.box;
-      const { box } = template.logo;
-      if (ratio !== '9:16') {
-        assert.deepEqual(box, reference, `${template.id} must keep the reference logo box`);
-        return;
-      }
-      assert.ok(
-        box.width > reference.width && box.height > reference.height,
-        `${template.id} should read larger than the wordmark-only box (${box.width}x${box.height})`,
-      );
-      // Grown around its own centre, so it keeps the position it was measured
-      // into, and in the same proportions.
-      for (const axis of [['x', 'width'], ['y', 'height']]) {
-        const [origin, size] = axis;
-        const moved = Math.abs((box[origin] + box[size] / 2) - (reference[origin] + reference[size] / 2));
-        assert.ok(moved <= 1, `${template.id} logo drifted ${moved}px off centre on ${origin}`);
-      }
-      const skew = Math.abs((box.width / box.height) - (reference.width / reference.height));
-      assert.ok(skew < 0.05, `${template.id} logo box changed shape (${skew})`);
-    });
-  }
+test('Corp logo boxes and notches follow the supplied square and vertical references', async () => {
+  assert.deepEqual(CORP_TEMPLATE_VARIANTS['1:1'][0].logo.box, { x: 76, y: 48, width: 294, height: 107 });
+  assert.deepEqual(CORP_TEMPLATE_VARIANTS['1:1'][1].logo.box, { x: 68, y: 76, width: 302, height: 101 });
+  assert.deepEqual(CORP_TEMPLATE_VARIANTS['9:16'][0].logo.box, { x: 60, y: 163, width: 335, height: 116 });
+  assert.deepEqual(CORP_TEMPLATE_VARIANTS['9:16'][1].logo.box, { x: 65, y: 168, width: 329, height: 117 });
 
-  // The notch is the ceiling: whatever the box says, the ink it holds must keep
-  // a band of flat ground between itself and the photograph.
   const SCENE = '#2E6F9E';
   const MARGIN = 12;
-  for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
+  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
     if (!template.frame) continue;
     const image = await readRaw(await composeAspectRatioTemplate({
       sceneDataUrl: await solidDataUrl(SCENE),
-      targetRatio: '9:16',
+      targetRatio: template.ratio,
       templateId: template.id,
       account: 'corp',
       text: 'Tu empresa ahorra, tus empleados viajan mejor.',
@@ -167,59 +154,6 @@ test('Corp grows its 9:16 signature on the spot, and keeps it clear of the photo
       assert.ok(gap >= MARGIN, `${template.id}: only ${gap}px of ground below the signature on column ${x}`);
     }
     assert.ok(measured > 0, `${template.id} rendered no signature to measure`);
-  }
-
-  // Each 9:16 notch was drawn for its own reference, so the three variants grow
-  // by different factors and do not converge on one size. What they share is
-  // where the signature sits: centred in the block of flat ground the notch
-  // cuts, which is where each reference sets its own wordmark.
-  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
-    if (!template.frame) continue;
-    const image = await readRaw(await composeAspectRatioTemplate({
-      sceneDataUrl: await solidDataUrl(SCENE),
-      targetRatio: template.ratio,
-      templateId: template.id,
-      account: 'corp',
-      text: 'Tu empresa ahorra, tus empleados viajan mejor.',
-      colours: { ground: '#1A1A38', card: '#FFFFFF', text: '#17171F', accent: '#6034C6' },
-    }));
-    const isPhoto = (x, y) => countNear(image, { x, y, width: 1, height: 1 }, hexToRgb(SCENE), 20) === 1;
-    const scan = (from, limit, hit) => {
-      for (let value = from; value < limit; value += 1) if (hit(value)) return value;
-      return -1;
-    };
-    const { box } = template.logo;
-    // The block's own edges, read along the rows and columns the signature
-    // occupies so the reading lands on the straight runs, not on the rounded
-    // corners that bracket them.
-    const midY = Math.round(box.y + box.height / 2);
-    const midX = Math.round(box.x + box.width / 2);
-    // Read the frame band itself well clear of the notch and of the card.
-    const blockLeft = scan(0, image.info.width, (x) => isPhoto(x, Math.round(image.info.height * 0.6)));
-    const blockTop = scan(0, image.info.height, (y) => isPhoto(Math.round(image.info.width * 0.8), y));
-    const blockRight = scan(box.x, image.info.width, (x) => isPhoto(x, midY));
-    const blockBottom = scan(box.y, image.info.height, (y) => isPhoto(midX, y));
-
-    let left = image.info.width;
-    let top = image.info.height;
-    let right = -1;
-    let bottom = -1;
-    for (let y = box.y; y < box.y + box.height; y += 1) {
-      for (let x = box.x; x < box.x + box.width; x += 1) {
-        if (!countNear(image, { x, y, width: 1, height: 1 }, [255, 255, 255], 60)) continue;
-        if (x < left) left = x;
-        if (x > right) right = x;
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
-      }
-    }
-    for (const [axis, ink, blockStart, blockEnd] of [
-      ['x', [left, right], blockLeft, blockRight],
-      ['y', [top, bottom], blockTop, blockBottom],
-    ]) {
-      const off = Math.abs(((ink[0] + ink[1]) / 2) - ((blockStart + blockEnd) / 2));
-      assert.ok(off <= 8, `${template.id}: the signature sits ${off}px off the notch centre on ${axis}`);
-    }
   }
 });
 

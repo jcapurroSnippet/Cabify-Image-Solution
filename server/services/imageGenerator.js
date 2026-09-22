@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { getAccountPrompts } from '../../prompts/index.js';
+import { DEFAULT_CABIFY_ACCOUNT } from '../../prompts/accounts.js';
 import {
   composeAspectRatioTemplate,
   getAspectRatioTemplateVariants,
@@ -99,6 +100,13 @@ const CARD_REFERENCE_FOLDERS = {
   '1:1': '1-1',
   '9:16': '9-16',
   '1.91:1': '1-91-1',
+};
+
+const ACCOUNT_CARD_REFERENCE_FOLDERS = {
+  corp: {
+    '1:1': 'corp/1-1',
+    '9:16': 'corp/9-16',
+  },
 };
 
 /**
@@ -1291,15 +1299,17 @@ const toLayoutGuide = async (buffer) => {
   return { data: output.toString('base64'), mimeType: 'image/jpeg' };
 };
 
-export const loadCardReferences = (targetRatio, profile = '') => {
+export const loadCardReferences = (targetRatio, profile = '', account = DEFAULT_CABIFY_ACCOUNT) => {
   const ratio = String(targetRatio).trim();
   const asLayoutGuide = usesAspectRatioProfile(profile);
-  const cacheKey = `${ratio}::${asLayoutGuide ? 'guide' : 'full'}`;
+  const accountId = account || DEFAULT_CABIFY_ACCOUNT;
+  const cacheKey = `${accountId}::${ratio}::${asLayoutGuide ? 'guide' : 'full'}`;
   const cached = cardReferenceCache.get(cacheKey);
   if (cached) return cached;
 
   const loading = (async () => {
-    const folderName = CARD_REFERENCE_FOLDERS[ratio];
+    const folderName = ACCOUNT_CARD_REFERENCE_FOLDERS[accountId]?.[ratio]
+      || CARD_REFERENCE_FOLDERS[ratio];
     if (!folderName) return [];
 
     const candidates = [folderName, ...(CARD_REFERENCE_FALLBACKS[ratio] || [])];
@@ -1440,7 +1450,7 @@ export const placeCardOnScene = async (
     });
   }
 
-  const refs = await loadCardReferences(targetRatio, profile);
+  const refs = await loadCardReferences(targetRatio, profile, account);
   const canLockCopy = hasReliableCardCopy(cardCopy);
   // A partner mark cannot be drawn from its name alone, so when the source card
   // carries one the source image rides along for the model to copy it from.

@@ -34,9 +34,10 @@ metadata.
 
 The account also picks the Aspect Ratio template set
 (`getAspectRatioTemplateVariants` in `server/services/aspectRatioTemplate.js`).
-Every account composes through the **same** Riders templates — geometry, notch,
-logo and card boxes, variants. Drivers and Corp change their colours, which
-they read off each input (`sampleSourceColours` in `imageGenerator.js`): the
+Drivers composes through the Riders geometry. Corp uses its own approved `1:1`
+and `9:16` references for the logo notch and signature placement. Drivers and
+Corp change their colours, which they read off each input
+(`sampleSourceColours` in `imageGenerator.js`): the
 frame ground from the input's corners, the card and headline colours from behind
 the copy. A two-colour headline keeps its split through `cardTextAccent`, which
 their extraction prompts return. The logo takes whichever of the wordmark purple
@@ -50,10 +51,11 @@ Each of the two adds one element of its own:
   locates it (`imageBadgeBox`), `buildImageBadgeCrop` cuts it out at its exact
   bounds, and the template places it top-right, mirroring the logo. Inputs
   without a badge (the illustrations) get none.
-- **Corp**: the "cabify para empresas" signature. The sources set the two side by
-  side; the template stacks them, wordmark over descriptor, inside the logo box,
-  so the notch it sits in does not move. The descriptor is set in Cabify Ciudad
-  Light, the face that reproduces the approved lockup's width and stroke.
+- **Corp**: the approved "cabify para empresas" signature is one transparent
+  artwork asset, extracted from the supplied brand reference. The compositor
+  scales the complete lockup uniformly; it never rebuilds the descriptor as
+  live text. Corp references live under
+  `server/assets/card-references/corp/<ratio>/` and are loaded only for Corp.
 
 Corp also tunes two ratios, through `perRatio` on its template set:
 
@@ -61,11 +63,9 @@ Corp also tunes two ratios, through `perRatio` on its template set:
   card asks for extra leading (`lineSpacingShare`, passed to Sharp as line
   spacing) and stands the button further off the copy (`extrasGapShare`). Both
   are paid for out of the type size, which the fitter drops by a few points.
-- **9:16** grows the logo box around its own centre (`logoScale`). Stacking the
-  signature spends about a third of that box on "para empresas", so its wordmark
-  reads smaller than the single-line one the box was measured for. The notch is
-  the ceiling: a test renders each variant and asserts a band of flat ground
-  between the signature's ink and the photograph.
+- **9:16** uses the logo box and wider/deeper notch measured from the supplied
+  vertical references. A test renders each variant and asserts a band of flat
+  ground between the signature's ink and the photograph.
 
 The extra extraction fields, the colour reading, the badge crop and every
 `perRatio` knob only apply to accounts whose templates carry them, so the Riders
