@@ -21,6 +21,27 @@ export interface BatchStatusSnapshot {
 }
 
 /**
+ * Where a cut stream got to, in one sentence, for the error the operator reads.
+ * Exported so the wording is testable without driving a whole batch.
+ */
+export const describeStreamEnd = (
+  lastEvent: BatchProgressEvent | null,
+  eventCount: number,
+): string => {
+  if (!lastEvent) {
+    return eventCount > 0
+      ? 'The server sent only keepalives before the connection dropped.'
+      : 'The server sent nothing at all, so it was cut before it started work.';
+  }
+  const where = lastEvent.state || lastEvent.status || 'an unnamed step';
+  const row = Number.isFinite(lastEvent.rowNumber)
+    ? ` on source row ${lastEvent.rowNumber}`
+    : '';
+  const ratio = lastEvent.ratio ? ` (${lastEvent.ratio})` : '';
+  return `It was last seen at "${where}"${row}${ratio}, ${eventCount} event(s) in.`;
+};
+
+/**
  * Start batch processing from a Google Sheets URL
  * Returns a stream of progress events via callback
  * Uses server-side Drive folder configuration
@@ -61,7 +82,15 @@ export const startBatchProcessing = async (
 
       let chunkResult: BatchResult | null = null;
       let streamError = '';
+      // A stream that stops short of its result says nothing about why. Keeping
+      // the last thing the server managed to send turns "the connection ended"
+      // into "the connection ended while generating source row 7", which is the
+      // difference between a guess and a place to look.
+      let lastEvent: BatchProgressEvent | null = null;
+      let eventCount = 0;
       const handleEvent = (event: BatchProgressEvent) => {
+        eventCount += 1;
+        if (event.state !== 'keepalive') lastEvent = event;
         if (event.reviewBatchId) reviewBatchId = event.reviewBatchId;
         if (event.state === 'completed') {
           chunkResult = event as unknown as BatchResult;
@@ -106,7 +135,9 @@ export const startBatchProcessing = async (
 
       if (streamError) throw new Error(streamError);
       if (!chunkResult) {
-        throw new Error('The batch connection ended before the current chunk was persisted.');
+        throw new Error(
+          `The batch connection ended before the current chunk was persisted. ${describeStreamEnd(lastEvent, eventCount)}`,
+        );
       }
       if (typeof chunkResult.batchComplete !== 'boolean') {
         throw new Error('The server returned an invalid batch completion state.');

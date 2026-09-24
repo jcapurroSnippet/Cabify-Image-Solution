@@ -479,32 +479,44 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     if (typeof response.flushHeaders === 'function') {
       response.flushHeaders();
     }
-    response.write(JSON.stringify({ state: 'started' }) + '\n');
-    if (typeof response.flush === 'function') {
-      response.flush();
-    }
-
-    const keepAlive = setInterval(() => {
-      if (response.writableEnded || response.destroyed) {
-        clearInterval(keepAlive);
-        return;
-      }
-      response.write(JSON.stringify({ state: 'keepalive' }) + '\n');
+    // Every line goes through here, because writing to a socket the client has
+    // already dropped throws — and it throws from inside processBatch's own
+    // progress callback, so the throw escapes into the catch below, which writes
+    // again, throws again, and ends the process on an unhandled rejection. The
+    // batch is the only thing on a one-instance service, so that crash also
+    // takes down the retry the operator is about to make. Same guard the run
+    // generation stream already uses.
+    const write = (payload) => {
+      if (response.writableEnded || response.destroyed) return false;
+      response.write(JSON.stringify(payload) + '\n');
       if (typeof response.flush === 'function') {
         response.flush();
       }
+      return true;
+    };
+    const endStream = () => {
+      if (!response.writableEnded && !response.destroyed) response.end();
+    };
+
+    write({ state: 'started' });
+
+    const keepAlive = setInterval(() => {
+      if (!write({ state: 'keepalive' })) clearInterval(keepAlive);
     }, 15000);
 
     const stopKeepAlive = () => clearInterval(keepAlive);
     response.on('close', stopKeepAlive);
     response.on('finish', stopKeepAlive);
+    // A socket that dies mid-batch emits here. With no listener that is an
+    // unhandled 'error' event, which is a process-level crash.
+    response.on('error', (error) => {
+      stopKeepAlive();
+      console.error(`[BATCH] Response stream error: ${error?.message || error}`);
+    });
 
     // Define progress callback
     const onProgress = (progressData) => {
-      response.write(JSON.stringify(progressData) + '\n');
-      if (typeof response.flush === 'function') {
-        response.flush();
-      }
+      write(progressData);
     };
 
     // Start batch processing asynchronously
@@ -533,25 +545,21 @@ app.post('/api/batch-aspect-ratio', async (request, response) => {
     })
       .then((result) => {
         stopKeepAlive();
-        response.write(JSON.stringify({ state: 'completed', ...result }) + '\n');
-        if (typeof response.flush === 'function') {
-          response.flush();
+        if (!write({ state: 'completed', ...result })) {
+          // The chunk is persisted in batch_variations either way; say so, because
+          // all the client can see is a stream that stopped short of its result.
+          console.warn('[BATCH] Client disconnected before the chunk result could be sent.');
         }
-        response.end();
+        endStream();
       })
       .catch((error) => {
         console.error('Batch processing error:', error);
         stopKeepAlive();
-        response.write(
-          JSON.stringify({
-            state: 'error',
-            error: getErrorMessage(error, 'Batch processing failed.'),
-          }) + '\n'
-        );
-        if (typeof response.flush === 'function') {
-          response.flush();
-        }
-        response.end();
+        write({
+          state: 'error',
+          error: getErrorMessage(error, 'Batch processing failed.'),
+        });
+        endStream();
       });
   } catch (error) {
     if (error instanceof RequestValidationError) {
@@ -1614,5 +1622,17 @@ export { app };
 
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMainModule) {
+  // A streaming endpoint that dies takes its NDJSON result with it, and the
+  // client can only report that the connection ended before the chunk was
+  // persisted. Name the cause in the log so the next one is diagnosable.
+  process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL] Unhandled promise rejection:', reason instanceof Error ? reason.stack : reason);
+  });
+  process.on('uncaughtException', (error) => {
+    console.error('[FATAL] Uncaught exception:', error?.stack || error);
+    // Node's own behaviour, kept explicit so the line above is written first.
+    process.exit(1);
+  });
+
   app.listen(port, () => {});
 }
