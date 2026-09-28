@@ -14,6 +14,7 @@ import {
   retryReviewPublication,
   revokeReviewBatch,
   saveReviewDecisions,
+  saveReviewItemMetadata,
   setCreativeReviewServiceDependenciesForTest,
 } from '../server/services/creativeReviewService.js';
 
@@ -388,6 +389,56 @@ test('service flow isolates tokens, supersedes real regenerations and retries on
     await assert.rejects(
       () => getPublicReviewBatch({ token: link.token }),
       (error) => error.code === 'REVIEW_TOKEN_INVALID',
+    );
+  } finally {
+    resetCreativeReviewServiceDependenciesForTest();
+  }
+});
+
+test('Studio changes category and plaza for one image without changing its family neighbours', async () => {
+  const workspace = createFakeGoogleWorkspace();
+  setCreativeReviewServiceDependenciesForTest(workspace.dependencies);
+
+  try {
+    const sheetsUrl = 'https://docs.google.com/spreadsheets/d/sheet_item_metadata/edit';
+    const batch = await createReviewBatch({
+      sheetsUrl,
+      title: 'Per-image metadata',
+      sourceType: 'batch_sheets',
+      category: 'Generic',
+      plazas: 'AR',
+    });
+    const image = await imageDataUrl(100, 100);
+    await registerReviewItems({
+      sheetsUrl,
+      batchId: batch.batchId,
+      items: [
+        { itemId: 'metadata-i', generationId: 'metadata-gen-i', familyId: 'metadata-family', ratio: '1:1', variantIndex: 1, imageUrl: image, category: 'Generic', plazas: 'AR', sourceCell: 'I2' },
+        { itemId: 'metadata-j', generationId: 'metadata-gen-j', familyId: 'metadata-family', ratio: '1:1', variantIndex: 2, imageUrl: image, category: 'Generic', plazas: 'AR', sourceCell: 'J2' },
+      ],
+    });
+
+    const changed = await saveReviewItemMetadata({
+      sheetsUrl,
+      batchId: batch.batchId,
+      itemId: 'metadata-i',
+      category: 'Promo',
+      plazas: 'BUE',
+    });
+    assert.equal(changed.items.length, 1);
+    assert.equal(changed.items[0].review_item_id, 'metadata-i');
+    assert.equal(changed.items[0].category, 'Promo');
+    assert.equal(changed.items[0].plazas, 'BUE');
+
+    const reloaded = await getReviewBatch({ sheetsUrl, batchId: batch.batchId });
+    const byId = new Map(reloaded.items.map((item) => [item.review_item_id, item]));
+    assert.deepEqual(
+      { category: byId.get('metadata-i').category, plazas: byId.get('metadata-i').plazas },
+      { category: 'Promo', plazas: 'BUE' },
+    );
+    assert.deepEqual(
+      { category: byId.get('metadata-j').category, plazas: byId.get('metadata-j').plazas },
+      { category: 'Generic', plazas: 'AR' },
     );
   } finally {
     resetCreativeReviewServiceDependenciesForTest();

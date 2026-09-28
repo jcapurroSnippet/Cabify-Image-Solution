@@ -1662,17 +1662,17 @@ export const saveReviewDecisions = async (input = {}) => {
   });
 };
 
-// Studio-only: reclassifies every active (non-superseded) item in a family at
-// once, since category/plazas are chosen per source row (= per family), not
-// per individual ratio/variant. Never exposed on the public client portal.
+// Studio-only: reclassifies one active creative. Each generated image can have
+// its own category/plazas even when several images came from the same source
+// row. Never exposed on the public client portal.
 export const saveReviewItemMetadata = async (input = {}) => {
   const remote = await runReviewWriterMutation('saveReviewItemMetadata', input);
   if (remote) return remote;
   const { args, config, spreadsheetId } = resolveSpreadsheetContext(input);
   const batchId = getBatchId(args);
   if (!batchId) throw new CreativeReviewError('batchId is required.', 'REVIEW_BATCH_ID_REQUIRED');
-  const familyId = clean(args.familyId || args.family_id);
-  if (!familyId) throw new CreativeReviewError('familyId is required.', 'REVIEW_FAMILY_ID_REQUIRED', 400);
+  const itemId = clean(args.itemId || args.reviewItemId || args.review_item_id);
+  if (!itemId) throw new CreativeReviewError('itemId is required.', 'REVIEW_ITEM_ID_REQUIRED', 400);
 
   const allowedCategories = new Map(
     (config.categories || []).map((value) => [clean(value).toLowerCase(), value]),
@@ -1699,38 +1699,38 @@ export const saveReviewItemMetadata = async (input = {}) => {
     }
 
     const batchItems = getBatchItems(items, batchId).map(hydrateItem);
-    const familyItems = batchItems.filter((item) =>
-      item.creative_family_id === familyId && item.decision !== 'superseded');
-    if (!familyItems.length) {
-      throw new CreativeReviewError(`Family ${familyId} was not found in this batch.`, 'REVIEW_FAMILY_NOT_FOUND', 404);
+    const item = batchItems.find((candidate) =>
+      candidate.review_item_id === itemId && candidate.decision !== 'superseded');
+    if (!item) {
+      throw new CreativeReviewError(`Creative ${itemId} was not found in this batch.`, 'REVIEW_ITEM_NOT_FOUND', 404);
     }
 
     const timestamp = nowIso();
-    const updated = familyItems.map((item) => ({
+    const updatedItem = {
       ...item,
       category: canonicalCategory,
       plazas,
       version: Math.max(1, cleanInteger(item.version, 1)) + 1,
       updated_at: timestamp,
-    }));
+    };
     await updateRowPatches(
       sheets,
       spreadsheetId,
       CREATIVE_REVIEW_ITEMS_SHEET,
       CREATIVE_REVIEW_ITEM_HEADERS,
-      updated.map((item) => ({
-        rowNumber: item.__rowNumber,
+      [{
+        rowNumber: updatedItem.__rowNumber,
         patch: {
-          category: item.category,
-          plazas: item.plazas,
-          version: item.version,
-          updated_at: item.updated_at,
+          category: updatedItem.category,
+          plazas: updatedItem.plazas,
+          version: updatedItem.version,
+          updated_at: updatedItem.updated_at,
         },
-      })),
+      }],
     );
 
-    const updatedById = new Map(updated.map((item) => [item.review_item_id, item]));
-    const allBatchItems = batchItems.map((item) => updatedById.get(item.review_item_id) || item);
+    const allBatchItems = batchItems.map((candidate) =>
+      candidate.review_item_id === updatedItem.review_item_id ? updatedItem : candidate);
     batch = updateBatchSummary(batch, allBatchItems, timestamp);
     batch.version = Math.max(1, cleanInteger(batch.version, 1)) + 1;
     await updateRowPatches(
@@ -1746,7 +1746,7 @@ export const saveReviewItemMetadata = async (input = {}) => {
 
     return {
       batch: hydrateBatch(batch, spreadsheetId),
-      items: updated.map(hydrateItem),
+      items: [hydrateItem(updatedItem)],
     };
   });
 };

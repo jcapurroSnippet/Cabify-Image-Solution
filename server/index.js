@@ -701,13 +701,13 @@ app.patch('/api/creative-reviews/batches/:batchId/items/metadata', async (reques
     const result = await saveReviewItemMetadata({
       sheetsUrl: request.body?.sheetsUrl || request.query.sheetsUrl,
       batchId: request.params.batchId,
-      familyId: request.body?.familyId,
+      itemId: request.body?.itemId || request.body?.reviewItemId,
       category: request.body?.category,
       plazas: request.body?.plazas,
     });
     return response.status(200).json(result);
   } catch (error) {
-    return sendCreativeReviewError(response, error, 'Failed to update creative family category and plaza.');
+    return sendCreativeReviewError(response, error, 'Failed to update creative category and plaza.');
   }
 });
 

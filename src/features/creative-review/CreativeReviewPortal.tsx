@@ -27,7 +27,7 @@ import {
   finalizeReviewBatch,
   finalizePublicReview,
   updateReviewBatchDecisions,
-  updateReviewFamilyMetadata,
+  updateReviewItemMetadata,
   updatePublicDecisions,
 } from './services/creativeReviewApi';
 import type {
@@ -74,7 +74,7 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
 const LOCKED_BATCH_STATUSES: ReviewBatchStatus[] = ['publishing', 'published', 'publish_failed', 'revoked'];
 const META_REQUIRED_RATIOS = ['1:1', '9:16', '16:9'];
 // Mirrors the batch-level options in AspectRatioTab's "Batch from Sheets" form.
-const FAMILY_CATEGORY_OPTIONS = ['Generic', 'Promo', 'Alianzas'];
+const ITEM_CATEGORY_OPTIONS = ['Generic', 'Promo', 'Alianzas'];
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Ocurrió un error inesperado.';
@@ -147,11 +147,6 @@ const getMissingMetaRatios = (familyItems: CreativeReviewItem[]) => {
   const availableRatios = new Set(familyItems.map((item) => normalizeRatio(item.ratio)));
   return META_REQUIRED_RATIOS.filter((ratio) =>
     availableRatios.has(ratio) && !approvedRatios.has(ratio));
-};
-
-const getFamilySingleValue = (familyItems: CreativeReviewItem[], pick: (item: CreativeReviewItem) => string) => {
-  const values = Array.from(new Set(familyItems.map((item) => pick(item).trim()).filter(Boolean)));
-  return values.length === 1 ? values[0] : '';
 };
 
 const getFamilyContextLabel = (familyItems: CreativeReviewItem[]) => {
@@ -314,15 +309,15 @@ function ReviewedDetails({
   return <details ref={detailsRef} className={className}>{children}</details>;
 }
 
-function FamilyMetadataEditor({
-  familyId,
+function ItemMetadataEditor({
+  itemId,
   initialCategory,
   initialPlazas,
   isSaving,
   error,
   onSave,
 }: {
-  familyId: string;
+  itemId: string;
   initialCategory: string;
   initialPlazas: string;
   isSaving: boolean;
@@ -335,13 +330,13 @@ function FamilyMetadataEditor({
   useEffect(() => {
     setCategory(initialCategory);
     setPlazas(initialPlazas);
-  }, [familyId, initialCategory, initialPlazas]);
+  }, [itemId, initialCategory, initialPlazas]);
 
   const isDirty = category.trim() !== initialCategory.trim() || plazas.trim() !== initialPlazas.trim();
   const canSave = !isSaving && isDirty && category.trim() !== '' && plazas.trim() !== '';
 
   return (
-    <div className="mt-2 flex flex-wrap items-end gap-3 rounded-xl border border-violet-100 bg-violet-50/50 p-3">
+    <div className="mt-3 grid grid-cols-2 items-end gap-2 rounded-xl border border-violet-100 bg-violet-50/50 p-3">
       <label className="text-xs font-semibold text-slate-600">
         Categoría
         <select
@@ -349,10 +344,10 @@ function FamilyMetadataEditor({
           onChange={(event) => setCategory(event.target.value)}
           disabled={isSaving}
           style={{ colorScheme: 'light' }}
-          className="mt-1 block h-9 w-36 rounded-lg border border-slate-300 bg-white px-2.5 text-sm font-medium text-slate-900 outline-none hover:border-violet-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
+          className="mt-1 block h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm font-medium text-slate-900 outline-none hover:border-violet-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
         >
           <option value="" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Sin definir</option>
-          {FAMILY_CATEGORY_OPTIONS.map((option) => (
+          {ITEM_CATEGORY_OPTIONS.map((option) => (
             <option key={option} value={option} style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>{option}</option>
           ))}
         </select>
@@ -364,19 +359,19 @@ function FamilyMetadataEditor({
           onChange={(event) => setPlazas(event.target.value)}
           disabled={isSaving}
           placeholder="ALL, BUE, CBA…"
-          className="mt-1 block h-9 w-44 rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 outline-none hover:border-violet-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
+          className="mt-1 block h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 outline-none hover:border-violet-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-100 disabled:opacity-50"
         />
       </label>
       <button
         type="button"
         onClick={() => onSave(category.trim(), plazas.trim())}
         disabled={!canSave}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-violet-600 px-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+        className="col-span-full inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
       >
         {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         Guardar
       </button>
-      {error && <span className="text-xs font-medium text-red-600">{error}</span>}
+      {error && <span className="col-span-full text-xs font-medium text-red-600">{error}</span>}
     </div>
   );
 }
@@ -407,7 +402,7 @@ export default function CreativeReviewPortal({
   const [reviewerEmail, setReviewerEmail] = useState('');
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
-  const [metadataSavingFamilyId, setMetadataSavingFamilyId] = useState<string | null>(null);
+  const [metadataSavingIds, setMetadataSavingIds] = useState<Set<string>>(new Set());
   const [metadataErrors, setMetadataErrors] = useState<Map<string, string>>(new Map());
   const exchangePromiseRef = useRef<Promise<void> | null>(null);
   const sessionReadyRef = useRef(false);
@@ -565,22 +560,26 @@ export default function CreativeReviewPortal({
     }
   };
 
-  const saveFamilyMetadata = async (familyId: string, category: string, plazas: string) => {
+  const saveItemMetadata = async (itemId: string, category: string, plazas: string) => {
     if (!isInternalWorkspace || isLocked) return;
-    setMetadataSavingFamilyId(familyId);
+    setMetadataSavingIds((current) => new Set(current).add(itemId));
     setMetadataErrors((current) => {
       const next = new Map(current);
-      next.delete(familyId);
+      next.delete(itemId);
       return next;
     });
     try {
-      const payload = await updateReviewFamilyMetadata(batchId!, sheetsUrl!, familyId, category, plazas);
+      const payload = await updateReviewItemMetadata(batchId!, sheetsUrl!, itemId, category, plazas);
       if (payload.batch.id) setBatch((current) => current ? { ...current, ...payload.batch } : payload.batch);
       if (payload.items.length > 0) setItems((current) => mergeItems(current, payload.items));
     } catch (error) {
-      setMetadataErrors((current) => new Map(current).set(familyId, getErrorMessage(error)));
+      setMetadataErrors((current) => new Map(current).set(itemId, getErrorMessage(error)));
     } finally {
-      setMetadataSavingFamilyId(null);
+      setMetadataSavingIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
     }
   };
 
@@ -725,6 +724,16 @@ export default function CreativeReviewPortal({
           <div>
             <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Creativo generado</p>
             <ReviewImage url={item.imageUrl} label={`Creativo ${item.label || item.variant}`} onZoom={(url, label) => setZoomedImage({ url, label })} />
+            {isInternalWorkspace && !isLocked && (
+              <ItemMetadataEditor
+                itemId={item.id}
+                initialCategory={item.category}
+                initialPlazas={item.plaza}
+                isSaving={metadataSavingIds.has(item.id)}
+                error={metadataErrors.get(item.id)}
+                onSave={(category, plazas) => void saveItemMetadata(item.id, category, plazas)}
+              />
+            )}
           </div>
         </div>
 
@@ -777,6 +786,17 @@ export default function CreativeReviewPortal({
           <p className="mt-2 truncate text-[11px] text-slate-500" title={`${item.ratio} · ${item.category} · ${item.plaza} · versión ${item.version}`}>
             {item.ratio} · {item.category} · {item.plaza} · v{item.version}
           </p>
+
+          {isInternalWorkspace && !isLocked && (
+            <ItemMetadataEditor
+              itemId={item.id}
+              initialCategory={item.category}
+              initialPlazas={item.plaza}
+              isSaving={metadataSavingIds.has(item.id)}
+              error={metadataErrors.get(item.id)}
+              onSave={(category, plazas) => void saveItemMetadata(item.id, category, plazas)}
+            />
+          )}
 
           {item.status === 'rejected' && item.reason && (
             <p className="review-compact-reason mt-2 text-xs leading-relaxed text-red-800" title={item.reason}>
@@ -1039,18 +1059,6 @@ export default function CreativeReviewPortal({
                       formatCount(pendingCount, 'pendiente', 'pendientes'),
                     ].filter(Boolean).join(' · ')}
                   </p>
-                  {isInternalWorkspace && !isLocked && (
-                    <div className="mt-2">
-                      <FamilyMetadataEditor
-                        familyId={familyId}
-                        initialCategory={getFamilySingleValue(completeFamily, (item) => item.category)}
-                        initialPlazas={getFamilySingleValue(completeFamily, (item) => item.plaza)}
-                        isSaving={metadataSavingFamilyId === familyId}
-                        error={metadataErrors.get(familyId)}
-                        onSave={(category, plazas) => void saveFamilyMetadata(familyId, category, plazas)}
-                      />
-                    </div>
-                  )}
                 </div>
                 {!isLocked && (
                   <div className="flex shrink-0 gap-2">
