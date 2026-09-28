@@ -187,11 +187,29 @@ export const getAuthClient = async () => {
 };
 
 /**
+ * How long any one Drive or Sheets call may run before it is abandoned.
+ *
+ * gaxios defaults to no timeout, so a stalled call never settles and never
+ * throws. Inside the batch that is the worst kind of failure: the request
+ * holding the chunk open keeps writing keepalives while nothing progresses,
+ * and the operator is told only that the connection ended before the chunk was
+ * persisted — because nothing ever failed. Bounded, the same stall is an
+ * ordinary error the caller can retry or report.
+ *
+ * Generous on purpose: these are small JSON calls plus image uploads, and the
+ * point is to catch a call that is stuck, not one that is slow.
+ */
+const GOOGLE_REQUEST_TIMEOUT_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.GOOGLE_REQUEST_TIMEOUT_MS || '', 10) || 120_000,
+);
+
+/**
  * Create an authorized Sheets client
  */
 export const getSheetsClient = async () => {
   const auth = await getAuthClient();
-  return google.sheets({ version: 'v4', auth });
+  return google.sheets({ version: 'v4', auth, timeout: GOOGLE_REQUEST_TIMEOUT_MS });
 };
 
 /**
@@ -199,5 +217,5 @@ export const getSheetsClient = async () => {
  */
 export const getDriveClient = async () => {
   const auth = await getAuthClient();
-  return google.drive({ version: 'v3', auth });
+  return google.drive({ version: 'v3', auth, timeout: GOOGLE_REQUEST_TIMEOUT_MS });
 };

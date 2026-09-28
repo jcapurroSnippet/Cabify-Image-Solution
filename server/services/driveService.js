@@ -16,37 +16,80 @@ const getApiErrorDetails = (error) => {
     .join(' - ');
 };
 
+const UPLOAD_ATTEMPTS = Math.max(
+  1,
+  Number.parseInt(process.env.DRIVE_UPLOAD_ATTEMPTS || '', 10) || 3,
+);
+
+/**
+ * A stalled or dropped upload is worth another go, and a timeout makes one
+ * possible: without it the call hangs instead of failing. An abort says
+ * "aborted", never "timed out", so it has to be named here explicitly.
+ */
+const isRetryableUploadError = (error) => {
+  const message = String(error?.message || error || '');
+  const name = String(error?.name || error?.cause?.name || '');
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const status = Number(error?.response?.status || error?.status);
+  return name === 'AbortError'
+    || code === 'ABORT_ERR'
+    || /\baborted\b/i.test(message)
+    || status === 429
+    || (status >= 500 && status <= 599)
+    || /^(ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN)$/.test(code)
+    || /ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|time(?:d?\s*out|out)/i.test(message);
+};
+
 export const uploadBufferToDrive = async (buffer, fileName, mimeType = 'image/png', folderId) => {
-  try {
-    const drive = await getDriveClient();
+  const drive = await getDriveClient();
 
-    const fileMetadata = {
-      name: fileName,
-      mimeType,
-      parents: folderId ? [folderId] : undefined,
-    };
+  const fileMetadata = {
+    name: fileName,
+    mimeType,
+    parents: folderId ? [folderId] : undefined,
+  };
 
-    const response = await drive.files.create({
-      resource: fileMetadata,
-      requestBody: fileMetadata,
-      media: {
-        mimeType,
-        body: Readable.from(buffer),
-      },
-      fields: 'id, name, webViewLink, webContentLink, mimeType',
-      supportsAllDrives: true,
-    });
+  let lastError;
+  for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await drive.files.create(
+        {
+          resource: fileMetadata,
+          requestBody: fileMetadata,
+          media: {
+            mimeType,
+            // Built inside the loop: a stream is consumed by the attempt that
+            // sends it, so a retry that reuses it uploads nothing.
+            body: Readable.from(buffer),
+          },
+          fields: 'id, name, webViewLink, webContentLink, mimeType',
+          supportsAllDrives: true,
+        },
+        // gaxios would replay the request body on its own retries, and this one
+        // is a spent stream by then. Own the retry instead, where a fresh body
+        // can be built for each attempt.
+        { retry: false },
+      );
 
-    return {
-      fileId: response.data.id,
-      name: response.data.name,
-      webViewLink: response.data.webViewLink,
-      webContentLink: response.data.webContentLink,
-      mimeType: response.data.mimeType,
-    };
-  } catch (error) {
-    throw new Error(`Failed to upload file to Drive: ${getApiErrorDetails(error)}`);
+      return {
+        fileId: response.data.id,
+        name: response.data.name,
+        webViewLink: response.data.webViewLink,
+        webContentLink: response.data.webContentLink,
+        mimeType: response.data.mimeType,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt >= UPLOAD_ATTEMPTS || !isRetryableUploadError(error)) break;
+      console.warn(
+        `[DRIVE] Upload of "${fileName}" failed on attempt ${attempt}/${UPLOAD_ATTEMPTS}: `
+        + `${getApiErrorDetails(error)}. Retrying.`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** (attempt - 1))));
+    }
   }
+
+  throw new Error(`Failed to upload file to Drive: ${getApiErrorDetails(lastError)}`);
 };
 
 /**
