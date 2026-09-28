@@ -6,7 +6,9 @@ import {
   buildBatchVariationSheetFormatRequests,
   buildBatchVariationRows,
   buildBatchVariationSourceOutput,
+  buildSourceRatioCellUpdates,
   findSixteenNineImageColumn,
+  findSourceRatioColumns,
   orderRegisteredReviewItemIds,
   summarizeBatchVariations,
 } from '../server/services/batchProcessor.js';
@@ -355,7 +357,55 @@ test('review generation IDs stay stable per uploaded artifact and change for a r
   assert.notEqual(build('https://drive.google.com/file/d/file-a/view'), build('https://drive.google.com/file/d/file-b/view'));
 });
 
-test('review items carry no source cell now that the source sheet is read-only', () => {
+test('finds each ratio column and the blank slots to its right', () => {
+  const headers = ['Preview de creatividad', '16.9 IMG', '1:1', '', '', '9:16', '', ''];
+
+  assert.deepEqual(findSourceRatioColumns(headers), {
+    '1:1': { start: 2, span: 3 },
+    '9:16': { start: 5, span: 3 },
+  });
+});
+
+test('a ratio span stops at the next labelled column and at the grid edge', () => {
+  assert.deepEqual(findSourceRatioColumns(['16.9 IMG', '1x1', 'Copy', '9.16'], 5), {
+    '1:1': { start: 1, span: 1 },
+    '9:16': { start: 3, span: 2 },
+  });
+});
+
+test('ratio columns ignore the 16:9 source, 1.91:1 and video headers', () => {
+  assert.deepEqual(findSourceRatioColumns(['16.9 IMG', '1.91:1 IMG', '9:16 VIDEO']), {
+    '1:1': null,
+    '9:16': null,
+  });
+});
+
+test('writes each variant into its own source cell and clears unused slots', () => {
+  const updates = buildSourceRatioCellUpdates({
+    sheetName: 'Sheet1',
+    rowNumber: 2,
+    ratioColumns: { '1:1': { start: 2, span: 3 }, '9:16': { start: 5, span: 3 } },
+    uploadedLinks: { '1:1': ['a1', 'a2', 'a3'], '9:16': ['b1', 'b2'] },
+  });
+
+  assert.deepEqual(updates, [
+    { range: "'Sheet1'!C2:E2", values: [['a1', 'a2', 'a3']] },
+    { range: "'Sheet1'!F2:H2", values: [['b1', 'b2', '']] },
+  ]);
+});
+
+test('a narrow ratio span keeps overflow links in its last cell', () => {
+  const updates = buildSourceRatioCellUpdates({
+    sheetName: 'Sheet1',
+    rowNumber: 7,
+    ratioColumns: { '1:1': { start: 1, span: 1 }, '9:16': null },
+    uploadedLinks: { '1:1': ['a1', 'a2', 'a3'], '9:16': ['b1'] },
+  });
+
+  assert.deepEqual(updates, [{ range: "'Sheet1'!B7:B7", values: [['a1\na2\na3']] }]);
+});
+
+test('review items carry no source cell', () => {
   const items = buildBatchReviewItems({
     batchId: 'review-123',
     spreadsheetId: 'sheet-456',

@@ -102,6 +102,52 @@ export const findSixteenNineImageColumn = (headers = [], urlCounts = {}) => {
   return candidates[0]?.index ?? -1;
 };
 
+const RATIO_HEADER_MARKERS = {
+  '1:1': /(^|\D)1\s*[.:/x-]\s*1(\D|$)/,
+  '9:16': /(^|\D)9\s*[.:/x-]\s*16(\D|$)/,
+};
+
+/**
+ * Locate where each batch ratio is written back in the source tab. A ratio's
+ * header sits over the first of its variant columns and the blank headers to
+ * its right are the remaining slots, up to one per template. A labelled column
+ * ends the span, so a write-back never lands in someone else's data.
+ */
+export const findSourceRatioColumns = (headers = [], columnCount = headers.length) => {
+  const texts = headers.map(normalizeHeaderText);
+  return Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => {
+    const start = texts.findIndex(
+      (header) => header && !isVideoHeader(header) && RATIO_HEADER_MARKERS[ratio].test(header),
+    );
+    if (start < 0) return [ratio, null];
+    let span = 1;
+    while (span < EXPECTED_VARIATIONS_PER_RATIO && start + span < columnCount && !texts[start + span]) {
+      span += 1;
+    }
+    return [ratio, { start, span }];
+  }));
+};
+
+/**
+ * The source-tab cells one finished row writes: variant N of a ratio goes in
+ * the N-th column of its span. Slots past the variations that composed are
+ * cleared, so a re-run that lost a template leaves no link from an older batch
+ * behind. A span narrower than the variations keeps the overflow in its last
+ * cell rather than dropping it.
+ */
+export const buildSourceRatioCellUpdates = ({ sheetName, rowNumber, ratioColumns, uploadedLinks }) =>
+  BATCH_ASPECT_RATIOS.flatMap((ratio) => {
+    const column = ratioColumns?.[ratio];
+    if (!column) return [];
+    const links = uploadedLinks?.[ratio] || [];
+    const cells = Array.from({ length: column.span }, (_, index) => (
+      index === column.span - 1 ? links.slice(index).join('\n') : links[index] || ''
+    ));
+    const first = columnIndexToLetter(column.start);
+    const last = columnIndexToLetter(column.start + column.span - 1);
+    return [{ range: buildRange(sheetName, `${first}${rowNumber}:${last}${rowNumber}`), values: [cells] }];
+  });
+
 /**
  * A ratio ships one variation per approved template and the operator picks one
  * of them in review, so a template that could not be composed — copy that
@@ -1506,16 +1552,30 @@ export const processBatch = async (options) => {
 
     let imageUrlColumnName = columnLetter;
     let headerRowIndex = 0;
-    const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
+    let headerTexts = [];
+    const headerSheet = headerResponse.data.sheets?.[0];
+    const gridData = headerSheet?.data?.[0];
     if (gridData && gridData.rowData) {
       // Find header row (keyword-aware)
       headerRowIndex = findHeaderRowIndex(gridData.rowData);
 
       const headerRow = gridData.rowData[headerRowIndex]?.values || [];
+      headerTexts = headerRow.map((cell) => cell?.userEnteredValue?.stringValue || cell?.formattedValue || '');
       const headerCell = headerRow[imageUrlColumnIndex];
       if (headerCell?.userEnteredValue?.stringValue) {
         imageUrlColumnName = headerCell.userEnteredValue.stringValue;
       }
+    }
+    const sourceRatioColumns = findSourceRatioColumns(
+      headerTexts,
+      headerSheet?.properties?.gridProperties?.columnCount,
+    );
+    const missingSourceRatios = BATCH_ASPECT_RATIOS.filter((ratio) => !sourceRatioColumns[ratio]);
+    if (missingSourceRatios.length) {
+      console.warn(
+        `[BATCH] "${sheetName}" has no ${missingSourceRatios.join(' / ')} column; `
+        + `those links are written only to "${BATCH_VARIATIONS_SHEET}".`,
+      );
     }
 
     const targetRatios = BATCH_ASPECT_RATIOS;
@@ -1581,8 +1641,8 @@ export const processBatch = async (options) => {
       });
     }
 
-    // Step 5: Prepare the output tab. The source sheet is read-only from here
-    // on, so this is the only place batch output ever lands.
+    // Step 5: Prepare the output tab. batch_variations is the record the batch
+    // resumes from; the source tab's ratio columns only mirror its links.
     const variationsSheetId = await ensureSheetWithHeaders(
       sheetsClient,
       spreadsheetId,
@@ -1774,6 +1834,33 @@ export const processBatch = async (options) => {
             plazas: reviewMetadata?.plazas || row.Ciudad || '',
           }),
         );
+
+        // Mirror the links into the source tab. The row is already persisted
+        // above and a resume skips it, so a failure here must not fail the row:
+        // that would not retry the write, only hide links that do exist.
+        const sourceUpdates = buildSourceRatioCellUpdates({
+          sheetName,
+          rowNumber,
+          ratioColumns: sourceRatioColumns,
+          uploadedLinks,
+        });
+        if (sourceUpdates.length) {
+          try {
+            await sheetsClient.spreadsheets.values.batchUpdate({
+              spreadsheetId,
+              requestBody: { valueInputOption: 'RAW', data: sourceUpdates },
+            });
+          } catch (writeBackError) {
+            const warning = `Row ${rowNumber}: links are in "${BATCH_VARIATIONS_SHEET}" but could not be written to "${sheetName}": ${writeBackError.message}`;
+            console.warn(`[BATCH] ${warning}`);
+            rowWarnings.push(warning);
+          }
+        }
+        if (missingSourceRatios.length) {
+          rowWarnings.push(
+            `Row ${rowNumber}: "${sheetName}" has no ${missingSourceRatios.join(' / ')} column; those links are only in "${BATCH_VARIATIONS_SHEET}".`,
+          );
+        }
 
         onProgress?.({
           rowNumber,

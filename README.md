@@ -108,12 +108,20 @@ the `.../edit?gid=NNN#gid=NNN` form). In that tab, Batch explicitly selects the
 `16:9` image column and generates exactly three `1:1` variants plus three `9:16`
 variants for every row that carries a source image URL.
 
-**The source tab is read-only.** Output goes to a dedicated `batch_variations` tab
-in the same spreadsheet, which the app creates and migrates itself — one row per
-generated variation, carrying the `review_batch_id → review_item_id` pair that
-ties it to Creative Review plus a direct `creative_review_url`. You do not
-prepare output columns, and nothing in
-your source tab is overwritten. The output tab is highlighted in Cabify purple,
+Output goes to a dedicated `batch_variations` tab in the same spreadsheet, which
+the app creates and migrates itself — one row per generated variation, carrying
+the `review_batch_id → review_item_id` pair that ties it to Creative Review plus
+a direct `creative_review_url`. That tab is the record the batch resumes from.
+
+The links are also mirrored into the source tab when it has ratio columns: a
+header such as `1:1` or `9:16` (also `1x1`, `9.16`) marks the first of that
+ratio's variant columns, and the blank-headed columns to its right take the
+next variants, up to three. A labelled column ends the span, so nothing outside
+it is overwritten; a narrower span keeps the extra links in its last cell. Each
+finished row rewrites its own cells, and slots with no variation are cleared. A
+missing ratio column or a failed write-back is reported as a row warning — the
+row itself still succeeds, since its links are already in `batch_variations`.
+The output tab is highlighted in Cabify purple,
 has a frozen header and filters, and the UI links directly to both the tab and
 the completed review batch.
 

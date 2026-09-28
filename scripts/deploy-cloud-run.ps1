@@ -132,6 +132,13 @@ $deployArgs += @("--max-instances", "1", "--concurrency", "1")
 # ceiling; past roughly six rows the batch needs to move off the request path.
 $deployArgs += @("--timeout", "3600")
 
+# A row peaks while its variations are uploaded: the source image, six composed
+# variations as data URLs plus their upload buffers, and sharp's native memory
+# are all live at once. The 512Mi default is exceeded there, Cloud Run kills the
+# container, and the UI reports only that the batch connection ended before the
+# chunk was persisted.
+$deployArgs += @("--memory", "2Gi")
+
 if ($setSecretPairs.Count -gt 0) {
   $deployArgs += "--set-secrets"
   $deployArgs += ("^~^" + ($setSecretPairs -join "~"))
