@@ -9,6 +9,8 @@ import {
   buildSourceRatioCellUpdates,
   findSixteenNineImageColumn,
   findSourceRatioColumns,
+  getMissingSourceRatios,
+  getSourceRatioLinks,
   orderRegisteredReviewItemIds,
   summarizeBatchVariations,
 } from '../server/services/batchProcessor.js';
@@ -380,6 +382,29 @@ test('ratio columns ignore the 16:9 source, 1.91:1 and video headers', () => {
   });
 });
 
+test('detects formats that already have pieces and leaves only missing ratios to generate', () => {
+  const headers = ['16.9 IMG', '1:1', '', '', '9:16', '', ''];
+  const ratioColumns = findSourceRatioColumns(headers);
+  const rowWithSquare = {
+    '16.9 IMG': 'https://drive.google.com/source',
+    '1:1': 'https://drive.google.com/existing-square',
+    ColumnC: '',
+    ColumnD: '',
+    '9:16': '',
+    ColumnF: '',
+    ColumnG: '',
+  };
+
+  assert.deepEqual(getSourceRatioLinks(rowWithSquare, ratioColumns, headers), {
+    '1:1': ['https://drive.google.com/existing-square'],
+    '9:16': [],
+  });
+  assert.deepEqual(getMissingSourceRatios(rowWithSquare, ratioColumns, headers), ['9:16']);
+
+  const completeRow = { ...rowWithSquare, ColumnF: 'https://drive.google.com/existing-vertical' };
+  assert.deepEqual(getMissingSourceRatios(completeRow, ratioColumns, headers), []);
+});
+
 test('writes each variant into its own source cell and clears unused slots', () => {
   const updates = buildSourceRatioCellUpdates({
     sheetName: 'Sheet1',
@@ -403,6 +428,20 @@ test('a narrow ratio span keeps overflow links in its last cell', () => {
   });
 
   assert.deepEqual(updates, [{ range: "'Sheet1'!B7:B7", values: [['a1\na2\na3']] }]);
+});
+
+test('writes only newly generated ratios and preserves populated formats', () => {
+  const updates = buildSourceRatioCellUpdates({
+    sheetName: 'Sheet1',
+    rowNumber: 2,
+    ratioColumns: { '1:1': { start: 2, span: 3 }, '9:16': { start: 5, span: 3 } },
+    uploadedLinks: { '1:1': [], '9:16': ['new-vertical-1', 'new-vertical-2'] },
+    ratios: ['9:16'],
+  });
+
+  assert.deepEqual(updates, [
+    { range: "'Sheet1'!F2:H2", values: [['new-vertical-1', 'new-vertical-2', '']] },
+  ]);
 });
 
 test('review items carry no source cell', () => {

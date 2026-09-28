@@ -105,7 +105,7 @@ State lives in two Sheets tabs, created and migrated automatically:
 
 Point it at a Google Sheet URL whose `gid` identifies the source tab (including
 the `.../edit?gid=NNN#gid=NNN` form). In that tab, Batch explicitly selects the
-`16:9` image column and generates exactly three `1:1` variants plus three `9:16`
+`16:9` image column and generates up to three `1:1` variants plus three `9:16`
 variants for every row that carries a source image URL.
 
 Output goes to a dedicated `batch_variations` tab in the same spreadsheet, which
@@ -113,12 +113,17 @@ the app creates and migrates itself — one row per generated variation, carryin
 the `review_batch_id → review_item_id` pair that ties it to Creative Review plus
 a direct `creative_review_url`. That tab is the record the batch resumes from.
 
+Before generating a row, Batch inspects its `1:1` and `9:16` output spans. If
+any cell in a format already contains a piece, that complete format is left
+untouched and only the missing format is generated. Rows that already have both
+formats are counted as complete without calling the image model.
+
 The links are also mirrored into the source tab when it has ratio columns: a
 header such as `1:1` or `9:16` (also `1x1`, `9.16`) marks the first of that
 ratio's variant columns, and the blank-headed columns to its right take the
 next variants, up to three. A labelled column ends the span, so nothing outside
 it is overwritten; a narrower span keeps the extra links in its last cell. Each
-finished row rewrites its own cells, and slots with no variation are cleared. A
+finished row writes only newly generated formats, and their unused slots are cleared. A
 missing ratio column or a failed write-back is reported as a row warning — the
 row itself still succeeds, since its links are already in `batch_variations`.
 The output tab is highlighted in Cabify purple,

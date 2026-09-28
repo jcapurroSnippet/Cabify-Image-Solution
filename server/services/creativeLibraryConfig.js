@@ -42,8 +42,8 @@ export const BATCH_VARIATIONS_SHEET = 'batch_variations';
 
 /**
  * One row per variation produced by Batch from Sheets. This is where the batch
- * writes its output: the source tab is read-only, so no operator has to
- * pre-build ratio columns and nothing in their sheet gets overwritten.
+ * writes its canonical output. Source ratio columns are optional mirrors; the
+ * batch only fills formats that do not already contain operator-provided pieces.
  *
  * `review_item_id` is the link into `creative_review_items`, and
  * `creative_review_url` gives operators a direct way back into the review UI.

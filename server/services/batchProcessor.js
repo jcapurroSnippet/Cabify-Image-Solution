@@ -129,14 +129,42 @@ export const findSourceRatioColumns = (headers = [], columnCount = headers.lengt
 };
 
 /**
+ * Read the pieces already present in a source row for each output ratio.
+ * A populated cell is intentionally enough: operators may use Drive links,
+ * HYPERLINK formulas or another reference that must not be overwritten.
+ */
+export const getSourceRatioLinks = (row = {}, ratioColumns = {}, headers = []) =>
+  Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => {
+    const column = ratioColumns?.[ratio];
+    if (!column) return [ratio, []];
+    const values = Array.from({ length: column.span }, (_, offset) => {
+      const index = column.start + offset;
+      const header = String(headers[index] || '').trim() || `Column${columnIndexToLetter(index)}`;
+      return String(row?.[header] || '').trim();
+    }).filter(Boolean);
+    return [ratio, values];
+  }));
+
+export const getMissingSourceRatios = (row = {}, ratioColumns = {}, headers = []) => {
+  const links = getSourceRatioLinks(row, ratioColumns, headers);
+  return BATCH_ASPECT_RATIOS.filter((ratio) => links[ratio].length === 0);
+};
+
+/**
  * The source-tab cells one finished row writes: variant N of a ratio goes in
  * the N-th column of its span. Slots past the variations that composed are
  * cleared, so a re-run that lost a template leaves no link from an older batch
  * behind. A span narrower than the variations keeps the overflow in its last
  * cell rather than dropping it.
  */
-export const buildSourceRatioCellUpdates = ({ sheetName, rowNumber, ratioColumns, uploadedLinks }) =>
-  BATCH_ASPECT_RATIOS.flatMap((ratio) => {
+export const buildSourceRatioCellUpdates = ({
+  sheetName,
+  rowNumber,
+  ratioColumns,
+  uploadedLinks,
+  ratios = BATCH_ASPECT_RATIOS,
+}) =>
+  ratios.flatMap((ratio) => {
     const column = ratioColumns?.[ratio];
     if (!column) return [];
     const links = uploadedLinks?.[ratio] || [];
@@ -388,7 +416,8 @@ export const buildBatchVariationSourceOutput = ({
  *
  * `sourceTab` and `sourceRowNumber` deliberately point at the ORIGINAL sheet:
  * creativeLibraryService re-reads that row to infer category, plazas and family
- * when they are missing. Only the output pointer moved to batch_variations.
+ * when they are missing. Generated output is persisted in batch_variations and
+ * may also be mirrored into empty ratio cells in the source tab.
  */
 export const buildBatchReviewItems = ({
   batchId,
@@ -437,7 +466,8 @@ export const buildBatchReviewItems = ({
         sourceTab: sheetName,
         sourceSpreadsheetId: spreadsheetId,
         sourceRowNumber: rowNumber,
-        // The source sheet is read-only now, so there is no output cell in it.
+        // Identity lives in batch_variations rather than in an optional mirror
+        // cell, which may already contain an operator-provided piece.
         sourceCell: '',
         sourceOutput,
         imageUrl,
@@ -590,7 +620,7 @@ export const summarizeBatchVariations = (
 
 const extractUrlFromFormula = (formula) => {
   if (typeof formula !== 'string') return null;
-  const match = formula.match(/HYPERLINK\(\s*["']([^"']+)["']/i);
+  const match = formula.match(/(?:HYPERLINK|IMAGE)\(\s*["']([^"']+)["']/i);
   return match ? match[1] : null;
 };
 
@@ -981,7 +1011,12 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
     }
 
     // Parse header
-    const headers = headerRow.values.map((cell, idx) => {
+    const columnCount = Math.max(
+      headerRow.values.length,
+      sheet.properties?.gridProperties?.columnCount || 0,
+    );
+    const headers = Array.from({ length: columnCount }, (_, idx) => {
+      const cell = headerRow.values[idx];
       if (!cell) return `Column${columnIndexToLetter(idx)}`;
       return cell.userEnteredValue?.stringValue || `Column${columnIndexToLetter(idx)}`;
     });
@@ -1015,6 +1050,10 @@ export const readSheetRowsWithHyperlinks = async (spreadsheetId, sheetName) => {
           rowObj[header] = cell.userEnteredValue.stringValue;
         } else if (cell.userEnteredValue?.numberValue) {
           rowObj[header] = String(cell.userEnteredValue.numberValue);
+        } else if (cell.userEnteredValue?.formulaValue) {
+          // Even a formula whose URL cannot be extracted is still populated
+          // and therefore protects that output format from regeneration.
+          rowObj[header] = cell.userEnteredValue.formulaValue;
         } else {
           rowObj[header] = '';
         }
@@ -1236,9 +1275,9 @@ export const detectImageUrlColumn = async (spreadsheetId, sheetName, onDebug) =>
 /**
  * Rebuild batch progress from the sheet, so a closed tab does not lose a run.
  *
- * Rows come from the source tab (that is what defines "how many"), completion
- * comes from batch_variations. The source tab is never written to any more, so
- * there is nothing there to infer progress from.
+ * Rows come from the source tab (that is what defines "how many"). Completion
+ * combines pieces already present in the source ratio columns with generated
+ * pieces persisted in batch_variations.
  */
 export const getBatchStatus = async (options) => {
   const { sheetsUrl, sheetName: providedSheetName, reviewBatchId } = options;
@@ -1267,10 +1306,14 @@ export const getBatchStatus = async (options) => {
 
   let headerRowIndex = 0;
   let headerNames = [];
-  const gridData = headerResponse.data.sheets?.[0]?.data?.[0];
+  let headerTexts = [];
+  const headerSheet = headerResponse.data.sheets?.[0];
+  const gridData = headerSheet?.data?.[0];
   if (gridData && gridData.rowData) {
     headerRowIndex = findHeaderRowIndex(gridData.rowData);
     const headerRow = gridData.rowData[headerRowIndex]?.values || [];
+    headerTexts = headerRow.map((cell) =>
+      cell?.userEnteredValue?.stringValue || cell?.formattedValue || '');
     headerNames = headerRow.map((cell, idx) => {
       const text = cell?.userEnteredValue?.stringValue;
       return text || `Column${columnIndexToLetter(idx)}`;
@@ -1281,11 +1324,16 @@ export const getBatchStatus = async (options) => {
     headerNames[imageUrlColumnIndex] || `Column${columnIndexToLetter(imageUrlColumnIndex)}`;
 
   const rows = await readSheetRowsWithHyperlinks(spreadsheetId, sheetName);
+  const sourceRatioColumns = findSourceRatioColumns(
+    headerTexts,
+    headerSheet?.properties?.gridProperties?.columnCount,
+  );
   const sourceRows = rows
     .map((row, rowIndex) => ({
       row,
       rowNumber: row.__rowNumber || (headerRowIndex + 2 + rowIndex),
       imageUrl: normalizeUrl(row[imageUrlColumnName]),
+      sourceRatioLinks: getSourceRatioLinks(row, sourceRatioColumns, headerTexts),
     }))
     .filter((entry) => entry.imageUrl);
   const totalRows = sourceRows.length;
@@ -1309,13 +1357,17 @@ export const getBatchStatus = async (options) => {
   let completedRows = 0;
   const completedMap = {};
 
-  for (const { rowNumber } of sourceRows) {
+  for (const { rowNumber, sourceRatioLinks } of sourceRows) {
     const variation = summary.rows[rowNumber];
-    if (variation?.status === 'completed') {
+    const links = Object.fromEntries(BATCH_ASPECT_RATIOS.map((ratio) => [
+      ratio,
+      sourceRatioLinks[ratio].length > 0 ? sourceRatioLinks[ratio] : variation?.links?.[ratio] || [],
+    ]));
+    if (BATCH_ASPECT_RATIOS.every((ratio) => links[ratio].length > 0)) {
       completedRows += 1;
       completedMap[rowNumber] = {
         status: 'completed',
-        links: variation.links,
+        links,
       };
     }
   }
@@ -1593,6 +1645,8 @@ export const processBatch = async (options) => {
         row,
         rowNumber: row.__rowNumber || (headerRowIndex + 2 + sourceIndex),
         imageUrl: normalizeUrl(row[imageUrlColumnName]),
+        sourceRatioLinks: getSourceRatioLinks(row, sourceRatioColumns, headerTexts),
+        missingSourceRatios: getMissingSourceRatios(row, sourceRatioColumns, headerTexts),
       }))
       .filter((entry) => entry.imageUrl);
     const totalRows = sourceRows.length;
@@ -1603,42 +1657,49 @@ export const processBatch = async (options) => {
     }
 
     if (reviewMetadata && !reviewBatchId) {
-      const expectedSourceRows = totalRows;
+      const rowsNeedingGeneration = sourceRows.filter((entry) => entry.missingSourceRatios.length > 0);
+      const expectedSourceRows = rowsNeedingGeneration.length;
+      const expectedRatioCount = rowsNeedingGeneration.reduce(
+        (total, entry) => total + entry.missingSourceRatios.length,
+        0,
+      );
       // A range, not a number: every row must ship something reviewable for
-      // every ratio, and at most one piece per template. Declaring the ceiling
-      // as an exact count would refuse the whole review over one variation
-      // that did not compose.
-      const minimumItemCount = expectedSourceRows * targetRatios.length;
+      // every missing ratio, and at most one piece per template. Ratios already
+      // populated in the source Sheet are deliberately excluded.
+      const minimumItemCount = expectedRatioCount;
       const maximumItemCount = minimumItemCount * EXPECTED_VARIATIONS_PER_RATIO;
-      const reviewBatch = await createReviewBatch({
-        sheetsUrl,
-        title: reviewMetadata.title,
-        sourceType: 'batch_sheets',
-        sourceSheetName: sheetName,
-        sourceTab: sheetName,
-        sourceSpreadsheetId: spreadsheetId,
-        createdBy: reviewMetadata.createdBy,
-        category: reviewMetadata.category,
-        plazas: reviewMetadata.plazas,
-        metadata: {
-          minimumItemCount,
-          maximumItemCount,
-          expectedSourceRows,
-          targetRatios,
-          expectedVariantsPerRatio: EXPECTED_VARIATIONS_PER_RATIO,
-          ...(account && { account }),
-        },
-      });
-      reviewBatchId = getCreatedReviewBatchId(reviewBatch);
-      if (!reviewBatchId) {
-        throw new Error('Review batch was created without an identifier.');
-      }
+      if (minimumItemCount > 0) {
+        const reviewBatch = await createReviewBatch({
+          sheetsUrl,
+          title: reviewMetadata.title,
+          sourceType: 'batch_sheets',
+          sourceSheetName: sheetName,
+          sourceTab: sheetName,
+          sourceSpreadsheetId: spreadsheetId,
+          createdBy: reviewMetadata.createdBy,
+          category: reviewMetadata.category,
+          plazas: reviewMetadata.plazas,
+          metadata: {
+            minimumItemCount,
+            maximumItemCount,
+            expectedSourceRows,
+            targetRatios,
+            expectedVariantsPerRatio: EXPECTED_VARIATIONS_PER_RATIO,
+            skipPopulatedSourceRatios: true,
+            ...(account && { account }),
+          },
+        });
+        reviewBatchId = getCreatedReviewBatchId(reviewBatch);
+        if (!reviewBatchId) {
+          throw new Error('Review batch was created without an identifier.');
+        }
 
-      onProgress?.({
-        state: 'review-batch-created',
-        message: `Review batch ${reviewBatchId} created`,
-        reviewBatchId,
-      });
+        onProgress?.({
+          state: 'review-batch-created',
+          message: `Review batch ${reviewBatchId} created`,
+          reviewBatchId,
+        });
+      }
     }
 
     // Step 5: Prepare the output tab. batch_variations is the record the batch
@@ -1676,9 +1737,26 @@ export const processBatch = async (options) => {
         sourceRows.map((entry) => [entry.rowNumber, entry.imageUrl]),
       ),
     });
-    const pendingSourceRows = sourceRows.filter(
-      (entry) => existingSummary.rows[entry.rowNumber]?.status !== 'completed',
-    );
+    const pendingSourceRows = sourceRows
+      .map((entry) => ({
+        ...entry,
+        ratiosToGenerate: entry.missingSourceRatios.filter(
+          (ratio) => (existingSummary.rows[entry.rowNumber]?.links?.[ratio] || []).length === 0,
+        ),
+      }))
+      .filter((entry) => entry.ratiosToGenerate.length > 0);
+    const populatedSourceRows = sourceRows.filter((entry) => entry.missingSourceRatios.length === 0);
+    for (const entry of populatedSourceRows) {
+      onProgress?.({
+        rowNumber: entry.rowNumber,
+        totalRows,
+        status: 'skipped',
+        links: entry.sourceRatioLinks,
+        rowData: entry.row,
+        warnings: [`Row ${entry.rowNumber}: 1:1 and 9:16 already contain pieces; generation skipped.`],
+        ...(reviewBatchId && { reviewBatchId }),
+      });
+    }
     const rowsForRequest = pendingSourceRows.slice(0, rowsPerRequest);
 
     // Step 6: Process a bounded chunk. The browser opens the next request with
@@ -1691,14 +1769,23 @@ export const processBatch = async (options) => {
     );
 
     for (let chunkIndex = 0; chunkIndex < rowsForRequest.length; chunkIndex++) {
-      const { row, rowNumber, imageUrl } = rowsForRequest[chunkIndex];
+      const {
+        row,
+        rowNumber,
+        imageUrl,
+        missingSourceRatios,
+        ratiosToGenerate,
+      } = rowsForRequest[chunkIndex];
       const currentRow = totalRows - pendingSourceRows.length + chunkIndex + 1;
       let uploadedLinks = createEmptyRatioLinks();
       let driveFileIds = createEmptyRatioLinks();
       let reviewRegistrationAttempted = false;
       // A row that ships fewer variations than templates still succeeds, so the
       // shortfall has to travel with the result or it disappears silently.
-      const rowWarnings = [];
+      const populatedRatios = targetRatios.filter((ratio) => !missingSourceRatios.includes(ratio));
+      const rowWarnings = populatedRatios.length > 0
+        ? [`Row ${rowNumber}: skipped populated format(s): ${populatedRatios.join(', ')}.`]
+        : [];
 
       try {
         console.log(`[BATCH] Row ${rowNumber}: imageUrl=${imageUrl ? imageUrl.substring(0, 60) : 'EMPTY'}`);
@@ -1722,42 +1809,46 @@ export const processBatch = async (options) => {
         // source row. Both output ratios then share the exact same detection.
         const { cardCopy, error: cardCopyError } = await resolveCardCopyForSource(ai, imageDataUrl, account);
 
-        const ratioEntries = await mapWithBoundedConcurrency(targetRatios, targetRatios.length, async (ratio) => {
-          onProgress?.({
-            rowNumber,
-            currentRow,
-            totalRows,
-            status: 'generating',
-            ratio,
-            rowData: row,
-          });
+        const ratioEntries = await mapWithBoundedConcurrency(
+          ratiosToGenerate,
+          ratiosToGenerate.length,
+          async (ratio) => {
+            onProgress?.({
+              rowNumber,
+              currentRow,
+              totalRows,
+              status: 'generating',
+              ratio,
+              rowData: row,
+            });
 
-          const { images, errors: generationErrors } = await generateAspectRatioImages(
-            imageDataUrl,
-            ratio,
-            {
-              profile: ASPECT_RATIO_PROMPT_PROFILE,
-              account,
-              maxAttemptsPerVariation: 2,
-              ai,
-              cardCopy,
-              cardCopyError,
-            },
-          );
-          const usable = assertReviewableRatioVariations({
-            images,
-            ratio,
-            rowNumber,
-            errors: generationErrors,
-          });
-          if (usable.length < EXPECTED_VARIATIONS_PER_RATIO) {
-            const detail = generationErrors.length ? ` ${generationErrors.join(' | ')}` : '';
-            const warning = `Row ${rowNumber} ${ratio}: ${usable.length} of ${EXPECTED_VARIATIONS_PER_RATIO} templates composed.${detail}`;
-            console.warn(`[BATCH] ${warning}`);
-            rowWarnings.push(warning);
-          }
-          return [ratio, usable];
-        });
+            const { images, errors: generationErrors } = await generateAspectRatioImages(
+              imageDataUrl,
+              ratio,
+              {
+                profile: ASPECT_RATIO_PROMPT_PROFILE,
+                account,
+                maxAttemptsPerVariation: 2,
+                ai,
+                cardCopy,
+                cardCopyError,
+              },
+            );
+            const usable = assertReviewableRatioVariations({
+              images,
+              ratio,
+              rowNumber,
+              errors: generationErrors,
+            });
+            if (usable.length < EXPECTED_VARIATIONS_PER_RATIO) {
+              const detail = generationErrors.length ? ` ${generationErrors.join(' | ')}` : '';
+              const warning = `Row ${rowNumber} ${ratio}: ${usable.length} of ${EXPECTED_VARIATIONS_PER_RATIO} templates composed.${detail}`;
+              console.warn(`[BATCH] ${warning}`);
+              rowWarnings.push(warning);
+            }
+            return [ratio, usable];
+          },
+        );
         const generatedImagesByRatio = Object.fromEntries(ratioEntries);
 
         // Upload all variations to Drive
@@ -1769,7 +1860,7 @@ export const processBatch = async (options) => {
           rowData: row,
         });
 
-        for (const ratio of targetRatios) {
+        for (const ratio of ratiosToGenerate) {
           const images = generatedImagesByRatio[ratio] || [];
           for (let i = 0; i < images.length; i++) {
             const fileName = `${row.Categoria || 'image'}_${row.Ciudad || 'city'}_${getRatioFileSlug(ratio)}_var${i + 1}.png`;
@@ -1843,6 +1934,7 @@ export const processBatch = async (options) => {
           rowNumber,
           ratioColumns: sourceRatioColumns,
           uploadedLinks,
+          ratios: ratiosToGenerate,
         });
         if (sourceUpdates.length) {
           try {
@@ -1935,9 +2027,9 @@ export const processBatch = async (options) => {
         sourceRows.map((entry) => [entry.rowNumber, entry.imageUrl]),
       ),
     });
-    const completedRows = sourceRows.filter(
-      (entry) => finalSummary.rows[entry.rowNumber]?.status === 'completed',
-    ).length;
+    const completedRows = sourceRows.filter((entry) => entry.missingSourceRatios.every(
+      (ratio) => (finalSummary.rows[entry.rowNumber]?.links?.[ratio] || []).length > 0,
+    )).length;
     const remainingRows = Math.max(0, totalRows - completedRows);
     const batchComplete = remainingRows === 0;
 

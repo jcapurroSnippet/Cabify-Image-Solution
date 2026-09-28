@@ -512,10 +512,11 @@ export default function AspectRatioTab({ account }: { account: CabifyAccountId }
           <p className="text-sm leading-6 text-slate-400">
             Usa la columna de imagen <span className="font-medium text-slate-200">16:9</span> de
             la pestaña indicada por el <span className="font-mono text-slate-300">gid</span> del
-            enlace. Por cada imagen genera exactamente{' '}
+            enlace. Por cada imagen genera hasta{' '}
             <span className="font-medium text-slate-200">3 variantes 1:1</span> y{' '}
-            <span className="font-medium text-slate-200">3 variantes 9:16</span>. Las 6 salidas se
-            guardan en una pestaña de esta misma spreadsheet y quedan listas para Creative Review.
+            <span className="font-medium text-slate-200">3 variantes 9:16</span>, pero omite cualquier
+            formato que ya tenga al menos una pieza en esa fila. Las nuevas salidas se guardan en una
+            pestaña de esta misma spreadsheet y quedan listas para Creative Review.
           </p>
           <p className="text-sm leading-6 text-slate-400">
             El copy y la tipografía se detectan automáticamente desde cada pieza original. El texto
