@@ -1347,10 +1347,30 @@ export const extractFirstImageFromResponse = (response) => {
   return null;
 };
 
+/**
+ * How long a single model call may run before it is abandoned.
+ *
+ * Unbounded, a stalled image call never settles and never throws, so the retry
+ * budget below never engages and the batch that awaits it hangs forever. The
+ * request holding it open goes on writing keepalives until the platform cuts
+ * the connection, and the operator is told only that the connection ended
+ * before the chunk was persisted — the one failure this whole path cannot
+ * report on, because nothing ever failed.
+ *
+ * Bounded, the same stall becomes an ordinary retryable error. 3 minutes is
+ * several times what a 1K image generation takes; a call past it is stuck, not
+ * slow. The SDK turns this into an AbortController on the fetch AND a
+ * server-side deadline header, so neither side keeps waiting.
+ */
+const GEMINI_REQUEST_TIMEOUT_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.GEMINI_REQUEST_TIMEOUT_MS || '', 10) || 180_000,
+);
+
 export const getGeminiClient = () => {
   const apiKey = process.env.GEMINI_API_KEY?.trim() ?? '';
   if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable.');
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey, httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS } });
 };
 
 /**
@@ -1512,9 +1532,15 @@ const getGenerationRetryDelayMs = (error, attempt) => {
 
 const isRetryableGenerationError = (error) => {
   const message = String(error?.message || error || '');
+  const name = String(error?.name || error?.cause?.name || '');
   const code = String(error?.code || error?.cause?.code || '').toUpperCase();
   const status = Number(error?.status || error?.code || error?.response?.status);
-  return status === 429
+  // An abort is what GEMINI_REQUEST_TIMEOUT_MS produces, and it says "aborted",
+  // never "timed out". Missing it here would spend the whole timeout and then
+  // fail the row on the first stall instead of trying again.
+  const aborted = name === 'AbortError' || code === 'ABORT_ERR' || /\baborted\b/i.test(message);
+  return aborted
+    || status === 429
     || status === 503
     || /^(ECONNRESET|ETIMEDOUT)$/.test(code)
     || /RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|rate.?limit|quota|time(?:d?\s*out|out)|ECONNRESET|ETIMEDOUT/i.test(message);
