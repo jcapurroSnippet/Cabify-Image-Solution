@@ -403,8 +403,10 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
   badge: true,
   // The reference's CTA is 57px high on a 912px canvas (about 64px at the
   // 1024px target), while its headline ink is about 38px high per line. The
-  // finer ladder can land on that scale instead of jumping over it, and the
-  // modest enlargement allowance lets a smaller Drivers source CTA reach it.
+  // Drivers output needs the CTA slightly more prominent than that baseline.
+  // A finer ladder lets the square card reach roughly 70px without jumping to
+  // the oversized next default step; scaling the crop as one unit enlarges its
+  // label typography at the same rate.
   extras: {
     extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.26, 0.22],
     extrasToFontRatio: 1.3,
@@ -424,7 +426,8 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
         fontSize: { min: 30, max: 48 },
         lineSpacingShare: 0.10,
         extrasGapShare: 0.08,
-        extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.285, 0.26, 0.22],
+        extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.33, 0.3, 0.285, 0.26, 0.22],
+        extrasToFontRatio: 1.5,
       },
     },
   },

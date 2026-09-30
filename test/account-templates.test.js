@@ -279,8 +279,13 @@ test('Corp asks for a taller CTA only on the card with room for one; Drivers eve
   for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
     assert.equal(template.card.extrasHeightShares, undefined, `${template.id} must keep the default ladder`);
   }
-  for (const template of Object.values(DRIVERS_TEMPLATE_VARIANTS).flat()) {
-    assert.equal(template.card.extrasToFontRatio, 1.3, `${template.id} sizes its CTA to the reference`);
+  for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
+    assert.equal(template.card.extrasToFontRatio, 1.5, `${template.id} gives the square CTA extra presence`);
+    assert.equal(template.card.extrasMaxScale, 1.3, `${template.id} may enlarge its CTA a little`);
+    assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
+  }
+  for (const template of DRIVERS_TEMPLATE_VARIANTS['9:16']) {
+    assert.equal(template.card.extrasToFontRatio, 1.3, `${template.id} keeps its vertical CTA sizing`);
     assert.equal(template.card.extrasMaxScale, 1.3, `${template.id} may enlarge its CTA a little`);
     assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
   }
@@ -426,7 +431,7 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
     const proportion = drivers.button / drivers.line;
     assert.ok(
       ratio === '1:1'
-        ? proportion >= 1.35 && proportion <= 1.55
+        ? proportion >= 1.45 && proportion <= 1.65
         : proportion >= 1.1 && proportion <= 1.4,
       `${drivers.id}: CTA is ${proportion.toFixed(2)} lines of copy`,
     );
@@ -436,8 +441,8 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
     );
     if (ratio === '1:1') {
       assert.ok(
-        drivers.button >= 62 && drivers.button <= 66,
-        `${drivers.id}: CTA should match the reference's normalized ~64px height, got ${drivers.button}px`,
+        drivers.button >= 72 && drivers.button <= 76,
+        `${drivers.id}: synthetic CTA should select the ~74px sizing rung, got ${drivers.button}px`,
       );
       assert.ok(
         drivers.line >= 42 && drivers.line <= 46,
