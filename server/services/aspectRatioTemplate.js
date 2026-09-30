@@ -404,9 +404,10 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
   // The reference's CTA is 57px high on a 912px canvas (about 64px at the
   // 1024px target), while its headline ink is about 38px high per line. The
   // Drivers output needs the CTA slightly more prominent than that baseline.
-  // A finer ladder lets the square card reach roughly 70px without jumping to
-  // the oversized next default step; scaling the crop as one unit enlarges its
-  // label typography at the same rate.
+  // A finer ladder lets the square card reach roughly 73px without jumping to
+  // the oversized next default step. That final ~4% uniform increase adds
+  // about one visible pixel to the raster CTA label while preserving its exact
+  // typeface, colour, padding and shape.
   extras: {
     extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.26, 0.22],
     extrasToFontRatio: 1.3,
@@ -423,11 +424,12 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
         box: { x: 60, y: 680, width: 828, height: 283 },
         textBox: { x: 108, y: 713, width: 732, height: 225 },
         radius: 40,
-        fontSize: { min: 30, max: 48 },
+        fontSize: { min: 30, max: 49 },
         lineSpacingShare: 0.10,
         extrasGapShare: 0.08,
-        extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.33, 0.3, 0.285, 0.26, 0.22],
-        extrasToFontRatio: 1.5,
+        extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.345, 0.33, 0.3, 0.285, 0.26, 0.22],
+        extrasToFontRatio: 1.6,
+        extrasMaxScale: 1.35,
       },
     },
   },

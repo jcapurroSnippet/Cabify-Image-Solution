@@ -91,7 +91,7 @@ test('every square Drivers variation uses only the reference card and typography
     box: { x: 60, y: 680, width: 828, height: 283 },
     textBox: { x: 108, y: 713, width: 732, height: 225 },
     radius: 40,
-    fontSize: { min: 30, max: 48 },
+    fontSize: { min: 30, max: 49 },
   };
 
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
@@ -280,8 +280,8 @@ test('Corp asks for a taller CTA only on the card with room for one; Drivers eve
     assert.equal(template.card.extrasHeightShares, undefined, `${template.id} must keep the default ladder`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
-    assert.equal(template.card.extrasToFontRatio, 1.5, `${template.id} gives the square CTA extra presence`);
-    assert.equal(template.card.extrasMaxScale, 1.3, `${template.id} may enlarge its CTA a little`);
+    assert.equal(template.card.extrasToFontRatio, 1.6, `${template.id} gives the square CTA extra presence`);
+    assert.equal(template.card.extrasMaxScale, 1.35, `${template.id} may enlarge its CTA by the extra type pixel`);
     assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['9:16']) {
@@ -423,7 +423,11 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
       drivers.button > riders.button * 1.1,
       `${drivers.id}: CTA (${drivers.button}px) should stand clearly taller than the default (${riders.button}px)`,
     );
-    assert.ok(drivers.button <= Math.round(58 * 1.3), `${drivers.id}: CTA (${drivers.button}px) stretched past its allowance`);
+    const maxScale = ratio === '1:1' ? 1.35 : 1.3;
+    assert.ok(
+      drivers.button <= Math.round(58 * maxScale),
+      `${drivers.id}: CTA (${drivers.button}px) stretched past its allowance`,
+    );
     // Pixel measurement of the supplied square reference is 57px of CTA over
     // about 39px of headline ink, or roughly 1.45 lines. The vertical layout
     // keeps its pre-existing proportion because no vertical size reference was
@@ -431,7 +435,7 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
     const proportion = drivers.button / drivers.line;
     assert.ok(
       ratio === '1:1'
-        ? proportion >= 1.45 && proportion <= 1.65
+        ? proportion >= 1.55 && proportion <= 1.75
         : proportion >= 1.1 && proportion <= 1.4,
       `${drivers.id}: CTA is ${proportion.toFixed(2)} lines of copy`,
     );
@@ -441,11 +445,11 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
     );
     if (ratio === '1:1') {
       assert.ok(
-        drivers.button >= 72 && drivers.button <= 76,
-        `${drivers.id}: synthetic CTA should select the ~74px sizing rung, got ${drivers.button}px`,
+        drivers.button >= 76 && drivers.button <= 79,
+        `${drivers.id}: synthetic CTA should select the ~77px sizing rung, got ${drivers.button}px`,
       );
       assert.ok(
-        drivers.line >= 42 && drivers.line <= 46,
+        drivers.line >= 43 && drivers.line <= 47,
         `${drivers.id}: type should match the reference's normalized ~44px ink height, got ${drivers.line}px`,
       );
     }
