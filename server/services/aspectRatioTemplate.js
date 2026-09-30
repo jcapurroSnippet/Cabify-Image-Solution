@@ -276,11 +276,13 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
 });
 
 /**
- * Drivers composes through the Riders templates unchanged — same variants,
- * aperture, notch, logo box, card box, type sizes and alignment — and differs
- * in colour and in how large it sets the CTA (see DRIVERS_TEMPLATE_VARIANTS).
- * The two accounts' 1.91:1 sources share their layout; what changes is that
- * Drivers sets its copy on a white card over a purple ground, in two colours.
+ * Drivers keeps the Riders variants, aperture, notch, logo box and alignment,
+ * but its square copy card and type scale follow the supplied Corp sizing
+ * reference (see DRIVERS_TEMPLATE_VARIANTS). Visual identity still comes only
+ * from the Drivers input: the reference contributes no colour, artwork, logo
+ * or scene treatment. The two accounts' 1.91:1 sources share their layout;
+ * what changes is that Drivers sets its copy on a white card over a purple
+ * ground, in two colours.
  *
  * So these templates take their colours from each input at compose time
  * (`colours`, see sampleSourceColours in imageGenerator.js). The DRIVERS_*
@@ -399,21 +401,32 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
   account: 'drivers',
   palette: { ground: DRIVERS_GROUND, card: DRIVERS_CARD, text: DRIVERS_TEXT, accent: DRIVERS_ACCENT },
   badge: true,
-  // Drivers' CTA is sized to the approved square Corp creative, which sets its
-  // button at about 1.25 times the ink height of a headline line (58px under
-  // 47px lines on a 912px canvas). At the default proportion the button came
-  // out one line tall on the shallow 1:1 frame, and on 9:16, which never
-  // enlarges by default, no taller than the 1.91:1 source it was lifted from.
-  //
-  // The finer ladder is what lets it reach that proportion without taxing the
-  // copy: on the 1:1 frame the default steps jump from 41px to 55px, and 55px
-  // shrinks a headline line from about 41px of ink to 34px. The extra rungs
-  // land it on 48px over 38px lines. With rungs this close the ratio is no
-  // longer forgiving (compare EXTRAS_TO_FONT_RATIO): 1.35 already picks 55px.
+  // The reference's CTA is 57px high on a 912px canvas (about 64px at the
+  // 1024px target), while its headline ink is about 38px high per line. The
+  // finer ladder can land on that scale instead of jumping over it, and the
+  // modest enlargement allowance lets a smaller Drivers source CTA reach it.
   extras: {
     extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.26, 0.22],
     extrasToFontRatio: 1.3,
     extrasMaxScale: 1.3,
+    ...JSON.parse(process.env.DRV_EXTRAS || '{}'),
+  },
+  perRatio: {
+    // Size authority only: measured from the supplied 912x912 Corp example and
+    // normalized to the 1024x1024 output. Reuse one canonical element box for
+    // every Drivers square variation; each variation keeps its own scene mask,
+    // frame, logo and the colours sampled from the Drivers source.
+    '1:1': {
+      card: {
+        box: { x: 60, y: 680, width: 828, height: 283 },
+        textBox: { x: 108, y: 713, width: 732, height: 225 },
+        radius: 40,
+        fontSize: { min: 30, max: 48 },
+        lineSpacingShare: 0.10,
+        extrasGapShare: 0.08,
+        extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.285, 0.26, 0.22],
+      },
+    },
   },
 });
 

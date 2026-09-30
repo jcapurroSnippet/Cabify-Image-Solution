@@ -64,7 +64,7 @@ test('each account resolves its own template set, Riders by default', () => {
   ]);
 });
 
-test('Drivers inherits Riders geometry while Corp uses its supplied references', () => {
+test('Drivers keeps Riders structure while its square card follows the supplied size reference', () => {
   for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
     const drivers = DRIVERS_TEMPLATE_VARIANTS[ratio];
     assert.equal(drivers.length, riders.length);
@@ -76,6 +76,7 @@ test('Drivers inherits Riders geometry while Corp uses its supplied references',
       assert.deepEqual(template.scene, source.scene);
       assert.equal(template.referenceAsset, source.referenceAsset);
       assert.deepEqual(template.logo.box, source.logo.box);
+      if (ratio === '9:16') assert.deepEqual(template.card.box, source.card.box);
     });
   }
 
@@ -83,6 +84,30 @@ test('Drivers inherits Riders geometry while Corp uses its supplied references',
   assert.match(CORP_TEMPLATE_VARIANTS['1:1'][1].referenceAsset, /corp\/1-1\/corp-ahorro-1-1\.png$/);
   assert.match(CORP_TEMPLATE_VARIANTS['9:16'][0].referenceAsset, /corp\/9-16\/corp-costos-9-16\.png$/);
   assert.match(CORP_TEMPLATE_VARIANTS['9:16'][1].referenceAsset, /corp\/9-16\/corp-ahorro-9-16\.png$/);
+});
+
+test('every square Drivers variation uses only the reference card and typography dimensions', () => {
+  const expected = {
+    box: { x: 60, y: 680, width: 828, height: 283 },
+    textBox: { x: 108, y: 713, width: 732, height: 225 },
+    radius: 40,
+    fontSize: { min: 30, max: 48 },
+  };
+
+  for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
+    assert.deepEqual(template.card.box, expected.box, `${template.id} card box`);
+    assert.deepEqual(template.card.textBox, expected.textBox, `${template.id} text box`);
+    assert.equal(template.card.radius, expected.radius, `${template.id} card radius`);
+    assert.deepEqual(template.card.fontSize, expected.fontSize, `${template.id} type scale`);
+    assert.equal(template.card.lineSpacingShare, 0.10, `${template.id} leading`);
+
+    // These remain Drivers-owned fallbacks. Runtime source colours can replace
+    // them, but the Corp reference can never leak its palette into this set.
+    assert.equal(template.card.background, DRIVERS_INPUT.card);
+    assert.equal(template.card.textColour, DRIVERS_INPUT.text);
+    assert.equal(template.card.accentColour, DRIVERS_INPUT.accent);
+    if (template.frame) assert.equal(template.frame.background, DRIVERS_INPUT.ground);
+  }
 });
 
 test('Corp reference loading is account-scoped and ratio-aware', async () => {
@@ -168,11 +193,17 @@ test('the 1:1 Corp card gives its copy leading and its button room, and only the
   for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
     assert.equal(template.card.lineSpacingShare, undefined, `${template.id} keeps the reference leading`);
   }
-  for (const variants of [ASPECT_RATIO_TEMPLATE_VARIANTS, DRIVERS_TEMPLATE_VARIANTS]) {
-    for (const template of variants['1:1'].concat(variants['9:16'])) {
-      assert.equal(template.card.lineSpacingShare, undefined, `${template.id} must keep the reference leading`);
-      assert.equal(template.card.extrasGapShare, undefined, `${template.id} must keep the reference gap`);
-    }
+  for (const template of Object.values(ASPECT_RATIO_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.card.lineSpacingShare, undefined, `${template.id} must keep the reference leading`);
+    assert.equal(template.card.extrasGapShare, undefined, `${template.id} must keep the reference gap`);
+  }
+  for (const template of DRIVERS_TEMPLATE_VARIANTS['9:16']) {
+    assert.equal(template.card.lineSpacingShare, undefined, `${template.id} must keep the reference leading`);
+    assert.equal(template.card.extrasGapShare, undefined, `${template.id} must keep the reference gap`);
+  }
+  for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
+    assert.equal(template.card.lineSpacingShare, 0.10, `${template.id} must use the supplied type leading`);
+    assert.equal(template.card.extrasGapShare, 0.08, `${template.id} must use the supplied CTA gap`);
   }
 });
 
@@ -388,16 +419,31 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
       `${drivers.id}: CTA (${drivers.button}px) should stand clearly taller than the default (${riders.button}px)`,
     );
     assert.ok(drivers.button <= Math.round(58 * 1.3), `${drivers.id}: CTA (${drivers.button}px) stretched past its allowance`);
-    // The approved square Corp creative sets its button at ~1.25 lines of ink.
+    // Pixel measurement of the supplied square reference is 57px of CTA over
+    // about 39px of headline ink, or roughly 1.45 lines. The vertical layout
+    // keeps its pre-existing proportion because no vertical size reference was
+    // supplied.
     const proportion = drivers.button / drivers.line;
     assert.ok(
-      proportion >= 1.1 && proportion <= 1.4,
-      `${drivers.id}: CTA is ${proportion.toFixed(2)} lines of copy, the reference is ~1.25`,
+      ratio === '1:1'
+        ? proportion >= 1.35 && proportion <= 1.55
+        : proportion >= 1.1 && proportion <= 1.4,
+      `${drivers.id}: CTA is ${proportion.toFixed(2)} lines of copy`,
     );
     assert.ok(
       drivers.line >= riders.line * 0.85,
       `${drivers.id}: copy (${drivers.line}px) paid too much for the CTA (default ${riders.line}px)`,
     );
+    if (ratio === '1:1') {
+      assert.ok(
+        drivers.button >= 62 && drivers.button <= 66,
+        `${drivers.id}: CTA should match the reference's normalized ~64px height, got ${drivers.button}px`,
+      );
+      assert.ok(
+        drivers.line >= 42 && drivers.line <= 46,
+        `${drivers.id}: type should match the reference's normalized ~44px ink height, got ${drivers.line}px`,
+      );
+    }
   }
 });
 
