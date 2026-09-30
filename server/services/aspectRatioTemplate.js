@@ -278,9 +278,9 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
 /**
  * Drivers composes through the Riders templates unchanged — same variants,
  * aperture, notch, logo box, card box, type sizes and alignment — and differs
- * only in colour. The two accounts' 1.91:1 sources share their layout; what
- * changes is that Drivers sets its copy on a white card over a purple ground,
- * in two colours.
+ * in colour and in how large it sets the CTA (see DRIVERS_TEMPLATE_VARIANTS).
+ * The two accounts' 1.91:1 sources share their layout; what changes is that
+ * Drivers sets its copy on a white card over a purple ground, in two colours.
  *
  * So these templates take their colours from each input at compose time
  * (`colours`, see sampleSourceColours in imageGenerator.js). The DRIVERS_*
@@ -399,6 +399,22 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
   account: 'drivers',
   palette: { ground: DRIVERS_GROUND, card: DRIVERS_CARD, text: DRIVERS_TEXT, accent: DRIVERS_ACCENT },
   badge: true,
+  // Drivers' CTA is sized to the approved square Corp creative, which sets its
+  // button at about 1.25 times the ink height of a headline line (58px under
+  // 47px lines on a 912px canvas). At the default proportion the button came
+  // out one line tall on the shallow 1:1 frame, and on 9:16, which never
+  // enlarges by default, no taller than the 1.91:1 source it was lifted from.
+  //
+  // The finer ladder is what lets it reach that proportion without taxing the
+  // copy: on the 1:1 frame the default steps jump from 41px to 55px, and 55px
+  // shrinks a headline line from about 41px of ink to 34px. The extra rungs
+  // land it on 48px over 38px lines. With rungs this close the ratio is no
+  // longer forgiving (compare EXTRAS_TO_FONT_RATIO): 1.35 already picks 55px.
+  extras: {
+    extrasHeightShares: [0.5, 0.45, 0.4, 0.35, 0.3, 0.26, 0.22],
+    extrasToFontRatio: 1.3,
+    extrasMaxScale: 1.3,
+  },
 });
 
 /**
@@ -1075,6 +1091,10 @@ const buildTextLayer = async (template, text, fontId, textBoxOverride, accentTex
  * the only faithful way to keep it is to carry its pixels across. The card
  * geometry does not move to accommodate them — it is measured from the approved
  * references — so the crop is scaled down until it fits beside the copy.
+ *
+ * The heights tried are shares of the text box. A card may bring its own
+ * (`extrasHeightShares`) when these steps are too far apart to land its button
+ * where it should sit (see the Drivers set).
  */
 const EXTRAS_HEIGHT_SHARES = Object.freeze([0.5, 0.4, 0.3, 0.22]);
 const EXTRAS_GAP_SHARE = 0.08;
@@ -1442,7 +1462,7 @@ export const composeAspectRatioTemplate = async ({
     // Every allowance the copy survives is scored, not just the first: the
     // largest one usually fits by a hair and leaves the headline half its size.
     let bestDistance = Infinity;
-    for (const share of EXTRAS_HEIGHT_SHARES) {
+    for (const share of card.extrasHeightShares ?? EXTRAS_HEIGHT_SHARES) {
       const candidate = await buildExtrasLayer(template, cardExtras, cardExtrasPanelColour, share);
       if (!candidate) continue;
       const gap = Math.round(card.textBox.height * (card.extrasGapShare ?? EXTRAS_GAP_SHARE));

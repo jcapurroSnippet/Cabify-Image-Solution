@@ -228,7 +228,7 @@ test('the leading knob reaches the renderer: 1:1 copy breathes more than 9:16 co
   );
 });
 
-test('only Corp asks for a taller CTA, and only on the card with room for one', async () => {
+test('Corp asks for a taller CTA only on the card with room for one; Drivers everywhere; Riders never', async () => {
   for (const template of CORP_TEMPLATE_VARIANTS['9:16']) {
     assert.equal(template.card.extrasToFontRatio, 1.5);
     assert.equal(template.card.extrasMaxScale, 1.3);
@@ -240,11 +240,18 @@ test('only Corp asks for a taller CTA, and only on the card with room for one', 
     assert.equal(template.card.extrasToFontRatio, undefined, `${template.id} must keep the default CTA sizing`);
     assert.equal(template.card.extrasMaxScale, undefined, `${template.id} must not enlarge its marks`);
   }
-  for (const variants of [ASPECT_RATIO_TEMPLATE_VARIANTS, DRIVERS_TEMPLATE_VARIANTS]) {
-    for (const template of variants['1:1'].concat(variants['9:16'])) {
-      assert.equal(template.card.extrasToFontRatio, undefined, `${template.id} must keep the default CTA sizing`);
-      assert.equal(template.card.extrasMaxScale, undefined, `${template.id} must not enlarge its marks`);
-    }
+  for (const template of Object.values(ASPECT_RATIO_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.card.extrasToFontRatio, undefined, `${template.id} must keep the default CTA sizing`);
+    assert.equal(template.card.extrasMaxScale, undefined, `${template.id} must not enlarge its marks`);
+    assert.equal(template.card.extrasHeightShares, undefined, `${template.id} must keep the default ladder`);
+  }
+  for (const template of Object.values(CORP_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.card.extrasHeightShares, undefined, `${template.id} must keep the default ladder`);
+  }
+  for (const template of Object.values(DRIVERS_TEMPLATE_VARIANTS).flat()) {
+    assert.equal(template.card.extrasToFontRatio, 1.3, `${template.id} sizes its CTA to the reference`);
+    assert.equal(template.card.extrasMaxScale, 1.3, `${template.id} may enlarge its CTA a little`);
+    assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
   }
 
   // A Corp CTA lands taller than the same crop on the same geometry in Riders,
@@ -325,6 +332,71 @@ test('the 1:1 Corp button reads as a button under the copy, not beside it in siz
     assert.ok(
       buttonHeight <= lineHeight * 1.35,
       `${template.id}: the button (${buttonHeight}px) towers over a line of copy (${lineHeight}px)`,
+    );
+  }
+});
+
+test('the Drivers CTA grows to the reference proportion, and the copy gives up only a little', async () => {
+  // Not the card purple, and not white: each must stay apart from both cards'
+  // ink so the button and the copy can be told apart on Riders and Drivers.
+  const CTA_COLOUR = '#00A3FF';
+  // The height a 1.91:1 source ships its button at, and a width to match.
+  const cta = await sharp({ create: { width: 240, height: 58, channels: 3, background: CTA_COLOUR } }).png().toBuffer();
+  const text = 'Generá ingresos extra manejando con Cabify.';
+
+  const measure = async (ratio, template, options, inkColours) => {
+    const image = await readRaw(await composeAspectRatioTemplate({
+      sceneDataUrl: await solidDataUrl('#00FF00'),
+      targetRatio: ratio,
+      templateId: template.id,
+      text,
+      cardExtras: cta,
+      cardExtrasPanelColour: [255, 255, 255],
+      ...options,
+    }));
+    const box = template.card.textBox;
+    const button = [];
+    const copy = [];
+    for (let y = box.y; y < box.y + box.height; y += 1) {
+      const row = { x: box.x, y, width: box.width, height: 1 };
+      button.push(countNear(image, row, hexToRgb(CTA_COLOUR), 8) > 0);
+      copy.push(inkColours.some((colour) => countNear(image, row, hexToRgb(colour), 60) > 0));
+    }
+    const bands = (rows) => rows.reduce((list, inked, i) => {
+      if (inked && (i === 0 || !rows[i - 1])) list.push(1);
+      else if (inked) list[list.length - 1] += 1;
+      return list;
+    }, []);
+    return {
+      id: template.id,
+      button: bands(button).reduce((total, height) => total + height, 0),
+      line: Math.max(...bands(copy)),
+    };
+  };
+
+  for (const ratio of ['1:1', '9:16']) {
+    const riders = await measure(ratio, ASPECT_RATIO_TEMPLATE_VARIANTS[ratio][0], {}, ['#FFFFFF']);
+    const drivers = await measure(ratio, DRIVERS_TEMPLATE_VARIANTS[ratio][0], {
+      account: 'drivers',
+      accentText: 'Generá ingresos extra',
+      colours: DRIVERS_INPUT,
+    }, [DRIVERS_INPUT.text, DRIVERS_INPUT.accent]);
+
+    // Same crop, same geometry: the default sizing is what Riders still gets.
+    assert.ok(
+      drivers.button > riders.button * 1.1,
+      `${drivers.id}: CTA (${drivers.button}px) should stand clearly taller than the default (${riders.button}px)`,
+    );
+    assert.ok(drivers.button <= Math.round(58 * 1.3), `${drivers.id}: CTA (${drivers.button}px) stretched past its allowance`);
+    // The approved square Corp creative sets its button at ~1.25 lines of ink.
+    const proportion = drivers.button / drivers.line;
+    assert.ok(
+      proportion >= 1.1 && proportion <= 1.4,
+      `${drivers.id}: CTA is ${proportion.toFixed(2)} lines of copy, the reference is ~1.25`,
+    );
+    assert.ok(
+      drivers.line >= riders.line * 0.85,
+      `${drivers.id}: copy (${drivers.line}px) paid too much for the CTA (default ${riders.line}px)`,
     );
   }
 });
