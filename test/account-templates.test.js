@@ -100,6 +100,7 @@ test('every square Drivers variation uses only the reference card and typography
     assert.equal(template.card.radius, expected.radius, `${template.id} card radius`);
     assert.deepEqual(template.card.fontSize, expected.fontSize, `${template.id} type scale`);
     assert.equal(template.card.lineSpacingShare, 0.10, `${template.id} leading`);
+    assert.equal(template.card.copyOffsetX, 8, `${template.id} headline nudge`);
 
     // These remain Drivers-owned fallbacks. Runtime source colours can replace
     // them, but the Corp reference can never leak its palette into this set.

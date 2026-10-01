@@ -425,6 +425,8 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
         textBox: { x: 108, y: 713, width: 732, height: 225 },
         radius: 40,
         fontSize: { min: 30, max: 50 },
+        // The headline sits a touch right of the box edge the CTA keeps.
+        copyOffsetX: 8,
         lineSpacingShare: 0.10,
         extrasGapShare: 0.08,
         extrasHeightShares: [0.5, 0.45, 0.4, 0.36, 0.35, 0.345, 0.33, 0.3, 0.285, 0.26, 0.22],
@@ -1517,6 +1519,9 @@ export const composeAspectRatioTemplate = async ({
     { input: cardShape, left: card.box.x, top: card.box.y },
     ...(logoLayer ? [logoLayer] : []),
   ];
+  // An optical nudge for the copy alone, applied after fitting so the wrap and
+  // type size stay exactly what the text box produced. The marks keep the box edge.
+  const copyLeft = textLayer.left + (card.copyOffsetX ?? 0);
 
   if (extrasLayer) {
     // Centre the copy-plus-marks stack in the box, then place the marks under
@@ -1527,7 +1532,7 @@ export const composeAspectRatioTemplate = async ({
     const textShift = stackTop - textBox.y;
     composites.push({
       input: textLayer.input,
-      left: textLayer.left,
+      left: copyLeft,
       top: textLayer.top + textShift,
     });
     composites.push({
@@ -1538,7 +1543,7 @@ export const composeAspectRatioTemplate = async ({
       top: stackTop + textBox.height + gap,
     });
   } else {
-    composites.push({ input: textLayer.input, left: textLayer.left, top: textLayer.top });
+    composites.push({ input: textLayer.input, left: copyLeft, top: textLayer.top });
   }
 
   const result = await sharp(base, { failOn: 'error' })
