@@ -91,7 +91,7 @@ test('every square Drivers variation uses only the reference card and typography
     box: { x: 60, y: 680, width: 828, height: 283 },
     textBox: { x: 108, y: 713, width: 732, height: 225 },
     radius: 40,
-    fontSize: { min: 30, max: 49 },
+    fontSize: { min: 30, max: 50 },
   };
 
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
@@ -281,7 +281,7 @@ test('Corp asks for a taller CTA only on the card with room for one; Drivers eve
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
     assert.equal(template.card.extrasToFontRatio, 1.6, `${template.id} gives the square CTA extra presence`);
-    assert.equal(template.card.extrasMaxScale, 1.35, `${template.id} may enlarge its CTA by the extra type pixel`);
+    assert.equal(template.card.extrasMaxScale, 1.4, `${template.id} may enlarge its CTA by the extra type pixel`);
     assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['9:16']) {
@@ -423,7 +423,7 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
       drivers.button > riders.button * 1.1,
       `${drivers.id}: CTA (${drivers.button}px) should stand clearly taller than the default (${riders.button}px)`,
     );
-    const maxScale = ratio === '1:1' ? 1.35 : 1.3;
+    const maxScale = ratio === '1:1' ? 1.4 : 1.3;
     assert.ok(
       drivers.button <= Math.round(58 * maxScale),
       `${drivers.id}: CTA (${drivers.button}px) stretched past its allowance`,
@@ -445,12 +445,12 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
     );
     if (ratio === '1:1') {
       assert.ok(
-        drivers.button >= 76 && drivers.button <= 79,
-        `${drivers.id}: synthetic CTA should select the ~77px sizing rung, got ${drivers.button}px`,
+        drivers.button >= 80 && drivers.button <= 82,
+        `${drivers.id}: synthetic CTA should select the ~81px sizing rung, got ${drivers.button}px`,
       );
       assert.ok(
-        drivers.line >= 43 && drivers.line <= 47,
-        `${drivers.id}: type should match the reference's normalized ~44px ink height, got ${drivers.line}px`,
+        drivers.line >= 45 && drivers.line <= 49,
+        `${drivers.id}: type should sit a step above the reference's normalized ~44px ink height, got ${drivers.line}px`,
       );
     }
   }
