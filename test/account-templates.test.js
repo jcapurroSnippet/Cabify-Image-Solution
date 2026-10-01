@@ -91,7 +91,7 @@ test('every square Drivers variation uses only the reference card and typography
     box: { x: 60, y: 680, width: 828, height: 283 },
     textBox: { x: 108, y: 713, width: 732, height: 225 },
     radius: 40,
-    fontSize: { min: 30, max: 50 },
+    fontSize: { min: 30, max: 52 },
   };
 
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
@@ -450,7 +450,7 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
         `${drivers.id}: synthetic CTA should select the ~81px sizing rung, got ${drivers.button}px`,
       );
       assert.ok(
-        drivers.line >= 45 && drivers.line <= 49,
+        drivers.line >= 47 && drivers.line <= 51,
         `${drivers.id}: type should sit a step above the reference's normalized ~44px ink height, got ${drivers.line}px`,
       );
     }

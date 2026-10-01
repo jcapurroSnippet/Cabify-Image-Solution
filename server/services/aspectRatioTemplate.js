@@ -424,7 +424,7 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
         box: { x: 60, y: 680, width: 828, height: 283 },
         textBox: { x: 108, y: 713, width: 732, height: 225 },
         radius: 40,
-        fontSize: { min: 30, max: 50 },
+        fontSize: { min: 30, max: 52 },
         // The headline sits a touch right of the box edge the CTA keeps.
         copyOffsetX: 8,
         lineSpacingShare: 0.10,
