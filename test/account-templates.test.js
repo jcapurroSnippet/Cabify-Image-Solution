@@ -64,7 +64,7 @@ test('each account resolves its own template set, Riders by default', () => {
   ]);
 });
 
-test('Drivers keeps Riders structure while its square card follows the supplied size reference', () => {
+test('Drivers keeps the Riders structure and card; only a square card with a CTA follows the size reference', () => {
   for (const [ratio, riders] of Object.entries(ASPECT_RATIO_TEMPLATE_VARIANTS)) {
     const drivers = DRIVERS_TEMPLATE_VARIANTS[ratio];
     assert.equal(drivers.length, riders.length);
@@ -76,8 +76,18 @@ test('Drivers keeps Riders structure while its square card follows the supplied 
       assert.deepEqual(template.scene, source.scene);
       assert.equal(template.referenceAsset, source.referenceAsset);
       assert.deepEqual(template.logo.box, source.logo.box);
-      if (ratio === '9:16') assert.deepEqual(template.card.box, source.card.box);
+      // A headline on its own is set exactly as Riders sets it.
+      assert.deepEqual(template.card.box, source.card.box, `${template.id} card box`);
+      assert.deepEqual(template.card.textBox, source.card.textBox, `${template.id} text box`);
+      assert.equal(template.card.radius, source.card.radius, `${template.id} card radius`);
+      assert.deepEqual(template.card.fontSize, source.card.fontSize, `${template.id} type scale`);
+      assert.equal(template.card.lineSpacingShare, undefined, `${template.id} leading`);
+      assert.equal(template.card.copyOffsetX, undefined, `${template.id} headline nudge`);
+      assert.equal('cardWithExtras' in template, ratio === '1:1', `${template.id} CTA card`);
     });
+  }
+  for (const template of Object.values(ASPECT_RATIO_TEMPLATE_VARIANTS).flat()) {
+    assert.equal('cardWithExtras' in template, false, `${template.id} must keep one card`);
   }
 
   assert.match(CORP_TEMPLATE_VARIANTS['1:1'][0].referenceAsset, /corp\/1-1\/corp-costos-1-1\.png$/);
@@ -86,7 +96,7 @@ test('Drivers keeps Riders structure while its square card follows the supplied 
   assert.match(CORP_TEMPLATE_VARIANTS['9:16'][1].referenceAsset, /corp\/9-16\/corp-ahorro-9-16\.png$/);
 });
 
-test('every square Drivers variation uses only the reference card and typography dimensions', () => {
+test('every square Drivers CTA card uses only the reference card and typography dimensions', () => {
   const expected = {
     box: { x: 60, y: 680, width: 828, height: 283 },
     textBox: { x: 108, y: 713, width: 732, height: 225 },
@@ -95,12 +105,17 @@ test('every square Drivers variation uses only the reference card and typography
   };
 
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
-    assert.deepEqual(template.card.box, expected.box, `${template.id} card box`);
-    assert.deepEqual(template.card.textBox, expected.textBox, `${template.id} text box`);
-    assert.equal(template.card.radius, expected.radius, `${template.id} card radius`);
-    assert.deepEqual(template.card.fontSize, expected.fontSize, `${template.id} type scale`);
-    assert.equal(template.card.lineSpacingShare, 0.10, `${template.id} leading`);
-    assert.equal(template.card.copyOffsetX, 8, `${template.id} headline nudge`);
+    const ctaCard = template.cardWithExtras;
+    assert.deepEqual(ctaCard.box, expected.box, `${template.id} card box`);
+    assert.deepEqual(ctaCard.textBox, expected.textBox, `${template.id} text box`);
+    assert.equal(ctaCard.radius, expected.radius, `${template.id} card radius`);
+    assert.deepEqual(ctaCard.fontSize, expected.fontSize, `${template.id} type scale`);
+    assert.equal(ctaCard.lineSpacingShare, 0.10, `${template.id} leading`);
+    assert.equal(ctaCard.copyOffsetX, 8, `${template.id} headline nudge`);
+    // Geometry and type only: the colours still come from the input.
+    for (const field of ['background', 'textColour', 'accentColour']) {
+      assert.equal(field in ctaCard, false, `${template.id} CTA card must not fix its ${field}`);
+    }
 
     // These remain Drivers-owned fallbacks. Runtime source colours can replace
     // them, but the Corp reference can never leak its palette into this set.
@@ -203,8 +218,8 @@ test('the 1:1 Corp card gives its copy leading and its button room, and only the
     assert.equal(template.card.extrasGapShare, undefined, `${template.id} must keep the reference gap`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
-    assert.equal(template.card.lineSpacingShare, 0.10, `${template.id} must use the supplied type leading`);
-    assert.equal(template.card.extrasGapShare, 0.08, `${template.id} must use the supplied CTA gap`);
+    assert.equal(template.cardWithExtras.lineSpacingShare, 0.10, `${template.id} must use the supplied type leading`);
+    assert.equal(template.cardWithExtras.extrasGapShare, 0.08, `${template.id} must use the supplied CTA gap`);
   }
 });
 
@@ -281,9 +296,9 @@ test('Corp asks for a taller CTA only on the card with room for one; Drivers eve
     assert.equal(template.card.extrasHeightShares, undefined, `${template.id} must keep the default ladder`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['1:1']) {
-    assert.equal(template.card.extrasToFontRatio, 1.6, `${template.id} gives the square CTA extra presence`);
-    assert.equal(template.card.extrasMaxScale, 1.4, `${template.id} may enlarge its CTA by the extra type pixel`);
-    assert.ok(template.card.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
+    assert.equal(template.cardWithExtras.extrasToFontRatio, 1.6, `${template.id} gives the square CTA extra presence`);
+    assert.equal(template.cardWithExtras.extrasMaxScale, 1.4, `${template.id} may enlarge its CTA by the extra type pixel`);
+    assert.ok(template.cardWithExtras.extrasHeightShares.length > 4, `${template.id} needs the finer ladder`);
   }
   for (const template of DRIVERS_TEMPLATE_VARIANTS['9:16']) {
     assert.equal(template.card.extrasToFontRatio, 1.3, `${template.id} keeps its vertical CTA sizing`);
@@ -391,7 +406,8 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
       cardExtrasPanelColour: [255, 255, 255],
       ...options,
     }));
-    const box = template.card.textBox;
+    // Every render here carries the CTA, so it is set in the card made for one.
+    const box = (template.cardWithExtras ?? template.card).textBox;
     const button = [];
     const copy = [];
     for (let y = box.y; y < box.y + box.height; y += 1) {
@@ -454,6 +470,86 @@ test('the Drivers CTA grows to the reference proportion, and the copy gives up o
         `${drivers.id}: type should sit a step above the reference's normalized ~44px ink height, got ${drivers.line}px`,
       );
     }
+  }
+});
+
+/** The extent of the card's own fill, which is the only white below the midline. */
+const findCardBounds = (image, fill) => {
+  let left = Infinity;
+  let right = -1;
+  let top = Infinity;
+  let bottom = -1;
+  for (let y = Math.floor(image.info.height / 2); y < image.info.height; y += 1) {
+    for (let x = 0; x < image.info.width; x += 1) {
+      if (!countNear(image, { x, y, width: 1, height: 1 }, fill, 2)) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+};
+
+const DRIVERS_SQUARE = {
+  targetRatio: '1:1',
+  account: 'drivers',
+  colours: DRIVERS_INPUT,
+  text: 'Generá ingresos extra manejando con Cabify.',
+  accentText: 'Generá ingresos extra',
+};
+
+test('a square Drivers card is the Riders card unless the input carries a CTA', async () => {
+  const cta = await sharp({ create: { width: 240, height: 58, channels: 3, background: '#00A3FF' } }).png().toBuffer();
+  const sceneDataUrl = await solidDataUrl('#2E6F9E');
+
+  for (const [index, template] of DRIVERS_TEMPLATE_VARIANTS['1:1'].entries()) {
+    const common = { ...DRIVERS_SQUARE, sceneDataUrl, templateId: template.id };
+    const bare = await readRaw(await composeAspectRatioTemplate(common));
+    assert.deepEqual(
+      findCardBounds(bare, hexToRgb(DRIVERS_INPUT.card)),
+      ASPECT_RATIO_TEMPLATE_VARIANTS['1:1'][index].card.box,
+      `${template.id}: a headline on its own should sit in the Riders card`,
+    );
+
+    const withCta = await readRaw(await composeAspectRatioTemplate({
+      ...common,
+      cardExtras: cta,
+      cardExtrasPanelColour: [255, 255, 255],
+    }));
+    assert.deepEqual(
+      findCardBounds(withCta, hexToRgb(DRIVERS_INPUT.card)),
+      template.cardWithExtras.box,
+      `${template.id}: a CTA should get the card sized for it`,
+    );
+  }
+});
+
+test('the card one input picked never reaches the next render through the caches', async () => {
+  // A batch composes inputs with and without a CTA through the same template
+  // ids in one process. Each render has to match what a cold process makes, so
+  // every order is played on its own fresh copy of the compositor.
+  let instances = 0;
+  const freshCompositor = async () => (
+    await import(`../server/services/aspectRatioTemplate.js?instance=${instances += 1}`)
+  ).composeAspectRatioTemplate;
+
+  // Wide enough that most rungs of the ladder land it 68px tall. Under the gap,
+  // that leaves the copy a box exactly as tall as the Riders one it gets
+  // without the CTA, so only the rest of the box tells the two fits apart.
+  const cta = await sharp({ create: { width: 1076, height: 100, channels: 3, background: '#00A3FF' } }).png().toBuffer();
+  const bare = {
+    ...DRIVERS_SQUARE,
+    sceneDataUrl: await solidDataUrl('#2E6F9E'),
+    templateId: DRIVERS_TEMPLATE_VARIANTS['1:1'][0].id,
+  };
+  const withCta = { ...bare, cardExtras: cta, cardExtrasPanelColour: [255, 255, 255] };
+
+  for (const [first, second, label] of [[bare, withCta, 'a CTA render'], [withCta, bare, 'a bare render']]) {
+    const warm = await freshCompositor();
+    await warm(first);
+    const cold = await freshCompositor();
+    assert.equal(await warm(second), await cold(second), `${label} reused what the previous input cached`);
   }
 });
 
@@ -615,7 +711,9 @@ test('the badge slot mirrors the logo: top-right, on the picture, clear of the c
       assert.equal(canvas.width - (badge.box.x + badge.box.width), logo.box.x, `${template.id} badge must mirror the logo margin`);
       assert.equal(badge.box.y, logo.box.y, `${template.id} badge must top-align with the logo`);
       assert.ok(badge.box.x > logo.box.x + logo.box.width, `${template.id} badge overlaps the logo`);
-      assert.ok(badge.box.y + badge.box.height < card.box.y, `${template.id} badge reaches the card`);
+      for (const { box } of [card, template.cardWithExtras ?? card]) {
+        assert.ok(badge.box.y + badge.box.height < box.y, `${template.id} badge reaches the card`);
+      }
     }
   }
 });

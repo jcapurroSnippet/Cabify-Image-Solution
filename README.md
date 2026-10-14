@@ -34,7 +34,12 @@ metadata.
 
 The account also picks the Aspect Ratio template set
 (`getAspectRatioTemplateVariants` in `server/services/aspectRatioTemplate.js`).
-Drivers composes through the Riders geometry. Corp uses its own approved `1:1`
+Drivers composes through the Riders geometry, with one exception: a `1:1` input
+whose card carries a CTA gets the deeper card measured off the supplied size
+reference (`cardWithExtras`), so the button has room under the copy. An input
+without one keeps the Riders card. The input counts as having a CTA when the
+extraction located a CTA or other marks inside its card (`cardExtrasBox`) and
+`buildCardExtrasCrop` could cut them out. Corp uses its own approved `1:1`
 and `9:16` references for the logo notch and signature placement. Drivers and
 Corp change their colours, which they read off each input
 (`sampleSourceColours` in `imageGenerator.js`): the

@@ -276,13 +276,14 @@ export const ASPECT_RATIO_TEMPLATE_VARIANTS = deepFreeze({
 });
 
 /**
- * Drivers keeps the Riders variants, aperture, notch, logo box and alignment,
- * but its square copy card and type scale follow the supplied Corp sizing
- * reference (see DRIVERS_TEMPLATE_VARIANTS). Visual identity still comes only
- * from the Drivers input: the reference contributes no colour, artwork, logo
- * or scene treatment. The two accounts' 1.91:1 sources share their layout;
- * what changes is that Drivers sets its copy on a white card over a purple
- * ground, in two colours.
+ * Drivers keeps the Riders variants, aperture, notch, logo box, alignment and
+ * copy card. Only a square input that carries a CTA swaps that card and its
+ * type scale for the supplied Corp sizing reference (see
+ * DRIVERS_TEMPLATE_VARIANTS). Visual identity still comes only from the
+ * Drivers input: the reference contributes no colour, artwork, logo or scene
+ * treatment. The two accounts' 1.91:1 sources share their layout; what
+ * changes is that Drivers sets its copy on a white card over a purple ground,
+ * in two colours.
  *
  * So these templates take their colours from each input at compose time
  * (`colours`, see sampleSourceColours in imageGenerator.js). The DRIVERS_*
@@ -363,10 +364,12 @@ const scaleBoxAboutCentre = (box, scale) => {
  * `logoScale` is one factor for the whole ratio, or one per template id.
  * `logoBox` and `aperture` accept measured per-template overrides when an
  * account has its own approved references instead of inheriting Riders.
+ * `cardWithExtras` overrides the card only for inputs whose card carries a CTA
+ * or other marks (see selectCardLayout).
  */
 const applyRatioTuning = (template, tuning, sourceId) => {
   if (!tuning) return template;
-  const { logoScale = 1, logoBox, aperture, card, cardByTemplate } = tuning;
+  const { logoScale = 1, logoBox, aperture, card, cardByTemplate, cardWithExtras } = tuning;
   const scale = typeof logoScale === 'number' ? logoScale : (logoScale[sourceId] ?? 1);
   const resolvedLogoBox = logoBox
     ? (Object.hasOwn(logoBox, 'x') ? logoBox : logoBox[sourceId])
@@ -387,6 +390,7 @@ const applyRatioTuning = (template, tuning, sourceId) => {
         ? {}
         : { logo: { ...template.logo, box: scaleBoxAboutCentre(template.logo.box, scale) } }),
     ...(Object.keys(resolvedCard).length ? { card: { ...template.card, ...resolvedCard } } : {}),
+    ...(cardWithExtras ? { cardWithExtras } : {}),
   };
 };
 
@@ -417,10 +421,15 @@ export const DRIVERS_TEMPLATE_VARIANTS = buildAccountVariants({
   perRatio: {
     // Size authority only: measured from the supplied 912x912 Corp example and
     // normalized to the 1024x1024 output. Reuse one canonical element box for
-    // every Drivers square variation; each variation keeps its own scene mask,
-    // frame, logo and the colours sampled from the Drivers source.
+    // every Drivers square variation whose input carries a CTA; each variation
+    // keeps its own scene mask, frame, logo and the colours sampled from the
+    // Drivers source.
+    //
+    // A headline alone keeps each variation's own Riders card. This one is
+    // deep enough to hold a CTA under two lines of copy, and without the CTA
+    // that depth was left as empty white around the copy.
     '1:1': {
-      card: {
+      cardWithExtras: {
         box: { x: 60, y: 680, width: 828, height: 283 },
         textBox: { x: 108, y: 713, width: 732, height: 225 },
         radius: 40,
@@ -878,12 +887,13 @@ const fixedCardShapeCache = new Map();
  * shows.
  */
 const buildFixedCardShape = async (template) => {
-  // Keyed by fill as well: a template that takes its colours from the input
-  // paints the same geometry in whatever the source uses.
-  const key = `${template.id}|${template.card.background}`;
+  // Keyed by what is painted, not by template: a template that takes its
+  // colours from the input paints its card in whatever the source uses, and
+  // one with a card for CTAs (cardWithExtras) has two sizes of card.
+  const { card } = template;
+  const key = `${card.box.width}x${card.box.height}|${card.radius}|${card.background}`;
   if (fixedCardShapeCache.has(key)) return fixedCardShapeCache.get(key);
 
-  const { card } = template;
   const loading = sharp(roundedRectangleSvg({
     width: card.box.width,
     height: card.box.height,
@@ -1033,10 +1043,15 @@ const textFits = (rendered, textBox) =>
 const buildTextLayer = async (template, text, fontId, textBoxOverride, accentText = '') => {
   // The box is a parameter, not a constant: when the source card carries
   // buttons or partner marks they take a share of it and the copy is fitted
-  // into what is left. The height goes in the cache key for that reason.
+  // into what is left. A template with a card for CTAs (cardWithExtras) also
+  // fits the same copy into two different cards. So the whole box and the type
+  // settings go in the cache key, not only the template id.
   const textBox = textBoxOverride || template.card.textBox;
-  const { textColour, accentColour = '' } = template.card;
-  const key = `${template.id}\u0000${fontId}\u0000${textBox.height}\u0000${textColour}\u0000${accentColour}\u0000${accentText}\u0000${text}`;
+  const { textColour, accentColour = '', fontSize, lineSpacingShare = 0, align } = template.card;
+  const key = [
+    template.id, fontId, textBox.x, textBox.y, textBox.width, textBox.height,
+    fontSize.min, fontSize.max, lineSpacingShare, align, textColour, accentColour, accentText, text,
+  ].join('\u0000');
   return cacheTextLayer(key, async () => {
     const font = ASPECT_RATIO_FONT_REGISTRY[fontId];
     const fontPath = resolveRuntimeAsset('fonts', font.fileName);
@@ -1356,6 +1371,17 @@ const contrastRatio = (first, second) => {
 };
 
 /**
+ * Pick the card for this input. A template may carry a second card sized for
+ * a CTA and other marks (`cardWithExtras`); it is used only when the input's
+ * card has them, which is what a crop of them reaching the compositor means. A
+ * headline on its own keeps the template's card: set in the card made for a
+ * CTA, it sits in a band of empty panel.
+ */
+const selectCardLayout = (template, hasExtras) => (hasExtras && template.cardWithExtras
+  ? { ...template, card: { ...template.card, ...template.cardWithExtras } }
+  : template);
+
+/**
  * Apply the input's colours to a template that takes them from the input; any
  * other template ignores them, which keeps the measured palettes immutable.
  * A missing or malformed colour keeps the template's own value.
@@ -1441,7 +1467,8 @@ const buildBadgeLayer = async (template, badgeBuffer) => {
  * `account` picks the template set. `colours` ({ ground, card, text, accent })
  * and `accentText` — the words set in the accent colour — only reach templates
  * that take their colours from the input, and `badge` (the input's badge crop)
- * only templates with a badge slot.
+ * only templates with a badge slot. `cardExtras` (the crop of the input card's
+ * CTA and marks) also picks the card of a template that has one for them.
  */
 export const composeAspectRatioTemplate = async ({
   sceneDataUrl,
@@ -1455,7 +1482,10 @@ export const composeAspectRatioTemplate = async ({
   accentText,
   badge,
 } = {}) => {
-  const resolvedTemplate = applyInputColours(resolveTemplate(targetRatio, templateId, account), colours);
+  const resolvedTemplate = applyInputColours(
+    selectCardLayout(resolveTemplate(targetRatio, templateId, account), Boolean(cardExtras)),
+    colours,
+  );
   const normalizedText = normalizeText(text);
   const accent = resolvedTemplate.card.accentColour && typeof accentText === 'string'
     ? accentText.replace(/\s+/g, ' ').trim()
